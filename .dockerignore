@@ -6,6 +6,7 @@ __pycache__
 .venv
 venv
 *.md
+!README.md
 .pytest_cache
 .coverage
 htmlcov
