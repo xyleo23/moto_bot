@@ -44,10 +44,14 @@ class Settings(BaseSettings):
 
     @field_validator("superadmin_ids", mode="before")
     @classmethod
-    def parse_superadmin_ids(cls, v: str | list[int]) -> list[int]:
+    def parse_superadmin_ids(cls, v) -> list[int]:
+        if isinstance(v, int):
+            return [v]
         if isinstance(v, str):
             return [int(x.strip()) for x in v.split(",") if x.strip()]
-        return v or []
+        if isinstance(v, list):
+            return v
+        return []
     support_username: str = Field(default="support", description="Support Telegram username")
     support_email: str = Field(default="support@example.com", description="Support email")
 
