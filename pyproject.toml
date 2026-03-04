@@ -1,0 +1,31 @@
+[project]
+name = "moto_bot"
+version = "0.1.0"
+description = "Telegram/MAX bot for motorcyclists (Yekaterinburg)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3.13.0",
+    "aiohttp>=3.9.0",
+    "asyncpg>=0.29.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "alembic>=1.13.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "loguru>=0.7.0",
+    "redis>=5.0.0",
+    "yookassa>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

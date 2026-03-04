@@ -1,0 +1,16 @@
+[Unit]
+Description=Moto Bot (Telegram/MAX)
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/moto_bot
+Environment=PLATFORM=telegram
+EnvironmentFile=/opt/moto_bot/.env
+ExecStart=/usr/bin/python3 -m src.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

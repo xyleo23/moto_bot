@@ -1,0 +1,54 @@
+"""Subscription service."""
+from datetime import date, timedelta
+
+from sqlalchemy import select
+
+from src.models.base import get_session_factory
+from src.models.subscription import Subscription, SubscriptionSettings, SubscriptionType
+from src.models.user import User
+
+
+async def check_subscription_required(user: User) -> bool:
+    """True if subscription is required and user doesn't have active one."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(select(SubscriptionSettings).limit(1))
+        settings = result.scalar_one_or_none()
+        if not settings or not settings.subscription_enabled:
+            return False
+
+        result = await session.execute(
+            select(Subscription)
+            .where(
+                Subscription.user_id == user.id,
+                Subscription.is_active.is_(True),
+                Subscription.expires_at >= date.today(),
+            )
+            .order_by(Subscription.expires_at.desc())
+            .limit(1)
+        )
+        sub = result.scalar_one_or_none()
+        return sub is None
+
+
+async def activate_subscription(user_id, period: str, payment_id: str) -> bool:
+    """Activate subscription after successful payment."""
+    session_factory = get_session_factory()
+    today = date.today()
+    if period == "monthly":
+        expires = today + timedelta(days=30)
+        sub_type = SubscriptionType.MONTHLY
+    else:
+        expires = today + timedelta(days=120)  # ~4 months season
+        sub_type = SubscriptionType.SEASON
+
+    async with session_factory() as session:
+        sub = Subscription(
+            user_id=user_id,
+            type=sub_type,
+            expires_at=expires,
+            payment_id=payment_id,
+        )
+        session.add(sub)
+        await session.commit()
+    return True

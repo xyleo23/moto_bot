@@ -1,0 +1,32 @@
+"""Main menu keyboards."""
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
+def get_main_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚨 SOS", callback_data="menu_sos")],
+        [InlineKeyboardButton(text="🏍 Мотопара", callback_data="menu_motopair")],
+        [InlineKeyboardButton(text="📇 Полезные контакты", callback_data="menu_contacts")],
+        [InlineKeyboardButton(text="📅 Мероприятия", callback_data="menu_events")],
+        [InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile")],
+        [InlineKeyboardButton(text="ℹ️ О нас", callback_data="menu_about")],
+    ])
+
+
+def get_city_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Екатеринбург", callback_data="city_ekb")],
+    ])
+
+
+def get_role_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Я Пилот", callback_data="role_pilot")],
+        [InlineKeyboardButton(text="Я Двойка", callback_data="role_passenger")],
+    ])
+
+
+def get_back_to_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+    ])
