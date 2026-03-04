@@ -1,19 +1,18 @@
 #!/bin/bash
-# Деплой на VPS: git pull -> миграции -> перезапуск
+# Деплой на VPS (Docker)
 set -e
 
-cd /opt/moto_bot  # или путь к проекту на VPS
+PROJECT_DIR="${1:-/opt/moto_bot}"
+cd "$PROJECT_DIR"
 
 echo "Pulling from GitHub..."
 git pull origin main
 
-echo "Installing dependencies..."
-pip install -e . -q
+echo "Clearing Telegram webhook (polling required)..."
+./deploy/check-telegram.sh 2>/dev/null || true
 
-echo "Running migrations..."
-alembic upgrade head
-
-echo "Restarting bot..."
-systemctl restart moto-bot  # или: docker compose -f docker-compose.prod.yml up -d --build bot
+echo "Building and starting..."
+docker compose -f docker-compose.prod.yml build bot --no-cache
+docker compose -f docker-compose.prod.yml up -d
 
 echo "Done."

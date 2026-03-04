@@ -23,7 +23,7 @@ jobs:
           script: |
             cd $DEPLOY_PATH
             git pull origin main
-            pip install -e . -q
-            alembic upgrade head
-            systemctl restart moto-bot
+            ./deploy/check-telegram.sh 2>/dev/null || true
+            docker compose -f docker-compose.prod.yml build bot --no-cache
+            docker compose -f docker-compose.prod.yml up -d
             echo "Deploy done."
