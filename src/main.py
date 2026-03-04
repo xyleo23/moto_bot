@@ -98,6 +98,15 @@ async def run_telegram():
     )
     dp = Dispatcher(storage=storage)
 
+    async def log_updates(handler, event, data):
+        if hasattr(event, "text") and event.text:
+            logger.info("INCOMING: user=%s text=%r", getattr(event.from_user, "id", None), event.text[:80])
+        elif hasattr(event, "data") and event.data:
+            logger.info("INCOMING: callback user=%s data=%r", getattr(event.from_user, "id", None), event.data[:80])
+        return await handler(event, data)
+
+    dp.message.middleware(log_updates)
+    dp.callback_query.middleware(log_updates)
     dp.message.middleware(BotInjectMiddleware(bot))
     dp.callback_query.middleware(BotInjectMiddleware(bot))
     dp.message.middleware(BlockCheckMiddleware())
@@ -116,6 +125,10 @@ async def run_telegram():
     from src.handlers import admin_contacts, subscription
     dp.include_router(admin_contacts.router)
     dp.include_router(subscription.router)
+
+    @dp.errors()
+    async def errors_handler(event):
+        logger.exception("Update %s caused error: %s", event.update, event.exception)
 
     await ensure_cities()
     await ensure_subscription_settings()
@@ -139,8 +152,18 @@ async def run_telegram():
             "SUPERADMIN_IDS is empty in .env — никто не получит админ-панель. "
             "Добавь свой Telegram user_id (например через @userinfobot)"
         )
+    # Удаляем webhook — при polling Telegram отправляет обновления только в getUpdates.
+    # Если webhook установлен, polling не получает обновления.
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        wh = await bot.get_webhook_info()
+        if wh.url:
+            logger.warning("Webhook was set: %s — removing for polling", wh.url)
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook removed, polling ready")
+    except Exception as e:
+        logger.error("Webhook check/delete failed: %s — bot may not receive updates!", e)
+    try:
+        await dp.start_polling(bot)
     finally:
         webhook_task.cancel()
         scheduler_task.cancel()
