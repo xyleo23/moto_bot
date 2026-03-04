@@ -1,8 +1,8 @@
 """Admin panel — Stage 8."""
 import uuid
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
-from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.filters import Command, BaseFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -16,7 +16,13 @@ from src.keyboards.admin import (
     get_settings_kb,
     get_broadcast_confirm_kb,
 )
-from src.keyboards.menu import get_back_to_menu_kb
+from src.keyboards.menu import (
+    get_back_to_menu_kb,
+    get_admin_superadmin_kb,
+    get_admin_city_kb,
+    get_persistent_kb,
+    get_main_menu_kb,
+)
 from src.services.admin_service import (
     get_stats,
     get_users_list,
@@ -55,6 +61,23 @@ def _is_superadmin(user_id: int) -> bool:
     return user_id in get_settings().superadmin_ids
 
 
+class IsAdminFilter(BaseFilter):
+    """Match only when user has admin keyboard (superadmin or city admin)."""
+
+    async def __call__(self, event: TelegramObject, **kwargs) -> bool:
+        if not isinstance(event, (Message, CallbackQuery)):
+            return False
+        user_id = event.from_user.id if event.from_user else None
+        if not user_id:
+            return False
+        if user_id in get_settings().superadmin_ids:
+            return True
+        user = kwargs.get("user")
+        if user and user.city_id:
+            return await is_city_admin(user_id, user.city_id)
+        return False
+
+
 class AdminUserSearchStates(StatesGroup):
     search = State()
 
@@ -86,32 +109,40 @@ class AdminTextAboutStates(StatesGroup):
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, user=None):
     if _is_superadmin(message.from_user.id):
-        await message.answer("Админ-панель", reply_markup=get_admin_main_kb())
+        await message.answer(
+            "⚙️ <b>Админ-панель</b>\n\nВыбери раздел:",
+            reply_markup=get_admin_superadmin_kb(),
+        )
         return
     if user and user.city_id and await is_city_admin(message.from_user.id, user.city_id):
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📅 Мероприятия", callback_data="admin_events")],
-            [InlineKeyboardButton(text="📇 Полезные контакты", callback_data="admin_contacts")],
-            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-        ])
-        await message.answer("Админ города", reply_markup=kb)
+        await message.answer(
+            "⚙️ <b>Админ города</b>\n\nВыбери раздел:",
+            reply_markup=get_admin_city_kb(),
+        )
+        return
+    # Нет доступа — показываем ID для отладки
+    await message.answer(
+        f"⚠️ Доступ к админ-панели закрыт.\n\n"
+        f"Твой Telegram ID: <code>{message.from_user.id}</code>\n\n"
+        f"Добавь его в <code>SUPERADMIN_IDS</code> в .env на сервере, "
+        f"перезапусти контейнер и нажми /start заново."
+    )
 
 
 @router.callback_query(F.data == "admin_panel")
 async def cb_admin_panel(callback: CallbackQuery, user=None):
     if _is_superadmin(callback.from_user.id):
-        await callback.message.edit_text("Админ-панель", reply_markup=get_admin_main_kb())
+        await callback.message.answer(
+            "⚙️ <b>Админ-панель</b>\n\nВыбери раздел:",
+            reply_markup=get_admin_superadmin_kb(),
+        )
         await callback.answer()
         return
     if user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id):
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📅 Мероприятия", callback_data="admin_events")],
-            [InlineKeyboardButton(text="📇 Полезные контакты", callback_data="admin_contacts")],
-            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-        ])
-        await callback.message.edit_text("Админ города", reply_markup=kb)
+        await callback.message.answer(
+            "⚙️ <b>Админ города</b>\n\nВыбери раздел:",
+            reply_markup=get_admin_city_kb(),
+        )
         await callback.answer()
         return
     await callback.answer("Доступ запрещён.")
@@ -133,6 +164,171 @@ async def cb_admin_stats(callback: CallbackQuery):
     )
     await callback.message.edit_text(text, reply_markup=get_admin_back_kb())
     await callback.answer()
+
+
+# ——— ReplyKeyboard text buttons (superadmin / city admin) ———
+
+async def _show_admin_stats(message: Message):
+    """Show stats — used by both callback and text handler."""
+    stats = await get_stats()
+    text = (
+        f"📊 <b>Статистика</b>\n\n"
+        f"Пользователей: {stats.get('users', 0)}\n"
+        f"Заблокировано: {stats.get('blocked', 0)}\n"
+        f"Активных подписок: {stats.get('active_subs', 0)}\n"
+        f"SOS-сигналов: {stats.get('sos', 0)}\n"
+        f"Мероприятий: {stats.get('events', 0)}"
+    )
+    await message.answer(text, reply_markup=get_admin_back_kb())
+
+
+def _build_users_page(users: list, total: int, page: int):
+    """Build users list (text + markup) for both callback and message."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = []
+    for u in users:
+        bl = " 🔒" if u.is_blocked else ""
+        rows.append([InlineKeyboardButton(
+            text=f"{u.platform_user_id} {u.platform_first_name or '?'}{bl}",
+            callback_data=f"admin_user_view_{u.id}",
+        )])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀ Пред", callback_data=f"admin_users_p{page - 1}"))
+    if total > (page + 1) * USERS_PAGE_SIZE:
+        nav.append(InlineKeyboardButton(text="След ▶", callback_data=f"admin_users_p{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔍 Поиск", callback_data="admin_users_search")])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    text = f"<b>Пользователи</b> (всего {total}):\n\nНажми на пользователя для действий."
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(F.text == "📊 Статистика")
+async def msg_admin_stats(message: Message, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    await _show_admin_stats(message)
+
+
+@router.message(F.text == "👥 Пользователи")
+async def msg_admin_users(message: Message, state: FSMContext, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    await state.clear()
+    users, total = await get_users_list(limit=USERS_PAGE_SIZE, offset=0)
+    text, kb = _build_users_page(users, total, 0)
+    await message.answer(text, reply_markup=kb)
+
+
+@router.message(F.text == "🏙 Админы городов")
+async def msg_admin_city_admins(message: Message, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    cities = await get_cities()
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = [[InlineKeyboardButton(text=c.name, callback_data=f"admin_ca_city_{c.id}")] for c in cities]
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    await message.answer(
+        "Выбери город для управления админами:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@router.message(F.text == "📅 Мероприятия", IsAdminFilter())
+async def msg_admin_events(message: Message, user=None):
+    is_sa = _is_superadmin(message.from_user.id)
+    events = await get_admin_events(superadmin=is_sa, city_id=user.city_id if user else None)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = []
+    for e in events[:20]:
+        label = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
+        rows.append([InlineKeyboardButton(text=f"{e.start_at.strftime('%d.%m')} {label}", callback_data=f"admin_ev_{e.id}")])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    text = "Мероприятия (последние):\n\n" + "\n".join(
+        f"• {(ev.title or TYPE_LABELS.get(ev.type.value, ''))} — {ev.start_at.strftime('%d.%m.%Y')}"
+        for ev in events[:20]
+    ) if events else "Мероприятий нет."
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.message(F.text == "⚙️ Настройки")
+async def msg_admin_settings(message: Message, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    s = await get_subscription_settings()
+    text = (
+        "⚙️ <b>Настройки подписки</b>\n\n"
+        f"Подписка: {'✅ вкл' if s.subscription_enabled else '❌ выкл'}\n"
+        f"Цена месяца: {s.monthly_price_kopecks / 100:.0f} ₽\n"
+        f"Цена сезона: {s.season_price_kopecks / 100:.0f} ₽\n"
+        f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}\n"
+        f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}"
+    )
+    await message.answer(text, reply_markup=get_settings_kb(s))
+
+
+@router.message(F.text == "📢 Рассылка")
+async def msg_admin_broadcast(message: Message, state: FSMContext, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = [
+        [InlineKeyboardButton(text="Всем", callback_data="admin_bc_all")],
+        [InlineKeyboardButton(text="Только Пилотам", callback_data="admin_bc_role_pilot")],
+        [InlineKeyboardButton(text="Только Двоек", callback_data="admin_bc_role_passenger")],
+        [InlineKeyboardButton(text="С подпиской", callback_data="admin_bc_sub_yes")],
+        [InlineKeyboardButton(text="Без подписки", callback_data="admin_bc_sub_no")],
+    ]
+    cities = await get_cities()
+    for c in cities:
+        rows.append([InlineKeyboardButton(text=f"Город: {c.name}", callback_data=f"admin_bc_city_{c.id}")])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    await message.answer("Выбери сегмент для рассылки:", reply_markup=kb)
+
+
+@router.message(F.text == "📇 Контакты")
+async def msg_admin_contacts(message: Message, user=None):
+    from src.services.useful_contacts_service import can_manage_contacts
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+        return
+    from src.keyboards.contacts import get_admin_contacts_menu_kb
+    await message.answer("Контакты — управление", reply_markup=get_admin_contacts_menu_kb())
+
+
+@router.message(F.text == "📝 О нас")
+async def msg_admin_text_about(message: Message, state: FSMContext, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    await state.clear()
+    text = await get_global_text("about_us")
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏ Изменить", callback_data="admin_text_about_edit")],
+        [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+    ])
+    await message.answer(
+        f"<b>Текст «О нас»</b> (показывается в разделе О нас):\n\n{text or '(не задан)'}",
+        reply_markup=kb,
+    )
+
+
+@router.message(F.text == "🏠 Главное меню")
+async def msg_admin_main_menu(message: Message, state: FSMContext, user=None):
+    """Return to main menu, replace admin keyboard with user keyboard."""
+    is_sa = _is_superadmin(message.from_user.id)
+    is_ca = user and user.city_id and await is_city_admin(message.from_user.id, user.city_id)
+    if not is_sa and not is_ca:
+        return
+    from src import texts
+    await state.clear()
+    await message.answer("⌨️", reply_markup=get_persistent_kb())
+    await message.answer(
+        texts.WELCOME_RETURNING,
+        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+    )
 
 
 # ——— Users: block/unblock ———
@@ -207,25 +403,8 @@ async def admin_users_search_input(message: Message, state: FSMContext):
 
 
 async def _render_users_page(callback: CallbackQuery, users: list, total: int, page: int):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    rows = []
-    for u in users:
-        bl = " 🔒" if u.is_blocked else ""
-        rows.append([InlineKeyboardButton(
-            text=f"{u.platform_user_id} {u.platform_first_name or '?'}{bl}",
-            callback_data=f"admin_user_view_{u.id}",
-        )])
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="◀ Пред", callback_data=f"admin_users_p{page - 1}"))
-    if total > (page + 1) * USERS_PAGE_SIZE:
-        nav.append(InlineKeyboardButton(text="След ▶", callback_data=f"admin_users_p{page + 1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([InlineKeyboardButton(text="🔍 Поиск", callback_data="admin_users_search")])
-    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
-    text = f"<b>Пользователи</b> (всего {total}):\n\nНажми на пользователя для действий."
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    text, kb = _build_users_page(users, total, page)
+    await callback.message.edit_text(text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("admin_user_view_"))
