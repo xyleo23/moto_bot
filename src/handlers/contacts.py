@@ -1,39 +1,93 @@
 """Useful contacts block."""
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 
 from src.keyboards.menu import get_back_to_menu_kb
+from src.keyboards.contacts import (
+    get_contacts_menu_kb,
+    get_contacts_list_kb,
+)
+from src.services.useful_contacts_service import (
+    get_contacts_by_category,
+    CAT_LABELS,
+    CONTACTS_PER_PAGE,
+)
 
 router = Router()
 
 
+def _format_contact(c: dict) -> str:
+    parts = [f"• <b>{c['name']}</b>"]
+    if c.get("description"):
+        parts.append(c["description"])
+    if c.get("phone"):
+        parts.append(f"📞 {c['phone']}")
+    if c.get("link"):
+        parts.append(f"🔗 {c['link']}")
+    if c.get("address"):
+        parts.append(f"📍 {c['address']}")
+    return "\n".join(parts)
+
+
 @router.callback_query(F.data == "menu_contacts")
 async def cb_contacts_menu(callback: CallbackQuery, user=None):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="МотоМагазин", callback_data="contacts_motoshop")],
-        [InlineKeyboardButton(text="МотоСервис", callback_data="contacts_motoservice")],
-        [InlineKeyboardButton(text="МотоШкола", callback_data="contacts_motoschool")],
-        [InlineKeyboardButton(text="МотоКлубы", callback_data="contacts_motoclubs")],
-        [InlineKeyboardButton(text="МотоЭвакуатор", callback_data="contacts_motoevac")],
-        [InlineKeyboardButton(text="Другое", callback_data="contacts_other")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
-    await callback.message.edit_text("📇 Полезные контакты", reply_markup=kb)
+    await callback.message.edit_text("📇 Полезные контакты", reply_markup=get_contacts_menu_kb())
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("contacts_"))
+@router.callback_query(F.data.regexp(r"^contacts_(motoshop|motoservice|motoschool|motoclubs|motoevac|other)$"))
 async def cb_contacts_category(callback: CallbackQuery, user=None):
-    from src.services.useful_contacts_service import get_contacts_by_category
-
     cat = callback.data.replace("contacts_", "")
-    contacts = await get_contacts_by_category(user.city_id if user else None, cat)
+    contacts, total, has_more = await get_contacts_by_category(
+        user.city_id if user else None,
+        cat,
+        offset=0,
+        limit=CONTACTS_PER_PAGE,
+    )
     if not contacts:
-        await callback.message.edit_text(f"Контактов в категории пока нет.", reply_markup=get_back_to_menu_kb())
+        await callback.message.edit_text(
+            f"Контактов в категории «{CAT_LABELS.get(cat, cat)}» пока нет.",
+            reply_markup=get_back_to_menu_kb(),
+        )
     else:
-        text = "\n\n".join(f"• {c['name']}\n{c.get('phone', c.get('link', ''))}" for c in contacts)
-        await callback.message.edit_text(text[:4000], reply_markup=get_back_to_menu_kb())
+        label = CAT_LABELS.get(cat, cat)
+        text = f"<b>{label}</b>\n\n"
+        text += "\n\n".join(_format_contact(c) for c in contacts)
+        if total > CONTACTS_PER_PAGE:
+            text += f"\n\n📄 1–{len(contacts)} из {total}"
+        await callback.message.edit_text(
+            text[:4000],
+            reply_markup=get_contacts_list_kb(cat, 0, total, has_more),
+        )
     await callback.answer()
 
+
+@router.callback_query(F.data.startswith("contacts_page_"))
+async def cb_contacts_page(callback: CallbackQuery, user=None):
+    parts = callback.data.replace("contacts_page_", "").split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    cat = parts[0]
+    offset = int(parts[1])
+    contacts, total, has_more = await get_contacts_by_category(
+        user.city_id if user else None,
+        cat,
+        offset=offset,
+        limit=CONTACTS_PER_PAGE,
+    )
+    if not contacts:
+        await callback.message.edit_text(
+            "Контактов нет.",
+            reply_markup=get_back_to_menu_kb(),
+        )
+    else:
+        label = CAT_LABELS.get(cat, cat)
+        text = f"<b>{label}</b>\n\n"
+        text += "\n\n".join(_format_contact(c) for c in contacts)
+        text += f"\n\n📄 {offset + 1}–{offset + len(contacts)} из {total}"
+        await callback.message.edit_text(
+            text[:4000],
+            reply_markup=get_contacts_list_kb(cat, offset, total, has_more),
+        )
+    await callback.answer()

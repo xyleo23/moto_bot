@@ -19,6 +19,7 @@ async def cmd_admin(message: Message):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="Полезные контакты", callback_data="admin_contacts")],
         [InlineKeyboardButton(text="Настройки", callback_data="admin_settings")],
     ])
     await message.answer("Админ-панель", reply_markup=kb)
@@ -34,6 +35,7 @@ async def cb_admin_panel(callback: CallbackQuery, user=None):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="Полезные контакты", callback_data="admin_contacts")],
         [InlineKeyboardButton(text="Настройки", callback_data="admin_settings")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])

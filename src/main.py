@@ -92,7 +92,8 @@ async def run_telegram():
     dp.include_router(profile.router)
     dp.include_router(about.router)
     dp.include_router(admin.router)
-    from src.handlers import subscription
+    from src.handlers import admin_contacts, subscription
+    dp.include_router(admin_contacts.router)
     dp.include_router(subscription.router)
 
     await ensure_cities()
