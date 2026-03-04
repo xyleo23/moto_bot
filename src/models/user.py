@@ -24,12 +24,18 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)
-    platform: Mapped[Platform] = mapped_column(Enum(Platform), nullable=False)
+    platform: Mapped[Platform] = mapped_column(
+        Enum(Platform, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     platform_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     platform_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     platform_first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     city_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("cities.id"), nullable=True)
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.PILOT)
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, values_callable=lambda x: [e.value for e in x]),
+        default=UserRole.PILOT,
+    )
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     block_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
