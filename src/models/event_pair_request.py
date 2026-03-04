@@ -21,5 +21,8 @@ class EventPairRequest(Base):
     event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"), nullable=False)
     from_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     to_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    status: Mapped[PairRequestStatus] = mapped_column(Enum(PairRequestStatus), default=PairRequestStatus.PENDING)
+    status: Mapped[PairRequestStatus] = mapped_column(
+        Enum(PairRequestStatus, values_callable=lambda x: [e.value for e in x]),
+        default=PairRequestStatus.PENDING,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

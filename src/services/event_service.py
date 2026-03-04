@@ -1,20 +1,32 @@
 """Event service."""
 from uuid import UUID
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from src.models.base import get_session_factory
-from src.models.event import Event
+from src.models.event import Event, EventRegistration, EventType, RideType
+from src.models.event_pair_request import EventPairRequest, PairRequestStatus
+from src.models.user import User
+from src.models.profile_pilot import ProfilePilot
+from src.models.profile_passenger import ProfilePassenger
 
 
-async def get_events_list(city_id: UUID | None):
-    """Get list of upcoming events."""
+TYPE_LABELS = {
+    "large": "Масштабное",
+    "motorcade": "Мотопробег",
+    "run": "Прохват",
+}
+RIDE_LABELS = {"column": "Колонна", "free": "Свободная"}
+
+
+async def get_events_list(city_id: UUID | None, event_type: str | None = None):
+    """Get list of upcoming events with pilot/passenger counts."""
     if not city_id:
         return []
     session_factory = get_session_factory()
     async with session_factory() as session:
-        from datetime import datetime
-        result = await session.execute(
+        stmt = (
             select(Event)
             .where(
                 Event.city_id == city_id,
@@ -22,10 +34,303 @@ async def get_events_list(city_id: UUID | None):
                 Event.start_at >= datetime.utcnow(),
             )
             .order_by(Event.start_at)
-            .limit(20)
+            .limit(30)
         )
+        if event_type and event_type in ("large", "motorcade", "run"):
+            stmt = stmt.where(Event.type == event_type)
+        result = await session.execute(stmt)
         events = result.scalars().all()
-        return [
-            {"id": str(e.id), "title": e.title, "type": e.type.value, "date": e.start_at.strftime("%d.%m.%Y %H:%M")}
-            for e in events
-        ]
+
+        out = []
+        for e in events:
+            pilots = await session.scalar(
+                select(func.count()).select_from(EventRegistration).where(
+                    EventRegistration.event_id == e.id,
+                    EventRegistration.role == "pilot",
+                )
+            ) or 0
+            passengers = await session.scalar(
+                select(func.count()).select_from(EventRegistration).where(
+                    EventRegistration.event_id == e.id,
+                    EventRegistration.role == "passenger",
+                )
+            ) or 0
+            out.append({
+                "id": str(e.id),
+                "title": e.title or TYPE_LABELS.get(e.type.value, e.type.value),
+                "type": e.type.value,
+                "date": e.start_at.strftime("%d.%m.%Y %H:%M"),
+                "point_start": e.point_start,
+                "pilots": pilots,
+                "passengers": passengers,
+            })
+        return out
+
+
+async def get_event_by_id(event_id: UUID):
+    """Get single event with details."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(select(Event).where(Event.id == event_id))
+        return result.scalar_one_or_none()
+
+
+async def create_event(
+    city_id: UUID,
+    creator_id: UUID,
+    event_type: str,
+    title: str | None,
+    start_at: datetime,
+    point_start: str,
+    point_end: str | None,
+    ride_type: str | None,
+    avg_speed: int | None,
+    description: str | None,
+) -> Event | None:
+    """Create event."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        et = EventType(event_type) if event_type in ("large", "motorcade", "run") else EventType.RUN
+        rt = RideType(ride_type) if ride_type in ("column", "free") else None
+        ev = Event(
+            city_id=city_id,
+            creator_id=creator_id,
+            type=et,
+            title=title or None,
+            start_at=start_at,
+            point_start=point_start,
+            point_end=point_end or None,
+            ride_type=rt,
+            avg_speed=avg_speed,
+            description=description or None,
+        )
+        session.add(ev)
+        await session.commit()
+        await session.refresh(ev)
+        return ev
+
+
+async def register_for_event(event_id: UUID, user_id: UUID, role: str) -> tuple[bool, str]:
+    """Register user for event. Returns (ok, error_msg)."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        existing = await session.execute(
+            select(EventRegistration).where(
+                EventRegistration.event_id == event_id,
+                EventRegistration.user_id == user_id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            return False, "Ты уже записан."
+        reg = EventRegistration(event_id=event_id, user_id=user_id, role=role)
+        session.add(reg)
+        await session.commit()
+        return True, ""
+
+
+async def set_seeking_pair(event_id: UUID, user_id: UUID, seeking: bool) -> bool:
+    """Set seeking_pair flag."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(EventRegistration).where(
+                EventRegistration.event_id == event_id,
+                EventRegistration.user_id == user_id,
+            )
+        )
+        reg = result.scalar_one_or_none()
+        if not reg:
+            return False
+        reg.seeking_pair = seeking
+        await session.commit()
+        return True
+
+
+async def get_seeking_users(event_id: UUID, opposite_role: str, exclude_user_id: UUID | None = None):
+    """Get users seeking pair (opposite role). Exclude viewers already sent request to."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = (
+            select(EventRegistration, User)
+            .join(User, EventRegistration.user_id == User.id)
+            .where(
+                EventRegistration.event_id == event_id,
+                EventRegistration.role == opposite_role,
+                EventRegistration.seeking_pair.is_(True),
+                EventRegistration.matched_user_id.is_(None),
+            )
+        )
+        if exclude_user_id:
+            # Exclude users we already sent request to
+            existing = select(EventPairRequest.to_user_id).where(
+                EventPairRequest.event_id == event_id,
+                EventPairRequest.from_user_id == exclude_user_id,
+            ).scalar_subquery()
+            stmt = stmt.where(EventRegistration.user_id.not_in(existing))
+        result = await session.execute(stmt)
+        return result.all()
+
+
+async def get_user_registration(event_id: UUID, user_id: UUID):
+    """Get user's registration for event."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(EventRegistration).where(
+                EventRegistration.event_id == event_id,
+                EventRegistration.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def send_pair_request(event_id: UUID, from_user_id: UUID, to_user_id: UUID) -> tuple[bool, str]:
+    """Send pair request. Returns (ok, msg)."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        existing = await session.execute(
+            select(EventPairRequest).where(
+                EventPairRequest.event_id == event_id,
+                EventPairRequest.from_user_id == from_user_id,
+                EventPairRequest.to_user_id == to_user_id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            return False, "Запрос уже отправлен."
+        req = EventPairRequest(
+            event_id=event_id,
+            from_user_id=from_user_id,
+            to_user_id=to_user_id,
+        )
+        session.add(req)
+        await session.commit()
+        return True, ""
+
+
+async def get_pair_request(event_id: UUID, from_user_id: UUID, to_user_id: UUID):
+    """Get pair request by ids."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(EventPairRequest).where(
+                EventPairRequest.event_id == event_id,
+                EventPairRequest.from_user_id == from_user_id,
+                EventPairRequest.to_user_id == to_user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def accept_pair_request(event_id: UUID, from_user_id: UUID, to_user_id: UUID) -> bool:
+    """Accept pair request, set matched_user_id on both registrations."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        req = await session.execute(
+            select(EventPairRequest).where(
+                EventPairRequest.event_id == event_id,
+                EventPairRequest.from_user_id == from_user_id,
+                EventPairRequest.to_user_id == to_user_id,
+            )
+        )
+        req = req.scalar_one_or_none()
+        if not req:
+            return False
+        req.status = PairRequestStatus.ACCEPTED
+
+        from_reg = await session.execute(
+            select(EventRegistration).where(
+                EventRegistration.event_id == event_id,
+                EventRegistration.user_id == from_user_id,
+            )
+        )
+        to_reg = await session.execute(
+            select(EventRegistration).where(
+                EventRegistration.event_id == event_id,
+                EventRegistration.user_id == to_user_id,
+            )
+        )
+        fr = from_reg.scalar_one_or_none()
+        tr = to_reg.scalar_one_or_none()
+        if fr:
+            fr.matched_user_id = to_user_id
+        if tr:
+            tr.matched_user_id = from_user_id
+        await session.commit()
+        return True
+
+
+async def reject_pair_request(event_id: UUID, from_user_id: UUID, to_user_id: UUID) -> bool:
+    """Reject pair request."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(EventPairRequest).where(
+                EventPairRequest.event_id == event_id,
+                EventPairRequest.from_user_id == from_user_id,
+                EventPairRequest.to_user_id == to_user_id,
+            )
+        )
+        req = result.scalar_one_or_none()
+        if not req:
+            return False
+        req.status = PairRequestStatus.REJECTED
+        await session.commit()
+        return True
+
+
+async def get_creator_events(creator_id: UUID):
+    """Get events created by user."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Event)
+            .where(
+                Event.creator_id == creator_id,
+                Event.is_cancelled.is_(False),
+                Event.start_at >= datetime.utcnow(),
+            )
+            .order_by(Event.start_at)
+        )
+        return result.scalars().all()
+
+
+async def cancel_event(event_id: UUID, creator_id: UUID) -> tuple[bool, list[int]]:
+    """Cancel event, return list of platform_user_ids to notify."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Event).where(Event.id == event_id, Event.creator_id == creator_id)
+        )
+        ev = result.scalar_one_or_none()
+        if not ev:
+            return False, []
+        ev.is_cancelled = True
+
+        regs = await session.execute(
+            select(User.platform_user_id).join(
+                EventRegistration,
+                EventRegistration.user_id == User.id,
+            ).where(EventRegistration.event_id == event_id)
+        )
+        notify_ids = [r[0] for r in regs.all()]
+        await session.commit()
+        return True, notify_ids
+
+
+async def get_profile_display(user_id: UUID) -> str:
+    """Short profile text for events."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        user_r = await session.execute(select(User).where(User.id == user_id))
+        u = user_r.scalar_one_or_none()
+        if not u:
+            return "Пользователь"
+        pilot = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == user_id))
+        p = pilot.scalar_one_or_none()
+        if p:
+            return f"{p.name}, {p.age} лет, {p.bike_brand}"
+        pass_r = await session.execute(select(ProfilePassenger).where(ProfilePassenger.user_id == user_id))
+        pp = pass_r.scalar_one_or_none()
+        if pp:
+            return f"{pp.name}, {pp.age} лет"
+        return u.platform_first_name or "Пользователь"

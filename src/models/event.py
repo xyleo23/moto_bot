@@ -25,12 +25,18 @@ class Event(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)
     city_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cities.id"), nullable=False)
     creator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    type: Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
+    type: Mapped[EventType] = mapped_column(
+        Enum(EventType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     start_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     point_start: Mapped[str] = mapped_column(String(500), nullable=False)
     point_end: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    ride_type: Mapped[RideType | None] = mapped_column(Enum(RideType), nullable=True)
+    ride_type: Mapped[RideType | None] = mapped_column(
+        Enum(RideType, values_callable=lambda x: [e.value for e in x]),
+        nullable=True,
+    )
     avg_speed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_recommended: Mapped[bool] = mapped_column(default=False)
