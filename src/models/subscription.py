@@ -18,7 +18,10 @@ class Subscription(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    type: Mapped[SubscriptionType] = mapped_column(Enum(SubscriptionType), nullable=False)
+    type: Mapped[SubscriptionType] = mapped_column(
+        Enum(SubscriptionType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     expires_at: Mapped[date] = mapped_column(Date, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)

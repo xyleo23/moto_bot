@@ -26,10 +26,6 @@ from src.services.useful_contacts_service import (
 router = Router()
 
 
-def _is_superadmin(user_id: int) -> bool:
-    return user_id in get_settings().superadmin_ids
-
-
 class ContactAddStates(StatesGroup):
     category = State()
     name = State()
@@ -41,7 +37,8 @@ class ContactAddStates(StatesGroup):
 
 @router.callback_query(F.data == "admin_contacts")
 async def cb_admin_contacts(callback: CallbackQuery, user=None):
-    if not _is_superadmin(callback.from_user.id):
+    from src.services.useful_contacts_service import can_manage_contacts
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
         await callback.answer("Доступ запрещён.")
         return
     await callback.message.edit_text(
@@ -53,7 +50,7 @@ async def cb_admin_contacts(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data == "admin_contact_add")
 async def cb_admin_contact_add_start(callback: CallbackQuery, state: FSMContext, user=None):
-    if not _is_superadmin(callback.from_user.id):
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
         await callback.answer("Доступ запрещён.")
         return
     if not user or not user.city_id:
@@ -146,7 +143,7 @@ async def admin_contact_add_address(message: Message, state: FSMContext, user=No
 
 @router.callback_query(F.data == "admin_contact_list")
 async def cb_admin_contact_list(callback: CallbackQuery, user=None):
-    if not _is_superadmin(callback.from_user.id):
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
         await callback.answer("Доступ запрещён.")
         return
     if not user or not user.city_id:
@@ -178,7 +175,7 @@ async def cb_admin_contact_list(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_view_"))
 async def cb_admin_contact_view(callback: CallbackQuery, user=None):
-    if not _is_superadmin(callback.from_user.id):
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_view_", "")
@@ -200,7 +197,7 @@ async def cb_admin_contact_view(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_del_"))
 async def cb_admin_contact_del(callback: CallbackQuery, user=None):
-    if not _is_superadmin(callback.from_user.id):
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_del_", "")
@@ -217,7 +214,7 @@ async def cb_admin_contact_del(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_edit_"))
 async def cb_admin_contact_edit(callback: CallbackQuery, user=None):
-    if not _is_superadmin(callback.from_user.id):
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
         await callback.answer("Доступ запрещён.")
         return
     await callback.message.edit_text(

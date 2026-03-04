@@ -25,6 +25,22 @@ async def ensure_cities():
             logger.info("Created city: Екатеринбург")
 
 
+async def ensure_subscription_settings():
+    """Ensure subscription_settings has a row."""
+    from src.models.base import get_session_factory
+    from sqlalchemy import select
+    from src.models.subscription import SubscriptionSettings
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(select(SubscriptionSettings).limit(1))
+        if not result.scalar_one_or_none():
+            s = SubscriptionSettings()
+            session.add(s)
+            await session.commit()
+            logger.info("Created subscription_settings")
+
+
 def setup_logging():
     logger.remove()
     logger.add(
@@ -97,11 +113,20 @@ async def run_telegram():
     dp.include_router(subscription.router)
 
     await ensure_cities()
+    await ensure_subscription_settings()
+
+    from src.webhooks import run_webhook_server
+    webhook_task = asyncio.create_task(run_webhook_server(bot))
 
     logger.info("Starting Telegram bot...")
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        webhook_task.cancel()
+        try:
+            await webhook_task
+        except asyncio.CancelledError:
+            pass
         await bot.session.close()
         if _redis:
             await _redis.close()

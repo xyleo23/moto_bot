@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # YooKassa
     yookassa_shop_id: str | None = Field(default=None, description="YooKassa shop ID")
     yookassa_secret_key: str | None = Field(default=None, description="YooKassa secret key")
+    webhook_port: int = Field(default=8080, description="Port for YooKassa webhook server")
 
     # App
     superadmin_ids: list[int] = Field(
