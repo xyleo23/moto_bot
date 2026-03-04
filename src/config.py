@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # App
     superadmin_ids: list[int] = Field(
         default_factory=list,
-        description="Comma-separated Telegram/MAX user IDs of superadmins",
+        description="Comma-separated Telegram/MAX user IDs of superadmins (env: SUPERADMIN_IDS)",
     )
 
     @field_validator("superadmin_ids", mode="before")

@@ -381,7 +381,10 @@ async def _finish_pilot_edit(message: Message, state: FSMContext, user):
 
         await session.commit()
 
-    await message.answer("✅ Анкета обновлена!", reply_markup=get_main_menu_kb())
+    await message.answer(
+        "✅ Анкета обновлена!",
+        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -621,4 +624,7 @@ async def _finish_passenger_edit(message: Message, state: FSMContext, user):
 
         await session.commit()
 
-    await message.answer("✅ Анкета обновлена!", reply_markup=get_main_menu_kb())
+    await message.answer(
+        "✅ Анкета обновлена!",
+        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+    )

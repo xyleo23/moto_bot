@@ -33,7 +33,10 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
 
     # Show persistent keyboard once on /start, then inline menu
     await message.answer("⌨️", reply_markup=get_persistent_kb())
-    await message.answer(texts.WELCOME_RETURNING, reply_markup=get_main_menu_kb())
+    await message.answer(
+        texts.WELCOME_RETURNING,
+        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+    )
 
 
 @router.message(Command("cancel"), StateFilter("*"))
@@ -42,13 +45,19 @@ async def cmd_cancel(message: Message, state: FSMContext):
     current = await state.get_state()
     if current is not None:
         await state.clear()
-    await message.answer(texts.FSM_CANCEL_TEXT, reply_markup=get_main_menu_kb())
+    await message.answer(
+        texts.FSM_CANCEL_TEXT,
+        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+    )
 
 
 @router.callback_query(F.data == "menu_main")
 async def cb_menu_main(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text(texts.WELCOME_RETURNING, reply_markup=get_main_menu_kb())
+    await callback.message.edit_text(
+        texts.WELCOME_RETURNING,
+        reply_markup=get_main_menu_kb(platform_user_id=callback.from_user.id),
+    )
     await callback.answer()
 
 
@@ -158,7 +167,10 @@ async def kb_profile(message: Message, state: FSMContext, user=None):
     from src.services.subscription import check_subscription_required
 
     if not user:
-        await message.answer(texts.WELCOME_RETURNING, reply_markup=get_main_menu_kb())
+        await message.answer(
+            texts.WELCOME_RETURNING,
+            reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+        )
         return
 
     profile_text = await get_profile_text(user)

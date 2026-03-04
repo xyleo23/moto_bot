@@ -44,6 +44,12 @@ alembic upgrade head
 PLATFORM=telegram python -m src.main
 ```
 
+## Роли и права
+
+Матрица прав Суперадмин / Админ города / Пилот / Двойка: [docs/ROLES_AND_PERMISSIONS.md](docs/ROLES_AND_PERMISSIONS.md)
+
+Два суперадмина задаются в `.env`: `SUPERADMIN_IDS=123456789,987654321`
+
 ## Деплой на VPS
 
 См. [deploy/README.md](deploy/README.md) — Docker Compose или systemd.

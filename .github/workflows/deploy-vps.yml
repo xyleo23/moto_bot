@@ -1,0 +1,29 @@
+# Деплой на VPS при push в main
+# Добавь секреты в Settings → Secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # ручной запуск из вкладки Actions
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/moto_bot' }}
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DEPLOY_PATH
+          script: |
+            cd $DEPLOY_PATH
+            git pull origin main
+            pip install -e . -q
+            alembic upgrade head
+            systemctl restart moto-bot
+            echo "Deploy done."

@@ -72,7 +72,7 @@ async def cmd_cancel(message: Message, state: FSMContext):
         await state.clear()
     await message.answer(
         texts.FSM_CANCEL_TEXT,
-        reply_markup=get_main_menu_kb(),
+        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
     )
 
 
@@ -469,7 +469,10 @@ async def _finish_pilot_registration(message: Message, state: FSMContext, user):
             session.add(profile)
         await session.commit()
 
-    await message.answer(texts.REG_DONE, reply_markup=get_main_menu_kb())
+    await message.answer(
+        texts.REG_DONE,
+        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -801,4 +804,7 @@ async def _finish_passenger_registration(message: Message, state: FSMContext, us
             session.add(profile)
         await session.commit()
 
-    await message.answer(texts.REG_DONE, reply_markup=get_main_menu_kb())
+    await message.answer(
+        texts.REG_DONE,
+        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+    )

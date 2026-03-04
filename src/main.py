@@ -129,7 +129,16 @@ async def run_telegram():
     webhook_task = asyncio.create_task(run_webhook_server(bot))
     scheduler_task = asyncio.create_task(run_scheduler(bot))
 
-    logger.info("Starting Telegram bot...")
+    sa_count = len(settings.superadmin_ids)
+    logger.info(
+        "Starting Telegram bot... (superadmins: %d)",
+        sa_count,
+    )
+    if sa_count == 0:
+        logger.warning(
+            "SUPERADMIN_IDS is empty in .env — никто не получит админ-панель. "
+            "Добавь свой Telegram user_id (например через @userinfobot)"
+        )
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:

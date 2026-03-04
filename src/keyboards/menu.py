@@ -7,16 +7,21 @@ from aiogram.types import (
 )
 
 
-def get_main_menu_kb() -> InlineKeyboardMarkup:
-    """Inline keyboard for main menu messages."""
-    return InlineKeyboardMarkup(inline_keyboard=[
+def get_main_menu_kb(platform_user_id: int | None = None) -> InlineKeyboardMarkup:
+    """Inline keyboard for main menu. Superadmins see extra «Админ-панель» button."""
+    from src.config import get_settings
+
+    rows = [
         [InlineKeyboardButton(text="🚨 SOS", callback_data="menu_sos")],
         [InlineKeyboardButton(text="🏍 Мотопара", callback_data="menu_motopair")],
         [InlineKeyboardButton(text="📇 Полезные контакты", callback_data="menu_contacts")],
         [InlineKeyboardButton(text="📅 Мероприятия", callback_data="menu_events")],
         [InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile")],
         [InlineKeyboardButton(text="ℹ️ О нас", callback_data="menu_about")],
-    ])
+    ]
+    if platform_user_id is not None and platform_user_id in get_settings().superadmin_ids:
+        rows.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_persistent_kb() -> ReplyKeyboardMarkup:

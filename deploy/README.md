@@ -1,90 +1,47 @@
 # Деплой на VPS
 
-## Вариант 1: Docker Compose (рекомендуется)
+## Автодеплой через GitHub Actions
 
-### На VPS
+При каждом push в `main` проект автоматически деплоится на VPS.
 
-```bash
-# Клонировать репо
-git clone https://github.com/YOUR_USER/moto_bot.git /opt/moto_bot
-cd /opt/moto_bot
+### Настройка секретов в GitHub
 
-# Создать .env (не в гите — заполнить токены)
-cp .env.example .env
-nano .env
-# Обязательно: TELEGRAM_BOT_TOKEN, SUPERADMIN_IDS, POSTGRES_PASSWORD
+Репозиторий → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
 
-# Запустить
-docker compose -f docker-compose.prod.yml up -d
+| Секрет | Описание |
+|--------|----------|
+| `DEPLOY_HOST` | IP или hostname VPS (например `123.45.67.89`) |
+| `DEPLOY_USER` | SSH-пользователь (например `root`) |
+| `DEPLOY_SSH_KEY` | Приватный SSH-ключ (содержимое `~/.ssh/id_rsa`) |
+| `DEPLOY_PATH` | *(опционально)* Путь к проекту на VPS, по умолчанию `/opt/moto_bot` |
 
-# Миграции выполняются автоматически при старте бота (entrypoint.sh)
+### Первоначальная настройка на VPS
 
-# Обновление после git pull
-git pull && docker compose -f docker-compose.prod.yml up -d --build bot
-```
+1. Клонировать репозиторий:
+   ```bash
+   sudo mkdir -p /opt && cd /opt
+   sudo git clone https://github.com/YOUR_USER/moto_bot.git
+   sudo chown -R $USER:$USER /opt/moto_bot
+   ```
 
-### .env на сервере
+2. Настроить SSH-доступ по ключу (если ещё не настроен).
 
-```
-TELEGRAM_BOT_TOKEN=xxx
-SUPERADMIN_IDS=123456789
-POSTGRES_PASSWORD=надёжный_пароль
-```
+3. Убедиться, что `systemctl restart moto-bot` работает (юнит `moto-bot.service` создан).
 
 ---
 
-## Вариант 2: Без Docker (systemd)
-
-### Подготовка VPS (Ubuntu/Debian)
+## Ручной деплой
 
 ```bash
-sudo apt update
-sudo apt install -y python3.12 python3-pip python3-venv postgresql redis-server
-
-# PostgreSQL: создать БД
-sudo -u postgres createdb moto_bot
-# (при необходимости создать пользователя)
-
-# Redis уже работает как сервис
-```
-
-### Установка бота
-
-```bash
-sudo mkdir -p /opt/moto_bot
-sudo chown $USER:$USER /opt/moto_bot
-cd /opt/moto_bot
-
-git clone https://github.com/YOUR_USER/moto_bot.git .
-
-python3 -m venv .venv
-source .venv/bin/activate  # или .venv\Scripts\activate на Windows
-pip install -e .
-
-cp .env.example .env
-nano .env  # заполнить TELEGRAM_BOT_TOKEN и т.д.
-```
-
-### DATABASE_URL (PostgreSQL)
-
-```
-DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@localhost:5432/moto_bot
-```
-
-### systemd
-
-```bash
-sudo cp deploy/moto-bot.service /etc/systemd/system/
-# Поправить пути в .service если нужно
-sudo systemctl daemon-reload
-sudo systemctl enable moto-bot
-sudo systemctl start moto-bot
-```
-
-### Обновление
-
-```bash
-cd /opt/moto_bot
 ./deploy/deploy.sh
-# или вручную: git pull && alembic upgrade head && sudo systemctl restart moto-bot
+```
+
+Или выполнить на VPS:
+
+```bash
+cd /opt/moto_bot
+git pull origin main
+pip install -e . -q
+alembic upgrade head
+systemctl restart moto-bot
 ```
