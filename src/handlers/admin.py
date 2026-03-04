@@ -76,6 +76,10 @@ class AdminSettingsStates(StatesGroup):
     season_price = State()
 
 
+class AdminTextAboutStates(StatesGroup):
+    text = State()
+
+
 # ——— Main / Stats ———
 
 @router.message(Command("admin"))
@@ -699,6 +703,55 @@ async def admin_set_price_season(message: Message, state: FSMContext):
     s = await get_subscription_settings()
     await message.answer(_settings_text(s), reply_markup=get_settings_kb(s))
     await state.clear()
+
+
+# ——— Global texts: О нас ———
+
+@router.callback_query(F.data == "admin_text_about")
+async def cb_admin_text_about(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    text = await get_global_text("about_us")
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏ Изменить", callback_data="admin_text_about_edit")],
+        [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+    ])
+    await callback.message.edit_text(
+        f"<b>Текст «О нас»</b> (показывается в разделе О нас):\n\n{text or '(не задан)'}",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_text_about_edit")
+async def cb_admin_text_about_edit(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    await state.set_state(AdminTextAboutStates.text)
+    text = await get_global_text("about_us")
+    await callback.message.edit_text(
+        f"Отправь новый текст для «О нас». Сейчас:\n\n{text or ''}\n\nОтправь сообщение с новым текстом.",
+        reply_markup=get_admin_back_kb("admin_text_about"),
+    )
+    await callback.answer()
+
+
+@router.message(AdminTextAboutStates.text, F.text)
+async def admin_text_about_save(message: Message, state: FSMContext):
+    if not _is_superadmin(message.from_user.id):
+        await state.clear()
+        return
+    text = message.text.strip()[:5000]
+    await set_global_text("about_us", text or "О нас")
+    await state.clear()
+    await message.answer(
+        f"✅ Текст «О нас» сохранён ({len(text)} символов).",
+        reply_markup=get_admin_back_kb("admin_panel"),
+    )
 
 
 # ——— Broadcast ———

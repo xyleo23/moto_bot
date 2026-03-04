@@ -32,6 +32,31 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
         return 200, {"status": "no_id"}
 
     pay_type = metadata.get("type")
+
+    if pay_type == "donate":
+        user_id_str = metadata.get("user_id")
+        if user_id_str:
+            try:
+                user_id = uuid.UUID(user_id_str)
+                bot = getattr(handle_yookassa_webhook, "_bot", None)
+                if bot:
+                    session_factory = get_session_factory()
+                    async with session_factory() as session:
+                        from src.models.user import User
+                        r = await session.execute(select(User).where(User.id == user_id))
+                        u = r.scalar_one_or_none()
+                        if u and u.platform_user_id:
+                            try:
+                                await bot.send_message(
+                                    u.platform_user_id,
+                                    "❤️ Спасибо за поддержку проекта!",
+                                )
+                            except Exception as e:
+                                logger.warning("Cannot thank donor %s: %s", u.platform_user_id, e)
+            except (ValueError, TypeError):
+                pass
+        return 200, {"status": "ok", "type": "donate"}
+
     if pay_type != "subscription":
         return 200, {"status": "ignored", "type": pay_type}
 
