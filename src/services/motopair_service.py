@@ -1,7 +1,7 @@
 """MotoPair service - profiles, likes, matches."""
 from uuid import UUID
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from src.models.base import get_session_factory
 from src.models.profile_pilot import ProfilePilot
@@ -12,17 +12,51 @@ from src.models.user import User
 DISLIKE_BLACKLIST_THRESHOLD = 3
 
 
-async def get_next_profile(viewer_user_id: UUID, role: str, offset: int = 0):
-    """Get next profile to show, excluding already-liked and blacklisted."""
+def _apply_filter_pilot(stmt, f: dict):
+    """Apply filter conditions for pilot profile query."""
+    from sqlalchemy import and_
+    conds = []
+    if f.get("gender") and f["gender"] in ("male", "female"):
+        conds.append(ProfilePilot.gender == f["gender"])
+    if f.get("age_max") and f["age_max"] > 0:
+        conds.append(ProfilePilot.age <= f["age_max"])
+    if conds:
+        stmt = stmt.where(and_(*conds))
+    return stmt
+
+
+def _apply_filter_passenger(stmt, f: dict):
+    """Apply filter conditions for passenger profile query."""
+    from sqlalchemy import and_
+    conds = []
+    if f.get("gender") and f["gender"] in ("male", "female"):
+        conds.append(ProfilePassenger.gender == f["gender"])
+    if f.get("age_max") and f["age_max"] > 0:
+        conds.append(ProfilePassenger.age <= f["age_max"])
+    if f.get("weight_max") and f["weight_max"] > 0:
+        conds.append(ProfilePassenger.weight <= f["weight_max"])
+    if f.get("height_max") and f["height_max"] > 0:
+        conds.append(ProfilePassenger.height <= f["height_max"])
+    if conds:
+        stmt = stmt.where(and_(*conds))
+    return stmt
+
+
+async def get_next_profile(
+    viewer_user_id: UUID,
+    role: str,
+    offset: int = 0,
+    filters: dict | None = None,
+):
+    """Get next profile, excluding liked/blacklisted. Optionally apply filters."""
+    f = filters or {}
     session_factory = get_session_factory()
     async with session_factory() as session:
-        # Subquery: user IDs that viewer already liked (is_like=True)
         liked_ids_sq = (
             select(Like.to_user_id)
             .where(Like.from_user_id == viewer_user_id, Like.is_like.is_(True))
             .scalar_subquery()
         )
-        # Subquery: blacklisted user IDs
         blacklisted_sq = (
             select(LikeBlacklist.blocked_user_id)
             .where(LikeBlacklist.user_id == viewer_user_id)
@@ -40,9 +74,8 @@ async def get_next_profile(viewer_user_id: UUID, role: str, offset: int = 0):
                     ProfilePilot.is_hidden.is_(False),
                 )
                 .order_by(ProfilePilot.raised_at.desc())
-                .offset(offset)
-                .limit(2)
             )
+            stmt = _apply_filter_pilot(stmt, f)
         else:
             stmt = (
                 select(ProfilePassenger)
@@ -54,10 +87,10 @@ async def get_next_profile(viewer_user_id: UUID, role: str, offset: int = 0):
                     ProfilePassenger.is_hidden.is_(False),
                 )
                 .order_by(ProfilePassenger.raised_at.desc())
-                .offset(offset)
-                .limit(2)
             )
+            stmt = _apply_filter_passenger(stmt, f)
 
+        stmt = stmt.offset(offset).limit(2)
         result = await session.execute(stmt)
         rows = result.scalars().all()
 
@@ -186,6 +219,24 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
             "target_user_id": to_user_id,
             "from_user_id": from_user_id,
         }
+
+
+async def raise_profile(user_id: UUID, role: str) -> bool:
+    """Update raised_at to now. Returns True on success."""
+    from datetime import datetime
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        if role == "pilot":
+            result = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == user_id))
+            profile = result.scalar_one_or_none()
+        else:
+            result = await session.execute(select(ProfilePassenger).where(ProfilePassenger.user_id == user_id))
+            profile = result.scalar_one_or_none()
+        if not profile:
+            return False
+        profile.raised_at = datetime.utcnow()
+        await session.commit()
+        return True
 
 
 async def get_profile_info_text(user_id: UUID) -> tuple[str, str | None]:

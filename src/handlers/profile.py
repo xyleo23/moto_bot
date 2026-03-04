@@ -51,5 +51,20 @@ async def cb_profile_subscribe(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data == "profile_raise")
 async def cb_profile_raise(callback: CallbackQuery, user=None):
-    await callback.message.edit_text("Поднять анкету — в разработке.", reply_markup=get_back_to_menu_kb())
+    from src.services.motopair_service import raise_profile
+    from src.models.user import UserRole
+
+    if not user:
+        await callback.answer("Ошибка.", show_alert=True)
+        return
+
+    role = "pilot" if user.role == UserRole.PILOT else "passenger"
+    ok = await raise_profile(user.id, role)
+    if ok:
+        await callback.message.edit_text(
+            "✅ Анкета поднята! Тебя будут видеть выше в поиске.",
+            reply_markup=get_back_to_menu_kb(),
+        )
+    else:
+        await callback.message.edit_text("Ошибка при поднятии анкеты.", reply_markup=get_back_to_menu_kb())
     await callback.answer()

@@ -10,6 +10,7 @@ from src.keyboards.motopair import (
     get_profile_view_kb,
     get_like_notification_kb,
     get_match_kb,
+    get_filter_kb,
 )
 
 router = Router()
@@ -49,10 +50,92 @@ async def cb_motopair_category(callback: CallbackQuery, user=None):
     role = "pilot" if callback.data == "motopair_pilots" else "passenger"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Все анкеты", callback_data=f"motopair_list_{role}")],
+        [InlineKeyboardButton(text="Фильтр", callback_data=f"motopair_filter_{role}")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_motopair")],
     ])
     label = "Пилотов" if role == "pilot" else "Двоек"
     await callback.message.edit_text(f"Анкеты {label}:", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("motopair_filter_"))
+async def cb_motopair_filter_open(callback: CallbackQuery, user=None):
+    """Open filter screen."""
+    from src.services.filter_store import get_filter
+
+    if not user:
+        await callback.answer()
+        return
+    role = "pilot" if "pilot" in callback.data else "passenger"
+    current = await get_filter(user.id, role)
+    label = "Пилотов" if role == "pilot" else "Двоек"
+    text = f"Фильтр для анкет {label}:\n\nВыбери параметры:"
+    await callback.message.edit_text(text, reply_markup=get_filter_kb(role, current))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("motopair_fset_"))
+async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
+    """Set filter parameter or apply/reset."""
+    from src.services.filter_store import get_filter, set_filter, clear_filter
+
+    if not user:
+        await callback.answer()
+        return
+
+    parts = callback.data.replace("motopair_fset_", "").split("_")
+    if len(parts) < 2:
+        await callback.answer()
+        return
+
+    role = parts[0]
+    param = parts[1]
+    value = parts[2] if len(parts) > 2 else None
+
+    current = await get_filter(user.id, role)
+    label = "Пилотов" if role == "pilot" else "Двоек"
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    if param == "apply":
+        await callback.message.edit_text(
+            f"Фильтр применён. Просматривай анкеты {label}.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Смотреть анкеты", callback_data=f"motopair_list_{role}")],
+                [InlineKeyboardButton(text="« Назад", callback_data=f"motopair_{'pilots' if role == 'pilot' else 'passengers'}")],
+            ]),
+        )
+        await callback.answer()
+        return
+
+    if param == "reset":
+        await clear_filter(user.id, role)
+        current = {}
+        await callback.message.edit_text(
+            f"Фильтр сброшен. Анкеты {label}:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Все анкеты", callback_data=f"motopair_list_{role}")],
+                [InlineKeyboardButton(text="Фильтр", callback_data=f"motopair_filter_{role}")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_motopair")],
+            ]),
+        )
+        await callback.answer()
+        return
+
+    if param == "gender":
+        current["gender"] = value if value != "any" else None
+    elif param == "age":
+        current["age_max"] = int(value) if value and value != "0" else None
+    elif param == "weight":
+        current["weight_max"] = int(value) if value and value != "0" else None
+    elif param == "height":
+        current["height_max"] = int(value) if value and value != "0" else None
+
+    await set_filter(user.id, role, current)
+    await callback.message.edit_text(
+        f"Фильтр для анкет {label}:\n\nВыбери параметры:",
+        reply_markup=get_filter_kb(role, current),
+    )
     await callback.answer()
 
 
@@ -85,13 +168,15 @@ def _format_profile(profile) -> str:
 @router.callback_query(F.data.startswith("motopair_list_") | F.data.startswith("motopair_next_"))
 async def cb_motopair_list(callback: CallbackQuery, user=None):
     from src.services.motopair_service import get_next_profile
+    from src.services.filter_store import get_filter
 
     if not user:
         await callback.answer("Ошибка: пользователь не определён.", show_alert=True)
         return
 
     role, offset = _parse_motopair_cb(callback.data)
-    profile, has_more = await get_next_profile(user.id, role, offset=offset)
+    filters = await get_filter(user.id, role)
+    profile, has_more = await get_next_profile(user.id, role, offset=offset, filters=filters)
 
     if not profile:
         await callback.message.edit_text(

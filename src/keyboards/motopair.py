@@ -2,6 +2,58 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
+def get_filter_kb(role: str, current: dict) -> InlineKeyboardMarkup:
+    """Filter setup keyboard. current = {gender, age_max, weight_max, height_max}."""
+    prefix = f"motopair_fset_{role}"
+    rows = []
+
+    # Gender
+    g = current.get("gender") or "any"
+    rows.append([
+        InlineKeyboardButton(text="Пол: М" + (" ✓" if g == "male" else ""), callback_data=f"{prefix}_gender_male"),
+        InlineKeyboardButton(text="Ж" + (" ✓" if g == "female" else ""), callback_data=f"{prefix}_gender_female"),
+        InlineKeyboardButton(text="Любой" + (" ✓" if g == "any" else ""), callback_data=f"{prefix}_gender_any"),
+    ])
+
+    # Age max
+    a = current.get("age_max") or 0
+    age_btns = []
+    for v in [25, 30, 35, 40, 50]:
+        age_btns.append(InlineKeyboardButton(
+            text=str(v) + (" ✓" if a == v else ""),
+            callback_data=f"{prefix}_age_{v}",
+        ))
+    rows.append(age_btns)
+    rows.append([InlineKeyboardButton(text="Возраст: сбросить", callback_data=f"{prefix}_age_0")])
+
+    if role == "passenger":
+        w = current.get("weight_max") or 0
+        weight_btns = []
+        for v in [60, 70, 80, 90]:
+            weight_btns.append(InlineKeyboardButton(
+                text=str(v) + (" ✓" if w == v else ""),
+                callback_data=f"{prefix}_weight_{v}",
+            ))
+        rows.append(weight_btns)
+        rows.append([InlineKeyboardButton(text="Вес: сбросить", callback_data=f"{prefix}_weight_0")])
+
+        h = current.get("height_max") or 0
+        height_btns = []
+        for v in [160, 170, 180, 190]:
+            height_btns.append(InlineKeyboardButton(
+                text=str(v) + (" ✓" if h == v else ""),
+                callback_data=f"{prefix}_height_{v}",
+            ))
+        rows.append(height_btns)
+        rows.append([InlineKeyboardButton(text="Рост: сбросить", callback_data=f"{prefix}_height_0")])
+
+    rows.append([
+        InlineKeyboardButton(text="Применить", callback_data=f"{prefix}_apply"),
+        InlineKeyboardButton(text="Сбросить всё", callback_data=f"{prefix}_reset"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def get_profile_view_kb(profile_id: str, role: str, offset: int, has_more: bool) -> InlineKeyboardMarkup:
     rows = [
         [
