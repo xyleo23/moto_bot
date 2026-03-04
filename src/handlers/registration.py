@@ -222,18 +222,32 @@ async def pilot_skip_photo(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "skip_about", PilotRegistration.about)
 async def pilot_skip_about(callback: CallbackQuery, state: FSMContext, user=None):
-    await _finish_pilot_registration(callback.message, state, user, None)
     await callback.answer()
+    try:
+        await _finish_pilot_registration(callback.message, state, user, None)
+    except Exception as e:
+        logger.exception("_finish_pilot_registration (skip) error: %s", e)
+        await callback.message.answer("Ошибка при сохранении. Попробуй /start и пройди регистрацию заново.")
 
 
-@router.message(PilotRegistration.about, F.text)
+@router.message(PilotRegistration.about)
 async def pilot_about(message: Message, state: FSMContext, user=None):
-    about = message.text.strip()
-    max_len = get_settings().about_text_max_length
-    if len(about) > max_len:
-        await message.answer(f"Максимум {max_len} символов.")
+    if not message.text or not message.text.strip():
+        await message.answer("Напиши о себе текстом или нажми «Пропустить».")
         return
-    await _finish_pilot_registration(message, state, user, about)
+    about = message.text.strip()
+    if about.lower() in ("пропустить", "skip"):
+        about = None
+    else:
+        max_len = get_settings().about_text_max_length
+        if len(about) > max_len:
+            await message.answer(f"Максимум {max_len} символов.")
+            return
+    try:
+        await _finish_pilot_registration(message, state, user, about)
+    except Exception as e:
+        logger.exception("_finish_pilot_registration error: %s", e)
+        await message.answer("Ошибка при сохранении. Попробуй /start и пройди регистрацию заново.")
 
 
 async def _finish_pilot_registration(message: Message, state: FSMContext, user, about: str | None):
@@ -414,17 +428,31 @@ async def passenger_skip_photo(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "pax_skip_about", PassengerRegistration.about)
 async def passenger_skip_about_cb(callback: CallbackQuery, state: FSMContext, user=None):
-    await _finish_passenger_registration(callback.message, state, user, None)
     await callback.answer()
+    try:
+        await _finish_passenger_registration(callback.message, state, user, None)
+    except Exception as e:
+        logger.exception("_finish_passenger_registration (skip) error: %s", e)
+        await callback.message.answer("Ошибка при сохранении. Попробуй /start и пройди регистрацию заново.")
 
 
-@router.message(PassengerRegistration.about, F.text)
+@router.message(PassengerRegistration.about)
 async def passenger_about(message: Message, state: FSMContext, user=None):
-    about = message.text.strip()
-    if len(about) > get_settings().about_text_max_length:
-        await message.answer(f"Максимум {get_settings().about_text_max_length} символов.")
+    if not message.text or not message.text.strip():
+        await message.answer("Напиши о себе текстом или нажми «Пропустить».")
         return
-    await _finish_passenger_registration(message, state, user, about)
+    about = message.text.strip()
+    if about.lower() in ("пропустить", "skip"):
+        about = None
+    else:
+        if len(about) > get_settings().about_text_max_length:
+            await message.answer(f"Максимум {get_settings().about_text_max_length} символов.")
+            return
+    try:
+        await _finish_passenger_registration(message, state, user, about)
+    except Exception as e:
+        logger.exception("_finish_passenger_registration error: %s", e)
+        await message.answer("Ошибка при сохранении. Попробуй /start и пройди регистрацию заново.")
 
 
 async def _finish_passenger_registration(message: Message, state: FSMContext, user, about: str | None):
