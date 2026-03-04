@@ -14,6 +14,7 @@ class Like(Base):
     from_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     to_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     is_like: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    dislike_count: Mapped[int] = mapped_column(default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (UniqueConstraint("from_user_id", "to_user_id", name="uq_likes_from_to"),)
