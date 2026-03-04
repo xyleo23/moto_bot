@@ -22,6 +22,7 @@ from src.services.event_service import (
     get_events_list,
     get_event_by_id,
     create_event,
+    update_event,
     register_for_event,
     set_seeking_pair,
     get_seeking_users,
@@ -41,6 +42,7 @@ router = Router()
 
 
 class EventCreateStates(StatesGroup):
+    awaiting_payment = State()  # Waiting for event creation payment confirmation
     type = State()
     title = State()
     start_date = State()
@@ -49,6 +51,17 @@ class EventCreateStates(StatesGroup):
     point_end = State()
     ride_type = State()
     avg_speed = State()
+    description = State()
+
+
+class EventEditStates(StatesGroup):
+    """FSM for editing an existing event's fields."""
+    field = State()      # Choosing which field to edit
+    title = State()
+    start_date = State()
+    start_time = State()
+    point_start = State()
+    point_end = State()
     description = State()
 
 
@@ -84,16 +97,10 @@ async def cb_events_menu(callback: CallbackQuery, user=None):
 
 
 # ——— Create ———
-@router.callback_query(F.data == "event_create")
-async def cb_event_create_start(callback: CallbackQuery, state: FSMContext, user=None):
+def _evcreate_type_kb() -> "InlineKeyboardMarkup":
+    """Keyboard for selecting event type."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-    if not user or not user.city_id:
-        await callback.message.edit_text("Сначала выбери город в /start.", reply_markup=get_back_to_menu_kb())
-        await callback.answer()
-        return
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Масштабное", callback_data="evcreate_type_large"),
             InlineKeyboardButton(text="Мотопробег", callback_data="evcreate_type_motorcade"),
@@ -101,8 +108,82 @@ async def cb_event_create_start(callback: CallbackQuery, state: FSMContext, user
         ],
         [InlineKeyboardButton(text="« Отмена", callback_data="menu_events")],
     ])
+
+
+@router.callback_query(F.data == "event_create")
+async def cb_event_create_start(callback: CallbackQuery, state: FSMContext, user=None):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.admin_service import get_subscription_settings
+    from src.services.payment import create_payment
+
+    if not user or not user.city_id:
+        await callback.message.edit_text("Сначала выбери город в /start.", reply_markup=get_back_to_menu_kb())
+        await callback.answer()
+        return
+
+    # Check if event creation requires payment
+    settings_db = await get_subscription_settings()
+    if (
+        settings_db
+        and settings_db.event_creation_enabled
+        and settings_db.event_creation_price_kopecks > 0
+    ):
+        price = settings_db.event_creation_price_kopecks
+        payment = await create_payment(
+            amount_kopecks=price,
+            description="Создание мероприятия",
+            metadata={"type": "event_creation", "user_id": str(user.id)},
+        )
+        if payment and payment.get("confirmation_url"):
+            await state.set_state(EventCreateStates.awaiting_payment)
+            await state.update_data(event_payment_id=payment["id"])
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
+                [InlineKeyboardButton(
+                    text="✅ Я оплатил — проверить",
+                    callback_data="evcreate_checkpay",
+                )],
+                [InlineKeyboardButton(text="« Отмена", callback_data="menu_events")],
+            ])
+            price_rub = price // 100
+            await callback.message.edit_text(
+                f"💳 Создание мероприятия платное: <b>{price_rub} ₽</b>\n\n"
+                f"Оплати и нажми «Я оплатил — проверить».",
+                reply_markup=kb,
+            )
+            await callback.answer()
+            return
+        # Payment service unavailable — allow free creation as fallback
+        await callback.answer("Платёжный сервис недоступен, создание бесплатно.", show_alert=False)
+
     await state.set_state(EventCreateStates.type)
-    await callback.message.edit_text("Тип мероприятия:", reply_markup=kb)
+    await callback.message.edit_text("Тип мероприятия:", reply_markup=_evcreate_type_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "evcreate_checkpay", EventCreateStates.awaiting_payment)
+async def cb_evcreate_check_payment(callback: CallbackQuery, state: FSMContext, user=None):
+    """User clicked 'I paid — check'. Verify payment status via YooKassa."""
+    from src.services.payment import check_payment_status
+
+    data = await state.get_data()
+    payment_id = data.get("event_payment_id")
+    if not payment_id:
+        await callback.answer("Ошибка: платёж не найден.", show_alert=True)
+        return
+
+    status = await check_payment_status(payment_id)
+    if status == "succeeded":
+        await state.set_state(EventCreateStates.type)
+        await callback.message.edit_text("✅ Оплата прошла! Тип мероприятия:", reply_markup=_evcreate_type_kb())
+    elif status == "canceled":
+        await state.clear()
+        await callback.message.edit_text("❌ Платёж отменён.", reply_markup=get_back_to_menu_kb())
+    else:
+        await callback.answer(
+            "Платёж ещё не обработан. Подожди несколько секунд и попробуй ещё раз.",
+            show_alert=True,
+        )
     await callback.answer()
 
 
@@ -549,3 +630,155 @@ async def cb_event_cancel(callback: CallbackQuery, user=None, bot=None):
         ]),
     )
     await callback.answer()
+
+
+# ——— Edit event ———
+
+def _event_edit_field_kb(event_id: str) -> "InlineKeyboardMarkup":
+    """Keyboard to choose which event field to edit."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Название", callback_data=f"evedit_f_title_{event_id}")],
+        [InlineKeyboardButton(text="📅 Дата", callback_data=f"evedit_f_date_{event_id}")],
+        [InlineKeyboardButton(text="⏰ Время", callback_data=f"evedit_f_time_{event_id}")],
+        [InlineKeyboardButton(text="📍 Старт", callback_data=f"evedit_f_start_{event_id}")],
+        [InlineKeyboardButton(text="🏁 Финиш", callback_data=f"evedit_f_end_{event_id}")],
+        [InlineKeyboardButton(text="📝 Описание", callback_data=f"evedit_f_desc_{event_id}")],
+        [InlineKeyboardButton(text="« Назад", callback_data=f"event_my_detail_{event_id}")],
+    ])
+
+
+@router.callback_query(F.data.startswith("event_edit_"))
+async def cb_event_edit_start(callback: CallbackQuery, state: FSMContext, user=None):
+    """Show edit field selection for the event."""
+    eid = callback.data.replace("event_edit_", "")
+    try:
+        ev = await get_event_by_id(uuid.UUID(eid))
+    except ValueError:
+        await callback.answer("Ошибка.")
+        return
+    if not ev or ev.creator_id != user.id:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+
+    await state.set_state(EventEditStates.field)
+    await state.update_data(edit_event_id=eid)
+    await callback.message.edit_text(
+        f"Редактирование: <b>{ev.title or TYPE_LABELS.get(ev.type.value, 'Мероприятие')}</b>\n\n"
+        f"Выбери что изменить:",
+        reply_markup=_event_edit_field_kb(eid),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("evedit_f_"), EventEditStates.field)
+async def cb_evedit_choose_field(callback: CallbackQuery, state: FSMContext, user=None):
+    """User selected a field to edit."""
+    parts = callback.data.replace("evedit_f_", "").split("_", 1)
+    field = parts[0]
+    eid = parts[1] if len(parts) > 1 else ""
+
+    field_prompts = {
+        "title": "Введи новое название (или «-» чтобы убрать):",
+        "date": "Введи новую дату (ДД.ММ.ГГГГ):",
+        "time": "Введи новое время начала (ЧЧ:ММ):",
+        "start": "Введи новую точку старта:",
+        "end": "Введи новую точку финиша (или «-» чтобы убрать):",
+        "desc": "Введи новое описание (или «-» чтобы убрать):",
+    }
+    state_map = {
+        "title": EventEditStates.title,
+        "date": EventEditStates.start_date,
+        "time": EventEditStates.start_time,
+        "start": EventEditStates.point_start,
+        "end": EventEditStates.point_end,
+        "desc": EventEditStates.description,
+    }
+    if field not in field_prompts:
+        await callback.answer()
+        return
+
+    await state.update_data(edit_event_id=eid, edit_field=field)
+    await state.set_state(state_map[field])
+    await callback.message.edit_text(field_prompts[field])
+    await callback.answer()
+
+
+async def _apply_event_edit(message: Message, state: FSMContext, user, **kwargs) -> None:
+    """Apply a single field edit and show updated event card."""
+    from src.services.event_service import update_event
+
+    data = await state.get_data()
+    eid_str = data.get("edit_event_id", "")
+    await state.clear()
+
+    try:
+        eid = uuid.UUID(eid_str)
+    except ValueError:
+        await message.answer("Ошибка ID мероприятия.", reply_markup=get_back_to_menu_kb())
+        return
+
+    ok = await update_event(eid, user.id, **kwargs)
+    if not ok:
+        await message.answer("Ошибка сохранения.", reply_markup=get_back_to_menu_kb())
+        return
+
+    ev = await get_event_by_id(eid)
+    if ev:
+        await message.answer(
+            f"✅ Изменено!\n\n{_format_event_card(ev)}",
+            reply_markup=get_my_event_detail_kb(eid_str),
+        )
+    else:
+        await message.answer("Сохранено.", reply_markup=get_back_to_menu_kb())
+
+
+@router.message(EventEditStates.title, F.text)
+async def evedit_title(message: Message, state: FSMContext, user=None):
+    val = message.text.strip()
+    await _apply_event_edit(message, state, user, title=(None if val == "-" else val))
+
+
+@router.message(EventEditStates.start_date, F.text)
+async def evedit_date(message: Message, state: FSMContext, user=None):
+    data = await state.get_data()
+    ev = await get_event_by_id(uuid.UUID(data.get("edit_event_id", "")))
+    try:
+        from datetime import datetime as dt_cls
+        d = dt_cls.strptime(message.text.strip(), "%d.%m.%Y").date()
+        # Keep existing time
+        existing_time = ev.start_at.time() if ev else dt_cls.now().time()
+        new_dt = dt_cls.combine(d, existing_time)
+        await _apply_event_edit(message, state, user, start_at=new_dt)
+    except (ValueError, AttributeError):
+        await message.answer("Формат: ДД.ММ.ГГГГ (например 15.06.2025)")
+
+
+@router.message(EventEditStates.start_time, F.text)
+async def evedit_time(message: Message, state: FSMContext, user=None):
+    data = await state.get_data()
+    ev = await get_event_by_id(uuid.UUID(data.get("edit_event_id", "")))
+    try:
+        from datetime import datetime as dt_cls
+        t = dt_cls.strptime(message.text.strip(), "%H:%M").time()
+        existing_date = ev.start_at.date() if ev else dt_cls.now().date()
+        new_dt = dt_cls.combine(existing_date, t)
+        await _apply_event_edit(message, state, user, start_at=new_dt)
+    except (ValueError, AttributeError):
+        await message.answer("Формат: ЧЧ:ММ (например 14:00)")
+
+
+@router.message(EventEditStates.point_start, F.text)
+async def evedit_point_start(message: Message, state: FSMContext, user=None):
+    await _apply_event_edit(message, state, user, point_start=message.text.strip())
+
+
+@router.message(EventEditStates.point_end, F.text)
+async def evedit_point_end(message: Message, state: FSMContext, user=None):
+    val = message.text.strip()
+    await _apply_event_edit(message, state, user, point_end=(None if val == "-" else val))
+
+
+@router.message(EventEditStates.description, F.text)
+async def evedit_description(message: Message, state: FSMContext, user=None):
+    val = message.text.strip()
+    await _apply_event_edit(message, state, user, description=(None if val == "-" else val))

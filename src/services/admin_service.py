@@ -340,6 +340,19 @@ async def set_event_recommended(event_id: UUID, recommended: bool) -> bool:
         return True
 
 
+async def set_event_official(event_id: UUID, official: bool) -> bool:
+    """Toggle is_official flag on an event."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(select(Event).where(Event.id == event_id))
+        ev = r.scalar_one_or_none()
+        if not ev:
+            return False
+        ev.is_official = official
+        await session.commit()
+        return True
+
+
 async def get_broadcast_recipients(
     city_id: UUID | None = None,
     role: str | None = None,

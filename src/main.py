@@ -66,6 +66,7 @@ async def run_telegram():
         events,
         contacts,
         profile,
+        profile_edit,
         about,
         admin,
     )
@@ -109,6 +110,7 @@ async def run_telegram():
     dp.include_router(events.router)
     dp.include_router(contacts.router)
     dp.include_router(profile.router)
+    dp.include_router(profile_edit.router)
     dp.include_router(about.router)
     dp.include_router(admin.router)
     from src.handlers import admin_contacts, subscription

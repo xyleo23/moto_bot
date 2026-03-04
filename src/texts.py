@@ -77,6 +77,8 @@ SOS_ALL_CLEAR_BROADCAST = "✅ Отбой! {name} сообщает: помощь
 SOS_BROADCAST_TYPE = "🚨 SOS: {type_label}\n\n{profile}\n\n"
 SOS_BROADCAST_COMMENT = "Комментарий: {comment}\n\n"
 SOS_BROADCAST_MAP = "📍 https://yandex.ru/maps/?ll={lon},{lat}&z=16"
+SOS_BTN_CALL = "📞 Позвонить"
+SOS_BTN_TELEGRAM = "✈️ Написать в Telegram"
 
 # ——— Мотопара ———
 MOTOPAIR_NO_PROFILES = (
@@ -93,9 +95,24 @@ MOTOPAIR_REPORT_ADMIN_TEXT = (
     "Профиль: {profile_text}"
 )
 MOTOPAIR_REPORT_BTN_ACCEPT = "✅ Принять (скрыть анкету)"
+MOTOPAIR_REPORT_BTN_BLOCK = "🔒 Заблокировать пользователя"
 MOTOPAIR_REPORT_BTN_REJECT = "❌ Отклонить жалобу"
 MOTOPAIR_REPORT_ACCEPTED = "Жалоба принята, анкета скрыта."
 MOTOPAIR_REPORT_REJECTED = "Жалоба отклонена."
+
+# ——— Блокировка администратором города ———
+ADMIN_BLOCK_NOTIFY_SUPERADMIN = (
+    "🔒 <b>Блокировка пользователя</b>\n\n"
+    "Администратор: {admin}\n"
+    "Заблокировал: {user}\n"
+    "Причина: {reason}"
+)
+ADMIN_BLOCK_USER_NOTIFICATION = (
+    "🔒 Ваш аккаунт заблокирован.\n\n"
+    "Причина: {reason}\n\n"
+    "Для обжалования обратитесь к администрации сообщества."
+)
+ADMIN_BLOCK_DONE = "✅ Пользователь заблокирован. Суперадмин уведомлён."
 
 # ——— Мероприятия ———
 EVENT_SHARE_TEXT = (

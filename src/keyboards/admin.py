@@ -48,10 +48,22 @@ def get_city_admins_kb(city_id: str) -> InlineKeyboardMarkup:
     ])
 
 
-def get_admin_event_kb(event_id: str, can_edit: bool) -> InlineKeyboardMarkup:
+def get_admin_event_kb(
+    event_id: str,
+    can_edit: bool,
+    is_recommended: bool = False,
+    is_official: bool = False,
+) -> InlineKeyboardMarkup:
     rows = []
     if can_edit:
-        rows.append([InlineKeyboardButton(text="⭐ Рекомендовать", callback_data=f"admin_ev_rec_{event_id}")])
+        rows.append([InlineKeyboardButton(
+            text=f"{'★ Убрать рекомендацию' if is_recommended else '⭐ Рекомендовать'}",
+            callback_data=f"admin_ev_rec_{event_id}",
+        )])
+        rows.append([InlineKeyboardButton(
+            text=f"{'🏛 Убрать «Официальное»' if is_official else '🏛 Отметить официальным'}",
+            callback_data=f"admin_ev_official_{event_id}",
+        )])
         rows.append([InlineKeyboardButton(text="❌ Отменить мероприятие", callback_data=f"admin_ev_cancel_{event_id}")])
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_events")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -38,6 +38,7 @@ from src.services.admin_service import (
     get_admin_events,
     admin_cancel_event,
     set_event_recommended,
+    set_event_official,
     get_broadcast_recipients,
     get_global_text,
     set_global_text,
@@ -502,16 +503,25 @@ async def cb_admin_event_detail(callback: CallbackQuery, user=None):
         user.city_id if user else None,
         ev.city_id,
     )
-    text = (
+    text = _admin_event_text(ev)
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_admin_event_kb(eid, can_edit, ev.is_recommended, ev.is_official),
+    )
+    await callback.answer()
+
+
+def _admin_event_text(ev) -> str:
+    """Format admin event detail text."""
+    return (
         f"<b>{ev.title or TYPE_LABELS.get(ev.type.value, 'Мероприятие')}</b>\n"
         f"Тип: {TYPE_LABELS.get(ev.type.value, ev.type.value)}\n"
         f"📅 {ev.start_at.strftime('%d.%m.%Y %H:%M')}\n"
         f"📍 {ev.point_start}\n"
         f"Описание: {ev.description or '—'}\n"
-        f"Рекомендуемое: {'✅' if ev.is_recommended else '❌'}"
+        f"Рекомендуемое: {'✅' if ev.is_recommended else '❌'}\n"
+        f"Официальное: {'✅' if ev.is_official else '❌'}"
     )
-    await callback.message.edit_text(text, reply_markup=get_admin_event_kb(eid, can_edit))
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("admin_ev_rec_"))
@@ -534,15 +544,37 @@ async def cb_admin_ev_recommend(callback: CallbackQuery, user=None):
     await set_event_recommended(ev.id, new_val)
     await callback.answer(f"{'Рекомендовано' if new_val else 'Снято с рекомендуемых'}")
     ev = await get_event_by_id(ev.id)
-    text = (
-        f"<b>{ev.title or TYPE_LABELS.get(ev.type.value, 'Мероприятие')}</b>\n"
-        f"Тип: {TYPE_LABELS.get(ev.type.value, ev.type.value)}\n"
-        f"📅 {ev.start_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"📍 {ev.point_start}\n"
-        f"Описание: {ev.description or '—'}\n"
-        f"Рекомендуемое: {'✅' if ev.is_recommended else '❌'}"
+    await callback.message.edit_text(
+        _admin_event_text(ev),
+        reply_markup=get_admin_event_kb(eid, can_edit, ev.is_recommended, ev.is_official),
     )
-    await callback.message.edit_text(text, reply_markup=get_admin_event_kb(eid, can_edit))
+
+
+@router.callback_query(F.data.startswith("admin_ev_official_"))
+async def cb_admin_ev_official(callback: CallbackQuery, user=None):
+    """Toggle is_official flag on an event."""
+    is_sa = _is_superadmin(callback.from_user.id)
+    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    if not is_sa and not is_ca:
+        await callback.answer("Доступ запрещён.")
+        return
+    eid = callback.data.replace("admin_ev_official_", "")
+    ev = await get_event_by_id(uuid.UUID(eid))
+    if not ev:
+        await callback.answer("Не найдено.")
+        return
+    can_edit = await can_admin_events(callback.from_user.id, user.city_id if user else None, ev.city_id)
+    if not can_edit:
+        await callback.answer("Нет доступа.")
+        return
+    new_val = not ev.is_official
+    await set_event_official(ev.id, new_val)
+    await callback.answer(f"{'Официальное' if new_val else 'Убрано из официальных'}")
+    ev = await get_event_by_id(ev.id)
+    await callback.message.edit_text(
+        _admin_event_text(ev),
+        reply_markup=get_admin_event_kb(eid, can_edit, ev.is_recommended, ev.is_official),
+    )
 
 
 @router.callback_query(F.data.startswith("admin_ev_cancel_"))

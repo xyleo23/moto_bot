@@ -85,6 +85,27 @@ async def sos_comment(message: Message, state: FSMContext, user=None, bot=None):
     await _send_sos_alert(message, state, user, message.text.strip(), bot)
 
 
+async def _get_user_phone(user) -> str | None:
+    """Get user's phone number from their pilot/passenger profile."""
+    from src.models.base import get_session_factory
+    from src.models.profile_pilot import ProfilePilot
+    from src.models.profile_passenger import ProfilePassenger
+    from src.models.user import UserRole
+    from sqlalchemy import select
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        if user.role == UserRole.PILOT:
+            r = await session.execute(
+                select(ProfilePilot.phone).where(ProfilePilot.user_id == user.id)
+            )
+        else:
+            r = await session.execute(
+                select(ProfilePassenger.phone).where(ProfilePassenger.user_id == user.id)
+            )
+        return r.scalar_one_or_none()
+
+
 async def _send_sos_alert(
     message: Message,
     state: FSMContext,
@@ -144,6 +165,19 @@ async def _send_sos_alert(
         lon=data["lon"], lat=data["lat"]
     )
 
+    # Build keyboard with "Call" and "Telegram" quick-contact buttons
+    phone = await _get_user_phone(user)
+    broadcast_kb_rows = []
+    if phone:
+        broadcast_kb_rows.append([
+            InlineKeyboardButton(text=texts.SOS_BTN_CALL, url=f"tel:{phone}"),
+        ])
+    tg_id = message.from_user.id
+    broadcast_kb_rows.append([
+        InlineKeyboardButton(text=texts.SOS_BTN_TELEGRAM, url=f"tg://user?id={tg_id}"),
+    ])
+    broadcast_kb = InlineKeyboardMarkup(inline_keyboard=broadcast_kb_rows)
+
     send_bot = bot or getattr(message, "bot", None)
     if send_bot and user_ids:
         # Non-blocking background broadcast with 50ms inter-message delay
@@ -152,6 +186,7 @@ async def _send_sos_alert(
             user_ids,
             broadcast_text,
             exclude_id=message.from_user.id,
+            reply_markup=broadcast_kb,
         )
 
     cooldown_mins = settings.sos_cooldown_minutes

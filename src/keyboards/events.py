@@ -86,6 +86,7 @@ def get_my_events_kb(events: list) -> InlineKeyboardMarkup:
 
 def get_my_event_detail_kb(event_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Отменить мероприятие", callback_data=f"event_cancel_{event_id}")],
+        [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"event_edit_{event_id}")],
+        [InlineKeyboardButton(text="❌ Отменить мероприятие", callback_data=f"event_cancel_{event_id}")],
         [InlineKeyboardButton(text="« Мои мероприятия", callback_data="event_my")],
     ])

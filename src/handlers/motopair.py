@@ -4,6 +4,8 @@ import uuid
 from loguru import logger
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from src.keyboards.menu import get_back_to_menu_kb
 from src.keyboards.motopair import (
@@ -15,6 +17,11 @@ from src.keyboards.motopair import (
 from src import texts
 
 router = Router()
+
+
+class CityAdminBlockStates(StatesGroup):
+    """FSM for city admin entering a block reason."""
+    reason = State()
 
 
 @router.callback_query(F.data == "menu_motopair")
@@ -146,16 +153,21 @@ def _parse_motopair_cb(data: str) -> tuple[str, int]:
     return "pilot", 0
 
 
-def _format_profile(profile) -> str:
+def _format_profile(profile, username: str | None = None) -> str:
+    """Format profile card. username is Telegram @handle of the profile owner."""
+    tg_link = (
+        f'\n<a href="https://t.me/{username}">@{username}</a>'
+        if username else ""
+    )
     if hasattr(profile, "bike_brand"):
         return (
-            f"🏍 <b>{profile.name}</b>\n"
+            f"🏍 <b>{profile.name}</b>{tg_link}\n"
             f"Возраст: {profile.age}\n"
             f"Мотоцикл: {profile.bike_brand} {profile.bike_model}, {profile.engine_cc} см³\n"
             f"О себе: {profile.about or '—'}"
         )
     return (
-        f"👤 <b>{profile.name}</b>\n"
+        f"👤 <b>{profile.name}</b>{tg_link}\n"
         f"Возраст: {profile.age}, Рост: {profile.height} см, Вес: {profile.weight} кг\n"
         f"О себе: {profile.about or '—'}"
     )
@@ -169,6 +181,8 @@ async def cb_motopair_list(callback: CallbackQuery, user=None):
     if not user:
         await callback.answer("Ошибка: пользователь не определён.", show_alert=True)
         return
+
+    from src.services.motopair_service import get_user_for_profile
 
     role, offset = _parse_motopair_cb(callback.data)
     filters = await get_filter(user.id, role)
@@ -187,7 +201,10 @@ async def cb_motopair_list(callback: CallbackQuery, user=None):
             ]),
         )
     else:
-        text = _format_profile(profile)
+        # Fetch profile owner's username for clickable link
+        profile_owner = await get_user_for_profile(profile.id, role)
+        owner_username = profile_owner.platform_username if profile_owner else None
+        text = _format_profile(profile, username=owner_username)
         kb = _profile_kb_with_report(str(profile.id), role, offset, has_more)
         if profile.photo_file_id:
             try:
@@ -285,6 +302,10 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
             callback_data=f"admin_report_accept_{target_user.id}",
         )],
         [InlineKeyboardButton(
+            text=texts.MOTOPAIR_REPORT_BTN_BLOCK,
+            callback_data=f"admin_report_block_{target_user.id}",
+        )],
+        [InlineKeyboardButton(
             text=texts.MOTOPAIR_REPORT_BTN_REJECT,
             callback_data=f"admin_report_reject_{target_user.id}",
         )],
@@ -366,6 +387,121 @@ async def cb_admin_report_reject(callback: CallbackQuery, user=None):
 
     await callback.message.edit_text(texts.MOTOPAIR_REPORT_REJECTED)
     await callback.answer("Жалоба отклонена.")
+
+
+@router.callback_query(F.data.startswith("admin_report_block_"))
+async def cb_admin_report_block(callback: CallbackQuery, state: FSMContext, user=None):
+    """Admin initiates full account block for the reported user."""
+    from src.config import get_settings
+    from src.services.admin_service import is_city_admin
+
+    settings = get_settings()
+    is_sa = callback.from_user.id in settings.superadmin_ids
+    is_ca = False
+    if not is_sa and user and user.city_id:
+        is_ca = await is_city_admin(callback.from_user.id, user.city_id)
+
+    if not is_sa and not is_ca:
+        await callback.answer("Доступ запрещён.", show_alert=True)
+        return
+
+    uid_str = callback.data.replace("admin_report_block_", "")
+    try:
+        uid = uuid.UUID(uid_str)
+    except ValueError:
+        await callback.answer("Ошибка.")
+        return
+
+    await state.set_state(CityAdminBlockStates.reason)
+    await state.update_data(block_target_user_id=str(uid))
+    await callback.message.edit_text(
+        "Введи причину блокировки пользователя (будет видна в уведомлении):"
+    )
+    await callback.answer()
+
+
+@router.message(CityAdminBlockStates.reason, F.text)
+async def city_admin_block_reason(message: Message, state: FSMContext, user=None):
+    """Admin entered block reason — block the user and notify superadmin."""
+    from src.config import get_settings
+    from src.services.admin_service import is_city_admin, block_user, get_user_by_id
+    from src.models.base import get_session_factory
+    from src.models.user import User
+    from sqlalchemy import select
+
+    settings = get_settings()
+    is_sa = message.from_user.id in settings.superadmin_ids
+    is_ca = False
+    if not is_sa and user and user.city_id:
+        is_ca = await is_city_admin(message.from_user.id, user.city_id)
+
+    if not is_sa and not is_ca:
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    target_id_str = data.get("block_target_user_id")
+    await state.clear()
+
+    if not target_id_str:
+        await message.answer("Ошибка: пользователь не найден.")
+        return
+
+    try:
+        target_uuid = uuid.UUID(target_id_str)
+    except ValueError:
+        await message.answer("Ошибка ID пользователя.")
+        return
+
+    reason = message.text.strip()[:500]
+
+    # Block the user account
+    await block_user(target_uuid, reason=reason)
+
+    # Get target user info for notifications
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(select(User).where(User.id == target_uuid))
+        target = r.scalar_one_or_none()
+
+    if target:
+        admin_display = (
+            f"@{user.platform_username}" if user and user.platform_username
+            else str(message.from_user.id)
+        )
+        target_display = (
+            f"@{target.platform_username}" if target.platform_username
+            else str(target.platform_user_id)
+        )
+
+        # Notify superadmins about the block action
+        for sa_id in settings.superadmin_ids:
+            try:
+                await message.bot.send_message(
+                    sa_id,
+                    texts.ADMIN_BLOCK_NOTIFY_SUPERADMIN.format(
+                        admin=admin_display,
+                        user=target_display,
+                        reason=reason,
+                    ),
+                )
+            except Exception as e:
+                logger.warning("Cannot notify superadmin %s about block: %s", sa_id, e)
+
+        # Notify the blocked user
+        if target.platform_user_id:
+            try:
+                await message.bot.send_message(
+                    target.platform_user_id,
+                    texts.ADMIN_BLOCK_USER_NOTIFICATION.format(reason=reason),
+                )
+            except Exception as e:
+                logger.debug("Cannot notify blocked user %s: %s", target.platform_user_id, e)
+
+    await message.answer(
+        texts.ADMIN_BLOCK_DONE,
+        reply_markup=get_back_to_menu_kb(),
+    )
 
 
 # ── Like / Dislike handlers ───────────────────────────────────────────────────

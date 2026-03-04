@@ -317,6 +317,42 @@ async def cancel_event(event_id: UUID, creator_id: UUID) -> tuple[bool, list[int
         return True, notify_ids
 
 
+async def update_event(
+    event_id: UUID,
+    creator_id: UUID,
+    title: str | None = None,
+    start_at: datetime | None = None,
+    point_start: str | None = None,
+    point_end: str | None = None,
+    description: str | None = None,
+) -> bool:
+    """Update mutable event fields. Returns True on success."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Event).where(
+                Event.id == event_id,
+                Event.creator_id == creator_id,
+                Event.is_cancelled.is_(False),
+            )
+        )
+        ev = result.scalar_one_or_none()
+        if not ev:
+            return False
+        if title is not None:
+            ev.title = title[:200] if title else None
+        if start_at is not None:
+            ev.start_at = start_at
+        if point_start is not None:
+            ev.point_start = point_start[:500]
+        if point_end is not None:
+            ev.point_end = point_end[:500] if point_end else None
+        if description is not None:
+            ev.description = description[:1000] if description else None
+        await session.commit()
+        return True
+
+
 async def get_profile_display(user_id: UUID) -> str:
     """Short profile text for events."""
     session_factory = get_session_factory()

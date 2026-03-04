@@ -14,6 +14,13 @@ from src import texts
 router = Router()
 
 
+# ── Profile raise FSM ─────────────────────────────────────────────────────────
+
+class ProfileRaiseStates(StatesGroup):
+    """Waiting for raise-profile payment to be confirmed."""
+    awaiting_payment = State()
+
+
 # ── Phone change FSM ──────────────────────────────────────────────────────────
 
 class AdminPhoneApprovalStates(StatesGroup):
@@ -53,13 +60,6 @@ async def cb_profile_menu(callback: CallbackQuery, user=None):
     await callback.answer()
 
 
-@router.callback_query(F.data == "profile_edit")
-async def cb_profile_edit(callback: CallbackQuery, user=None):
-    await callback.message.edit_text(
-        "Редактирование — в разработке.", reply_markup=get_back_to_menu_kb()
-    )
-    await callback.answer()
-
 
 @router.callback_query(F.data == "profile_subscribe")
 async def cb_profile_subscribe(callback: CallbackQuery, user=None):
@@ -83,8 +83,11 @@ async def cb_profile_subscribe(callback: CallbackQuery, user=None):
 
 
 @router.callback_query(F.data == "profile_raise")
-async def cb_profile_raise(callback: CallbackQuery, user=None):
+async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.motopair_service import raise_profile
+    from src.services.admin_service import get_subscription_settings
+    from src.services.payment import create_payment
     from src.models.user import UserRole
 
     if not user:
@@ -92,6 +95,42 @@ async def cb_profile_raise(callback: CallbackQuery, user=None):
         return
 
     role = "pilot" if user.role == UserRole.PILOT else "passenger"
+
+    # Check if profile raise requires payment
+    settings_db = await get_subscription_settings()
+    if (
+        settings_db
+        and settings_db.raise_profile_enabled
+        and settings_db.raise_profile_price_kopecks > 0
+    ):
+        price = settings_db.raise_profile_price_kopecks
+        payment = await create_payment(
+            amount_kopecks=price,
+            description="Поднятие анкеты",
+            metadata={"type": "raise_profile", "user_id": str(user.id), "role": role},
+        )
+        if payment and payment.get("confirmation_url"):
+            await state.set_state(ProfileRaiseStates.awaiting_payment)
+            await state.update_data(raise_payment_id=payment["id"], raise_role=role)
+            price_rub = price // 100
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
+                [InlineKeyboardButton(
+                    text="✅ Я оплатил — проверить",
+                    callback_data="raise_checkpay",
+                )],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
+            ])
+            await callback.message.edit_text(
+                f"💳 Поднятие анкеты платное: <b>{price_rub} ₽</b>\n\n"
+                f"Оплати и нажми «Я оплатил — проверить».",
+                reply_markup=kb,
+            )
+            await callback.answer()
+            return
+        await callback.answer("Платёжный сервис недоступен.", show_alert=False)
+
+    # Free raise
     ok = await raise_profile(user.id, role)
     if ok:
         await callback.message.edit_text(
@@ -101,6 +140,45 @@ async def cb_profile_raise(callback: CallbackQuery, user=None):
     else:
         await callback.message.edit_text(
             "Ошибка при поднятии анкеты.", reply_markup=get_back_to_menu_kb()
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "raise_checkpay", ProfileRaiseStates.awaiting_payment)
+async def cb_raise_check_payment(callback: CallbackQuery, state: FSMContext, user=None):
+    """User clicked 'I paid — check'. Verify payment and raise profile."""
+    from src.services.payment import check_payment_status
+    from src.services.motopair_service import raise_profile
+
+    data = await state.get_data()
+    payment_id = data.get("raise_payment_id")
+    role = data.get("raise_role", "pilot")
+
+    if not payment_id:
+        await callback.answer("Ошибка: платёж не найден.", show_alert=True)
+        return
+
+    status = await check_payment_status(payment_id)
+    if status == "succeeded":
+        await state.clear()
+        ok = await raise_profile(user.id, role)
+        if ok:
+            await callback.message.edit_text(
+                "✅ Оплата прошла! Анкета поднята — тебя увидят первым.",
+                reply_markup=get_back_to_menu_kb(),
+            )
+        else:
+            await callback.message.edit_text(
+                "Оплата прошла, но поднять анкету не удалось. Обратись в поддержку.",
+                reply_markup=get_back_to_menu_kb(),
+            )
+    elif status == "canceled":
+        await state.clear()
+        await callback.message.edit_text("❌ Платёж отменён.", reply_markup=get_back_to_menu_kb())
+    else:
+        await callback.answer(
+            "Платёж ещё не обработан. Подожди несколько секунд и попробуй ещё раз.",
+            show_alert=True,
         )
     await callback.answer()
 
