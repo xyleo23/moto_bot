@@ -135,12 +135,16 @@ async def run_telegram():
 async def run_max():
     """Run MAX bot (long polling)."""
     from src.platforms.max_adapter import MaxAdapter
+    from src.max_runner import process_max_update
 
     settings = get_settings()
     if not settings.max_bot_token:
         raise ValueError("MAX_BOT_TOKEN is required for MAX platform")
 
     init_db()
+    await ensure_cities()
+    await ensure_subscription_settings()
+
     adapter = MaxAdapter()
     logger.info("Starting MAX bot (long polling)...")
 
@@ -151,8 +155,8 @@ async def run_max():
                 result = await adapter.poll_updates(marker=marker, timeout=30)
                 marker = result.get("marker")
                 for upd in result.get("updates", []):
-                    # TODO: Parse MAX update and dispatch to handlers
-                    pass
+                    if isinstance(upd, dict):
+                        await process_max_update(adapter, upd)
             except Exception as e:
                 logger.exception("MAX poll error: %s", e)
                 await asyncio.sleep(5)
