@@ -1,4 +1,6 @@
 """Start command, main menu, /cancel."""
+from loguru import logger
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command, StateFilter
@@ -13,30 +15,77 @@ router = Router()
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, user=None):
-    await state.clear()
-    if not user:
-        user = await get_or_create_user(
-            platform="telegram",
-            platform_user_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
+    # #region agent log
+    import json
+    import time
+    try:
+        with open(str(__import__("pathlib").Path(__file__).resolve().parents[2] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"ca1ad6","location":"start.py:cmd_start","message":"cmd_start ENTERED","data":{"user_id":message.from_user.id if message.from_user else None,"user_injected":user is not None},"timestamp":int(time.time()*1000),"hypothesisId":"H4"}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    try:
+        await state.clear()
+        if not user:
+            user = await get_or_create_user(
+                platform="telegram",
+                platform_user_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+            )
+
+        if not user or not user.city_id:
+            # #region agent log
+            try:
+                import json, time
+                with open(str(__import__("pathlib").Path(__file__).resolve().parents[2] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"ca1ad6","location":"start.py:cmd_start","message":"cmd_start SUCCESS (city_select)","data":{},"timestamp":int(time.time()*1000),"hypothesisId":"H4"}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            await message.answer(texts.WELCOME_NEW, reply_markup=get_city_select_kb())
+            return
+
+        has_prof = await has_profile(user)
+        if not has_prof:
+            # #region agent log
+            try:
+                import json, time
+                with open(str(__import__("pathlib").Path(__file__).resolve().parents[2] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"ca1ad6","location":"start.py:cmd_start","message":"cmd_start SUCCESS (role_select)","data":{},"timestamp":int(time.time()*1000),"hypothesisId":"H4"}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            await message.answer(texts.WELCOME_NEW, reply_markup=get_role_select_kb())
+            return
+
+        # Show persistent keyboard once on /start, then inline menu
+        await message.answer("⌨️", reply_markup=get_persistent_kb())
+        await message.answer(
+            texts.WELCOME_RETURNING,
+            reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
         )
-
-    if not user.city_id:
-        await message.answer(texts.WELCOME_NEW, reply_markup=get_city_select_kb())
-        return
-
-    has_prof = await has_profile(user)
-    if not has_prof:
-        await message.answer(texts.WELCOME_NEW, reply_markup=get_role_select_kb())
-        return
-
-    # Show persistent keyboard once on /start, then inline menu
-    await message.answer("⌨️", reply_markup=get_persistent_kb())
-    await message.answer(
-        texts.WELCOME_RETURNING,
-        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
-    )
+        # #region agent log
+        import json
+        import time
+        try:
+            with open(str(__import__("pathlib").Path(__file__).resolve().parents[2] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"ca1ad6","location":"start.py:cmd_start","message":"cmd_start SUCCESS","data":{},"timestamp":int(time.time()*1000),"hypothesisId":"H4"}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+    except Exception as e:
+        # #region agent log
+        import json
+        import time
+        try:
+            with open(str(__import__("pathlib").Path(__file__).resolve().parents[2] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"ca1ad6","location":"start.py:cmd_start","message":"cmd_start EXCEPTION","data":{"error":str(e)},"timestamp":int(time.time()*1000),"hypothesisId":"H4,H5"}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        logger.exception("cmd_start error: %s", e)
+        await message.answer(texts.ERROR_GENERIC + "\n\nПопробуй /start снова.")
 
 
 @router.message(Command("myid"))
