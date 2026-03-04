@@ -28,12 +28,18 @@ class ProfilePilot(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
-    gender: Mapped[Gender] = mapped_column(Enum(Gender), nullable=False)
+    gender: Mapped[Gender] = mapped_column(
+        Enum(Gender, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     bike_brand: Mapped[str] = mapped_column(String(100), nullable=False)
     bike_model: Mapped[str] = mapped_column(String(100), nullable=False)
     engine_cc: Mapped[int] = mapped_column(Integer, nullable=False)
     driving_since: Mapped[date] = mapped_column(Date, nullable=False)
-    driving_style: Mapped[DrivingStyle] = mapped_column(Enum(DrivingStyle), nullable=False)
+    driving_style: Mapped[DrivingStyle] = mapped_column(
+        Enum(DrivingStyle, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     photo_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     about: Mapped[str | None] = mapped_column(Text, nullable=True)
     raised_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

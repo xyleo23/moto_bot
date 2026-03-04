@@ -279,21 +279,40 @@ async def _finish_pilot_registration(message: Message, state: FSMContext, user, 
             from datetime import datetime as dt_cls
             ds = dt_cls.strptime(ds, "%Y-%m-%d").date()
 
-        profile = ProfilePilot(
-            user_id=u.id,
-            name=data["name"],
-            phone=data["phone"],
-            age=data["age"],
-            gender=gender_map.get(str(data["gender"]), Gender.OTHER),
-            bike_brand=data["bike_brand"],
-            bike_model=data["bike_model"],
-            engine_cc=data["engine_cc"],
-            driving_since=ds,
-            driving_style=style_map.get(str(data.get("driving_style", "mixed")), DrivingStyle.MIXED),
-            photo_file_id=data.get("photo_file_id"),
-            about=about,
-        )
-        session.add(profile)
+        phone = str(data["phone"])[:20]
+        max_about = get_settings().about_text_max_length
+        about_clean = about[:max_about] if about else None
+
+        existing = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == u.id))
+        profile = existing.scalar_one_or_none()
+        if profile:
+            profile.name = data["name"]
+            profile.phone = phone
+            profile.age = data["age"]
+            profile.gender = gender_map.get(str(data["gender"]), Gender.OTHER)
+            profile.bike_brand = data["bike_brand"]
+            profile.bike_model = data["bike_model"]
+            profile.engine_cc = data["engine_cc"]
+            profile.driving_since = ds
+            profile.driving_style = style_map.get(str(data.get("driving_style", "mixed")), DrivingStyle.MIXED)
+            profile.photo_file_id = data.get("photo_file_id")
+            profile.about = about_clean
+        else:
+            profile = ProfilePilot(
+                user_id=u.id,
+                name=data["name"],
+                phone=phone,
+                age=data["age"],
+                gender=gender_map.get(str(data["gender"]), Gender.OTHER),
+                bike_brand=data["bike_brand"],
+                bike_model=data["bike_model"],
+                engine_cc=data["engine_cc"],
+                driving_since=ds,
+                driving_style=style_map.get(str(data.get("driving_style", "mixed")), DrivingStyle.MIXED),
+                photo_file_id=data.get("photo_file_id"),
+                about=about_clean,
+            )
+            session.add(profile)
         await session.commit()
 
     await message.answer("Анкета заполнена! 🏍", reply_markup=get_main_menu_kb())
