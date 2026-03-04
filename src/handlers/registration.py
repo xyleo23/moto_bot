@@ -138,23 +138,48 @@ async def pilot_engine_cc(message: Message, state: FSMContext):
         await message.answer("Введи число.")
 
 
+def _parse_date(text: str):
+    """Parse date from various formats. Returns date or None."""
+    from datetime import datetime
+
+    text = (text or "").strip()
+    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    if len(text) == 8 and text.isdigit():
+        try:
+            return datetime.strptime(f"{text[:2]}.{text[2:4]}.{text[4:]}", "%d.%m.%Y").date()
+        except ValueError:
+            pass
+    return None
+
+
 @router.message(PilotRegistration.driving_since, F.text)
 async def pilot_driving_since(message: Message, state: FSMContext):
-    from datetime import datetime
-    try:
-        dt = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    dt = _parse_date(message.text or "")
+    if dt:
         await state.update_data(driving_since=dt)
         await state.set_state(PilotRegistration.driving_style)
         await message.answer(
             "Выбери стиль вождения:",
-            reply_markup=__import__("aiogram.types", fromlist=["InlineKeyboardMarkup", "InlineKeyboardButton"]).InlineKeyboardMarkup(inline_keyboard=[
-                [__import__("aiogram.types", fromlist=["InlineKeyboardButton"]).InlineKeyboardButton(text="Спокойный", callback_data="style_calm")],
-                [__import__("aiogram.types", fromlist=["InlineKeyboardButton"]).InlineKeyboardButton(text="Агрессивный", callback_data="style_aggressive")],
-                [__import__("aiogram.types", fromlist=["InlineKeyboardButton"]).InlineKeyboardButton(text="Смешанный", callback_data="style_mixed")],
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Спокойный", callback_data="style_calm")],
+                [InlineKeyboardButton(text="Агрессивный", callback_data="style_aggressive")],
+                [InlineKeyboardButton(text="Смешанный", callback_data="style_mixed")],
             ]),
         )
-    except ValueError:
-        await message.answer("Формат: ДД.ММ.ГГГГ (например, 15.06.2020)")
+    else:
+        await message.answer("Формат: ДД.ММ.ГГГГ (например, 15.06.2020). Попробуй ещё раз:")
+
+
+@router.message(PilotRegistration.driving_since)
+async def pilot_driving_since_fallback(message: Message, state: FSMContext):
+    """Re-prompt if user sent non-text (photo, sticker, etc.)."""
+    await message.answer("Введи дату текстом в формате ДД.ММ.ГГГГ (например, 15.06.2020):")
 
 
 @router.callback_query(F.data.startswith("style_"), PilotRegistration.driving_style)
