@@ -1,4 +1,6 @@
 """Registration and profile filling."""
+from loguru import logger
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, ContentType
 from aiogram.fsm.context import FSMContext
@@ -156,30 +158,36 @@ def _parse_date(text: str):
     return None
 
 
-@router.message(PilotRegistration.driving_since, F.text)
+@router.message(PilotRegistration.driving_since)
 async def pilot_driving_since(message: Message, state: FSMContext):
+    """Handle date input — text or fallback for non-text."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-    dt = _parse_date(message.text or "")
-    if dt:
-        await state.update_data(driving_since=dt)
-        await state.set_state(PilotRegistration.driving_style)
-        await message.answer(
-            "Выбери стиль вождения:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+    if not message.text or not message.text.strip():
+        await message.answer("Введи дату текстом в формате ДД.ММ.ГГГГ (например, 26.07.2006):")
+        return
+
+    logger.info("pilot_driving_since: user=%s text=%r", message.from_user.id, message.text)
+    try:
+        raw = message.text.strip()
+        dt = _parse_date(raw)
+        if dt:
+            iso = dt.isoformat()
+            await state.update_data(driving_since=iso)
+            await state.set_state(PilotRegistration.driving_style)
+            kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Спокойный", callback_data="style_calm")],
                 [InlineKeyboardButton(text="Агрессивный", callback_data="style_aggressive")],
                 [InlineKeyboardButton(text="Смешанный", callback_data="style_mixed")],
-            ]),
+            ])
+            await message.answer("Выбери стиль вождения:", reply_markup=kb)
+        else:
+            await message.answer("Формат: ДД.ММ.ГГГГ (например, 15.06.2020). Попробуй ещё раз:")
+    except Exception as e:
+        logger.exception("pilot_driving_since error: %s", e)
+        await message.answer(
+            "Не удалось обработать дату. Попробуй ещё раз (например 26.07.2006) или нажми /start для перезапуска.",
         )
-    else:
-        await message.answer("Формат: ДД.ММ.ГГГГ (например, 15.06.2020). Попробуй ещё раз:")
-
-
-@router.message(PilotRegistration.driving_since)
-async def pilot_driving_since_fallback(message: Message, state: FSMContext):
-    """Re-prompt if user sent non-text (photo, sticker, etc.)."""
-    await message.answer("Введи дату текстом в формате ДД.ММ.ГГГГ (например, 15.06.2020):")
 
 
 @router.callback_query(F.data.startswith("style_"), PilotRegistration.driving_style)
@@ -251,6 +259,12 @@ async def _finish_pilot_registration(message: Message, state: FSMContext, user, 
 
         gender_map = {"male": Gender.MALE, "female": Gender.FEMALE, "other": Gender.OTHER}
         style_map = {"calm": DrivingStyle.CALM, "aggressive": DrivingStyle.AGGRESSIVE, "mixed": DrivingStyle.MIXED}
+
+        ds = data["driving_since"]
+        if isinstance(ds, str):
+            from datetime import datetime as dt_cls
+            ds = dt_cls.strptime(ds, "%Y-%m-%d").date()
+
         profile = ProfilePilot(
             user_id=u.id,
             name=data["name"],
@@ -260,7 +274,7 @@ async def _finish_pilot_registration(message: Message, state: FSMContext, user, 
             bike_brand=data["bike_brand"],
             bike_model=data["bike_model"],
             engine_cc=data["engine_cc"],
-            driving_since=data["driving_since"],
+            driving_since=ds,
             driving_style=style_map.get(str(data.get("driving_style", "mixed")), DrivingStyle.MIXED),
             photo_file_id=data.get("photo_file_id"),
             about=about,
