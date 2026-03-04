@@ -1,8 +1,8 @@
 """Admin panel — Stage 8."""
 import uuid
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, TelegramObject
-from aiogram.filters import Command, BaseFilter
+from aiogram.types import CallbackQuery, Message
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -59,23 +59,6 @@ USERS_PAGE_SIZE = 10
 
 def _is_superadmin(user_id: int) -> bool:
     return user_id in get_settings().superadmin_ids
-
-
-class IsAdminFilter(BaseFilter):
-    """Match only when user has admin keyboard (superadmin or city admin)."""
-
-    async def __call__(self, event: TelegramObject, **kwargs) -> bool:
-        if not isinstance(event, (Message, CallbackQuery)):
-            return False
-        user_id = event.from_user.id if event.from_user else None
-        if not user_id:
-            return False
-        if user_id in get_settings().superadmin_ids:
-            return True
-        user = kwargs.get("user")
-        if user and user.city_id:
-            return await is_city_admin(user_id, user.city_id)
-        return False
 
 
 class AdminUserSearchStates(StatesGroup):
@@ -234,23 +217,6 @@ async def msg_admin_city_admins(message: Message, user=None):
         "Выбери город для управления админами:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
     )
-
-
-@router.message(F.text == "📅 Мероприятия", IsAdminFilter())
-async def msg_admin_events(message: Message, user=None):
-    is_sa = _is_superadmin(message.from_user.id)
-    events = await get_admin_events(superadmin=is_sa, city_id=user.city_id if user else None)
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    rows = []
-    for e in events[:20]:
-        label = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
-        rows.append([InlineKeyboardButton(text=f"{e.start_at.strftime('%d.%m')} {label}", callback_data=f"admin_ev_{e.id}")])
-    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
-    text = "Мероприятия (последние):\n\n" + "\n".join(
-        f"• {(ev.title or TYPE_LABELS.get(ev.type.value, ''))} — {ev.start_at.strftime('%d.%m.%Y')}"
-        for ev in events[:20]
-    ) if events else "Мероприятий нет."
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @router.message(F.text == "⚙️ Настройки")

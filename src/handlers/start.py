@@ -39,6 +39,22 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
     )
 
 
+@router.message(Command("myid"))
+async def cmd_myid(message: Message):
+    """Показать свой Telegram ID (для настройки SUPERADMIN_IDS)."""
+    from src.config import get_settings
+
+    uid = message.from_user.id
+    is_sa = uid in get_settings().superadmin_ids
+    status = "✅ Ты в списке суперадминов" if is_sa else "❌ Тебя нет в SUPERADMIN_IDS"
+    await message.answer(
+        f"Твой Telegram ID: <code>{uid}</code>\n"
+        f"Статус: {status}\n\n"
+        f"Добавь в .env: <code>SUPERADMIN_IDS={uid}</code>"
+        + ("\n\nПосле изменения .env перезапусти: docker compose up -d" if not is_sa else ""),
+    )
+
+
 @router.message(Command("cancel"), StateFilter("*"))
 async def cmd_cancel(message: Message, state: FSMContext):
     """Cancel any active FSM flow and return to main menu."""
@@ -150,6 +166,35 @@ async def kb_motopair(message: Message, state: FSMContext, user=None):
 
 @router.message(F.text == "📅 Мероприятия")
 async def kb_events(message: Message, state: FSMContext, user=None):
+    from src.config import get_settings
+    from src.services.admin_service import is_city_admin, get_admin_events
+    from src.services.event_service import TYPE_LABELS
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    is_sa = message.from_user.id in get_settings().superadmin_ids
+    is_ca = user and user.city_id and await is_city_admin(message.from_user.id, user.city_id)
+    if is_sa or is_ca:
+        events = await get_admin_events(superadmin=is_sa, city_id=user.city_id if user else None)
+        rows = []
+        for e in events[:20]:
+            label = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
+            rows.append([InlineKeyboardButton(
+                text=f"{e.start_at.strftime('%d.%m')} {label}",
+                callback_data=f"admin_ev_{e.id}",
+            )])
+        rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+        text = (
+            "Мероприятия (последние):\n\n"
+            + "\n".join(
+                f"• {(ev.title or TYPE_LABELS.get(ev.type.value, ''))} — {ev.start_at.strftime('%d.%m.%Y')}"
+                for ev in events[:20]
+            )
+            if events
+            else "Мероприятий нет."
+        )
+        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        return
+
     from src.keyboards.events import get_events_menu_kb
     await message.answer("📅 Мероприятия", reply_markup=get_events_menu_kb())
 

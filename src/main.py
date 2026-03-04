@@ -103,8 +103,6 @@ async def run_telegram():
     dp.message.middleware(BlockCheckMiddleware())
     dp.callback_query.middleware(BlockCheckMiddleware())
 
-    # Admin router first — text buttons (e.g. 📅 Мероприятия) overlap with start; admin must take precedence
-    dp.include_router(admin.router)
     dp.include_router(start.router)
     dp.include_router(registration.router)
     dp.include_router(sos.router)
@@ -114,6 +112,7 @@ async def run_telegram():
     dp.include_router(profile.router)
     dp.include_router(profile_edit.router)
     dp.include_router(about.router)
+    dp.include_router(admin.router)
     from src.handlers import admin_contacts, subscription
     dp.include_router(admin_contacts.router)
     dp.include_router(subscription.router)
