@@ -2,6 +2,7 @@
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.models.base import get_session_factory
 from src.models.profile_pilot import ProfilePilot
@@ -71,6 +72,7 @@ async def get_next_profile(
                     ProfilePilot.user_id != viewer_user_id,
                     ProfilePilot.user_id.not_in(liked_ids_sq),
                     ProfilePilot.user_id.not_in(blacklisted_sq),
+                    # Soft-ban: hidden profiles are excluded from search results
                     ProfilePilot.is_hidden.is_(False),
                 )
                 .order_by(ProfilePilot.raised_at.desc())
@@ -84,6 +86,7 @@ async def get_next_profile(
                     ProfilePassenger.user_id != viewer_user_id,
                     ProfilePassenger.user_id.not_in(liked_ids_sq),
                     ProfilePassenger.user_id.not_in(blacklisted_sq),
+                    # Soft-ban: hidden profiles are excluded from search results
                     ProfilePassenger.is_hidden.is_(False),
                 )
                 .order_by(ProfilePassenger.raised_at.desc())
@@ -137,6 +140,11 @@ async def get_profile_by_user_id(user_id: UUID, role: str):
 async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> dict:
     """
     Record like or dislike.
+
+    Uses SELECT FOR UPDATE on the Like row to prevent race conditions when
+    multiple concurrent dislikes could simultaneously trigger the blacklist
+    threshold and create duplicate blacklist entries.
+
     Returns:
         matched: bool — mutual like detected
         blacklisted: bool — dislike threshold reached, both users hidden
@@ -145,11 +153,14 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
     """
     session_factory = get_session_factory()
     async with session_factory() as session:
+        # Lock the Like row for this pair to serialize concurrent operations
         existing = await session.execute(
-            select(Like).where(
+            select(Like)
+            .where(
                 Like.from_user_id == from_user_id,
                 Like.to_user_id == to_user_id,
             )
+            .with_for_update()
         )
         like_rec = existing.scalar_one_or_none()
 
@@ -167,7 +178,7 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
                 )
                 session.add(like_rec)
 
-            # Check for mutual like
+            # Check for mutual like (no lock needed here — read-only check)
             reverse = await session.execute(
                 select(Like).where(
                     Like.from_user_id == to_user_id,
@@ -191,22 +202,23 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
                 )
                 session.add(like_rec)
 
-            if like_rec.dislike_count >= DISLIKE_BLACKLIST_THRESHOLD:
-                # Add both sides to blacklist
+            if (like_rec.dislike_count or 0) >= DISLIKE_BLACKLIST_THRESHOLD:
+                # Atomic bulk insert of both blacklist entries via PostgreSQL
+                # INSERT ... ON CONFLICT DO NOTHING prevents duplicates even
+                # under concurrent requests (race-condition safe).
                 for uid, bid in [(from_user_id, to_user_id), (to_user_id, from_user_id)]:
-                    bl_check = await session.execute(
-                        select(LikeBlacklist).where(
-                            LikeBlacklist.user_id == uid,
-                            LikeBlacklist.blocked_user_id == bid,
-                        )
+                    stmt = pg_insert(LikeBlacklist).values(
+                        user_id=uid,
+                        blocked_user_id=bid,
+                    ).on_conflict_do_nothing(
+                        constraint="uq_like_blacklist"
                     )
-                    if not bl_check.scalar_one_or_none():
-                        session.add(LikeBlacklist(user_id=uid, blocked_user_id=bid))
+                    await session.execute(stmt)
                 blacklisted = True
 
         await session.commit()
 
-        # Get target user's platform id for notification
+        # Fetch target user's platform_user_id for notification (after commit)
         target_result = await session.execute(
             select(User).where(User.id == to_user_id)
         )
@@ -221,16 +233,43 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
         }
 
 
+async def hide_profile(user_id: UUID) -> bool:
+    """Set is_hidden=True on user's profile (soft-ban)."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        pilot = await session.execute(
+            select(ProfilePilot).where(ProfilePilot.user_id == user_id)
+        )
+        p = pilot.scalar_one_or_none()
+        if p:
+            p.is_hidden = True
+            await session.commit()
+            return True
+        pax = await session.execute(
+            select(ProfilePassenger).where(ProfilePassenger.user_id == user_id)
+        )
+        pp = pax.scalar_one_or_none()
+        if pp:
+            pp.is_hidden = True
+            await session.commit()
+            return True
+    return False
+
+
 async def raise_profile(user_id: UUID, role: str) -> bool:
     """Update raised_at to now. Returns True on success."""
     from datetime import datetime
     session_factory = get_session_factory()
     async with session_factory() as session:
         if role == "pilot":
-            result = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == user_id))
+            result = await session.execute(
+                select(ProfilePilot).where(ProfilePilot.user_id == user_id)
+            )
             profile = result.scalar_one_or_none()
         else:
-            result = await session.execute(select(ProfilePassenger).where(ProfilePassenger.user_id == user_id))
+            result = await session.execute(
+                select(ProfilePassenger).where(ProfilePassenger.user_id == user_id)
+            )
             profile = result.scalar_one_or_none()
         if not profile:
             return False

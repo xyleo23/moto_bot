@@ -82,6 +82,9 @@ async def run_telegram():
         await redis.ping()
         storage = RedisStorage(redis=redis)
         _redis = redis
+        # Inject Redis client into SOS service for rate limiting
+        from src.services.sos_service import set_redis_client
+        set_redis_client(redis)
     except Exception as e:
         logger.warning("Redis unavailable (%s), using MemoryStorage", e)
         from aiogram.fsm.storage.memory import MemoryStorage
@@ -114,19 +117,27 @@ async def run_telegram():
 
     await ensure_cities()
     await ensure_subscription_settings()
+    # Ensure bot_settings row exists (creates with defaults if absent)
+    from src.services.bot_settings_service import get_bot_settings
+    await get_bot_settings()
 
     from src.webhooks import run_webhook_server
+    from src.services.scheduler import run_scheduler
+
     webhook_task = asyncio.create_task(run_webhook_server(bot))
+    scheduler_task = asyncio.create_task(run_scheduler(bot))
 
     logger.info("Starting Telegram bot...")
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         webhook_task.cancel()
-        try:
-            await webhook_task
-        except asyncio.CancelledError:
-            pass
+        scheduler_task.cancel()
+        for task in (webhook_task, scheduler_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await bot.session.close()
         if _redis:
             await _redis.close()

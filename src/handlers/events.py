@@ -65,6 +65,18 @@ def _format_event_card(e) -> str:
     )
 
 
+def _format_event_share_text(e) -> str:
+    """Generate shareable plain text for an event (no HTML tags)."""
+    from src import texts
+    return texts.EVENT_SHARE_TEXT.format(
+        type=TYPE_LABELS.get(e.type.value, e.type.value),
+        title=e.title or TYPE_LABELS.get(e.type.value, e.type.value),
+        date=e.start_at.strftime("%d.%m.%Y в %H:%M"),
+        point_start=e.point_start,
+        description=e.description or "",
+    ).strip()
+
+
 @router.callback_query(F.data == "menu_events")
 async def cb_events_menu(callback: CallbackQuery, user=None):
     await callback.message.edit_text("📅 Мероприятия", reply_markup=get_events_menu_kb())
@@ -296,6 +308,30 @@ async def cb_event_detail(callback: CallbackQuery, user=None):
     user_role = reg.role if reg else None
     kb = get_event_card_kb(eid, bool(reg), user_role)
     await callback.message.edit_text(_format_event_card(ev), reply_markup=kb)
+    await callback.answer()
+
+
+# ——— Share ———
+@router.callback_query(F.data.startswith("event_share_"))
+async def cb_event_share(callback: CallbackQuery, user=None):
+    """Generate a shareable plain-text card for the event."""
+    eid = callback.data.replace("event_share_", "")
+    try:
+        ev_uuid = uuid.UUID(eid)
+    except ValueError:
+        await callback.answer("Ошибка.")
+        return
+
+    ev = await get_event_by_id(ev_uuid)
+    if not ev:
+        await callback.answer("Мероприятие не найдено.")
+        return
+
+    share_text = _format_event_share_text(ev)
+    await callback.message.answer(
+        f"<b>Готовый текст для репоста:</b>\n\n{share_text}",
+        reply_markup=get_back_to_menu_kb(),
+    )
     await callback.answer()
 
 

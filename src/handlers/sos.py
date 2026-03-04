@@ -1,10 +1,21 @@
-"""SOS block - emergency alerts."""
+"""SOS block — emergency alerts with timer and all-clear."""
+import asyncio
+
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from src.keyboards.menu import get_back_to_menu_kb
+from src import texts
 
 router = Router()
 
@@ -17,8 +28,6 @@ class SosStates(StatesGroup):
 
 @router.callback_query(F.data == "menu_sos")
 async def cb_sos_menu(callback: CallbackQuery, state: FSMContext, user=None):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
         [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
@@ -26,24 +35,17 @@ async def cb_sos_menu(callback: CallbackQuery, state: FSMContext, user=None):
         [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
-    await callback.message.edit_text("🚨 Выбери тип SOS:", reply_markup=kb)
+    await callback.message.edit_text(texts.SOS_CHOOSE_TYPE, reply_markup=kb)
     await state.set_state(SosStates.choose_type)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("sos_"), SosStates.choose_type)
 async def cb_sos_type(callback: CallbackQuery, state: FSMContext, user=None):
-    type_map = {
-        "sos_accident": "ДТП",
-        "sos_broken": "Сломался",
-        "sos_ran_out": "Обсох",
-        "sos_other": "Другое",
-    }
     sos_type = callback.data
     await state.update_data(sos_type=sos_type)
     await state.set_state(SosStates.location)
-    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-    await callback.message.edit_text("Отправь свою геолокацию:")
+    await callback.message.edit_text(texts.SOS_SEND_LOCATION)
     await callback.message.answer(
         "Нажми кнопку ниже, чтобы отправить местоположение:",
         reply_markup=ReplyKeyboardMarkup(
@@ -60,15 +62,14 @@ async def sos_location(message: Message, state: FSMContext, user=None, bot=None)
     loc = message.location
     await state.update_data(lat=loc.latitude, lon=loc.longitude)
     await state.set_state(SosStates.comment)
-    from aiogram.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
     await message.answer(
-        "Введи комментарий (или «Пропустить»):",
+        texts.SOS_ASK_COMMENT,
         reply_markup=ReplyKeyboardRemove(),
     )
     await message.answer(
         "Можешь добавить описание ситуации.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить", callback_data="sos_skip_comment")],
+            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="sos_skip_comment")],
         ]),
     )
 
@@ -84,19 +85,27 @@ async def sos_comment(message: Message, state: FSMContext, user=None, bot=None):
     await _send_sos_alert(message, state, user, message.text.strip(), bot)
 
 
-async def _send_sos_alert(message: Message, state: FSMContext, user, comment: str | None, bot=None):
-    """Send SOS and broadcast to city users."""
-    from src.services.sos_service import create_sos_alert
+async def _send_sos_alert(
+    message: Message,
+    state: FSMContext,
+    user,
+    comment: str | None,
+    bot=None,
+) -> None:
+    """Create SOS alert and broadcast to city users as background task."""
+    from src.services.sos_service import create_sos_alert, get_city_telegram_user_ids
+    from src.services.broadcast import broadcast_background
+    from src.services.user import get_user_profile_display
     from src.config import get_settings
 
     data = await state.get_data()
     await state.clear()
 
     if not user or not user.city_id:
-        await message.answer("Ошибка: город не выбран. Нажми /start")
+        await message.answer(texts.SOS_NO_CITY)
         return
 
-    cooldown_ok = await create_sos_alert(
+    ok, remaining = await create_sos_alert(
         user_id=user.id,
         city_id=user.city_id,
         sos_type=data["sos_type"],
@@ -104,34 +113,138 @@ async def _send_sos_alert(message: Message, state: FSMContext, user, comment: st
         lon=data["lon"],
         comment=comment,
     )
-    if not cooldown_ok:
-        mins = get_settings().sos_cooldown_seconds // 60
+
+    if not ok:
+        mins = remaining // 60
+        secs = remaining % 60
         await message.answer(
-            f"Подожди {mins} мин. перед следующим SOS.",
-            reply_markup=get_back_to_menu_kb(),
+            texts.SOS_READY_WAIT.format(mins=mins, secs=secs),
+            reply_markup=_sos_cooldown_kb(remaining),
         )
         return
 
-    type_labels = {"sos_accident": "ДТП", "sos_broken": "Сломался", "sos_ran_out": "Обсох", "sos_other": "Другое"}
-    from src.services.sos_service import get_city_telegram_user_ids
-    from src.services.user import get_user_profile_display
+    type_labels = {
+        "sos_accident": "ДТП",
+        "sos_broken": "Сломался",
+        "sos_ran_out": "Обсох",
+        "sos_other": "Другое",
+    }
+
+    settings = get_settings()
     profile = await get_user_profile_display(user)
     user_ids = await get_city_telegram_user_ids(user.city_id)
-    text = f"🚨 SOS: {type_labels.get(data['sos_type'], 'Другое')}\n\n{profile}\n\n"
+
+    broadcast_text = texts.SOS_BROADCAST_TYPE.format(
+        type_label=type_labels.get(data["sos_type"], "Другое"),
+        profile=profile,
+    )
     if comment:
-        text += f"Комментарий: {comment}\n\n"
-    text += f"📍 https://yandex.ru/maps/?ll={data['lon']},{data['lat']}&z=16"
+        broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=comment)
+    broadcast_text += texts.SOS_BROADCAST_MAP.format(
+        lon=data["lon"], lat=data["lat"]
+    )
 
     send_bot = bot or getattr(message, "bot", None)
-    if send_bot:
-        for uid in user_ids:
-            if uid != message.from_user.id:
-                try:
-                    await send_bot.send_message(uid, text)
-                except Exception:
-                    pass
+    if send_bot and user_ids:
+        # Non-blocking background broadcast with 50ms inter-message delay
+        broadcast_background(
+            send_bot,
+            user_ids,
+            broadcast_text,
+            exclude_id=message.from_user.id,
+        )
 
+    cooldown_mins = settings.sos_cooldown_minutes
+    # Reply with confirmation + timer + all-clear button
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
+        [InlineKeyboardButton(text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear")],
+        [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+    ])
     await message.answer(
-        "SOS отправлен! Помощь в пути.",
+        texts.SOS_SENT.format(cooldown=cooldown_mins),
+        reply_markup=kb,
+    )
+
+
+def _sos_cooldown_kb(remaining_seconds: int) -> InlineKeyboardMarkup:
+    """Keyboard shown when cooldown is active."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
+        [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+    ])
+
+
+@router.callback_query(F.data == "sos_check_ready")
+async def cb_sos_check_ready(callback: CallbackQuery, user=None):
+    """Edit the SOS message to show current remaining cooldown time."""
+    from src.services.sos_service import check_sos_cooldown
+
+    if not user:
+        await callback.answer("Ошибка.")
+        return
+
+    remaining = await check_sos_cooldown(user.id)
+    if remaining <= 0:
+        # Ready — update message to show SOS is available
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚨 Отправить новый SOS", callback_data="menu_sos")],
+            [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+        ])
+        await callback.message.edit_text(texts.SOS_READY_NOW, reply_markup=kb)
+    else:
+        mins = remaining // 60
+        secs = remaining % 60
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
+            [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+        ])
+        try:
+            await callback.message.edit_text(
+                texts.SOS_READY_WAIT.format(mins=mins, secs=secs),
+                reply_markup=kb,
+            )
+        except Exception:
+            pass  # Message may not have changed — ignore edit conflict
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "sos_all_clear")
+async def cb_sos_all_clear(callback: CallbackQuery, user=None, bot=None):
+    """
+    User signals help received. Broadcast all-clear to city.
+    Broadcast runs as a background task.
+    """
+    from src.services.sos_service import get_city_telegram_user_ids
+    from src.services.broadcast import broadcast_background
+    from src.services.user import get_user_profile_display
+
+    if not user or not user.city_id:
+        await callback.answer(texts.SOS_NO_CITY, show_alert=True)
+        return
+
+    profile = await get_user_profile_display(user)
+    # Extract user's display name for the broadcast message
+    name = (
+        getattr(user, "platform_first_name", None)
+        or getattr(callback.from_user, "first_name", None)
+        or "Участник"
+    )
+
+    user_ids = await get_city_telegram_user_ids(user.city_id)
+    send_bot = bot or callback.bot
+
+    if send_bot and user_ids:
+        broadcast_background(
+            send_bot,
+            user_ids,
+            texts.SOS_ALL_CLEAR_BROADCAST.format(name=name),
+            exclude_id=callback.from_user.id,
+        )
+
+    await callback.message.edit_text(
+        "✅ Рады, что всё хорошо! Отбой разослан.",
         reply_markup=get_back_to_menu_kb(),
     )
+    await callback.answer()

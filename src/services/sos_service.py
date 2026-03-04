@@ -1,10 +1,12 @@
-"""SOS service - create alerts and broadcast."""
-from datetime import datetime, timedelta
+"""SOS service — create alerts, Redis-based rate limiting, and broadcast helpers."""
+import asyncio
+from uuid import UUID
+
+from loguru import logger
 
 from src.models.base import get_session_factory
 from src.models.sos_alert import SosAlert, SosType
 from src.config import get_settings
-
 
 TYPE_MAP = {
     "sos_accident": SosType.ACCIDENT,
@@ -13,33 +15,70 @@ TYPE_MAP = {
     "sos_other": SosType.OTHER,
 }
 
+# Redis key pattern: sos_cooldown:<user_id>
+_SOS_COOLDOWN_KEY = "sos_cooldown:{user_id}"
+
+# Module-level Redis client injected at startup (set_redis_client)
+_redis = None
+
+
+def set_redis_client(redis_client) -> None:
+    """Inject the shared Redis client from main.py startup."""
+    global _redis
+    _redis = redis_client
+
+
+def _cooldown_key(user_id: UUID) -> str:
+    return _SOS_COOLDOWN_KEY.format(user_id=str(user_id))
+
+
+async def check_sos_cooldown(user_id: UUID) -> int:
+    """
+    Check if SOS cooldown is active via Redis TTL.
+
+    Returns:
+        0  — no cooldown, SOS is allowed
+        >0 — remaining seconds before next SOS is allowed
+    """
+    if _redis is None:
+        return 0  # Redis unavailable — allow SOS
+    key = _cooldown_key(user_id)
+    ttl = await _redis.ttl(key)
+    return max(0, ttl)
+
+
+async def set_sos_cooldown(user_id: UUID) -> None:
+    """Set Redis TTL key for SOS cooldown. Duration from config."""
+    if _redis is None:
+        return
+    settings = get_settings()
+    cooldown = settings.sos_cooldown_seconds
+    key = _cooldown_key(user_id)
+    await _redis.setex(key, cooldown, "1")
+
 
 async def create_sos_alert(
-    user_id,
-    city_id,
+    user_id: UUID,
+    city_id: UUID,
     sos_type: str,
     lat: float,
     lon: float,
     comment: str | None,
-) -> bool:
-    """Create SOS alert. Returns False if cooldown active."""
+) -> tuple[bool, int]:
+    """
+    Create SOS alert.
+
+    Checks rate limit via Redis TTL (not PostgreSQL).
+    Returns:
+        (True, 0) — alert created
+        (False, remaining_seconds) — cooldown active
+    """
+    remaining = await check_sos_cooldown(user_id)
+    if remaining > 0:
+        return False, remaining
+
     session_factory = get_session_factory()
-    settings = get_settings()
-    cooldown = timedelta(seconds=settings.sos_cooldown_seconds)
-
     async with session_factory() as session:
-        from sqlalchemy import select
-
-        last = await session.execute(
-            select(SosAlert)
-            .where(SosAlert.user_id == user_id)
-            .order_by(SosAlert.created_at.desc())
-            .limit(1)
-        )
-        last_alert = last.scalar_one_or_none()
-        if last_alert and datetime.utcnow() - last_alert.created_at < cooldown:
-            return False
-
         alert = SosAlert(
             user_id=user_id,
             city_id=city_id,
@@ -50,11 +89,15 @@ async def create_sos_alert(
         )
         session.add(alert)
         await session.commit()
+        alert_id = str(alert.id)
 
-    return True
+    # Set cooldown AFTER successful DB write
+    await set_sos_cooldown(user_id)
+
+    return True, 0
 
 
-async def get_city_telegram_user_ids(city_id) -> list[int]:
+async def get_city_telegram_user_ids(city_id: UUID) -> list[int]:
     """Get Telegram user IDs for SOS broadcast."""
     from src.models.user import User, Platform
     from sqlalchemy import select

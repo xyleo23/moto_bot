@@ -32,6 +32,8 @@ def get_event_card_kb(event_id: str, is_registered: bool, user_role: str) -> Inl
         ])
     else:
         rows.append([InlineKeyboardButton(text="Ищу пару", callback_data=f"event_seeking_{event_id}")])
+    # Share button — generates ready-to-forward plain text
+    rows.append([InlineKeyboardButton(text="📤 Поделиться", callback_data=f"event_share_{event_id}")])
     rows.append([InlineKeyboardButton(text="« К списку", callback_data="event_list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

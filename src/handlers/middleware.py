@@ -5,8 +5,31 @@ from aiogram import BaseMiddleware, Bot
 from aiogram.types import Message, CallbackQuery, TelegramObject
 
 from src.services.user import get_or_create_user
-from src.models.user import User
 from src.config import get_settings
+
+# Callback data prefixes and text triggers that bypass the block check.
+# SOS must be accessible at ALL times — even for blocked users.
+_SOS_CALLBACK_PREFIXES = (
+    "menu_sos",
+    "sos_accident",
+    "sos_broken",
+    "sos_ran_out",
+    "sos_other",
+    "sos_skip_comment",
+    "sos_all_clear_",
+)
+_SOS_TEXT_TRIGGERS = ("🆘 SOS",)
+
+
+def _is_sos_event(event: TelegramObject) -> bool:
+    """Return True if the event is SOS-related and must bypass block check."""
+    if isinstance(event, CallbackQuery):
+        data = event.data or ""
+        return any(data == p or data.startswith(p) for p in _SOS_CALLBACK_PREFIXES)
+    if isinstance(event, Message):
+        text = event.text or ""
+        return text in _SOS_TEXT_TRIGGERS
+    return False
 
 
 class BotInjectMiddleware(BaseMiddleware):
@@ -26,7 +49,12 @@ class BotInjectMiddleware(BaseMiddleware):
 
 
 class BlockCheckMiddleware(BaseMiddleware):
-    """Check if user is blocked before processing."""
+    """
+    Check if user is blocked before processing any update.
+
+    SOS callbacks/messages bypass this check completely — emergency
+    functionality must remain available regardless of block status.
+    """
 
     async def __call__(
         self,
@@ -34,6 +62,21 @@ class BlockCheckMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
+        # SOS always passes through — safety-critical feature
+        if _is_sos_event(event):
+            user_id = None
+            if isinstance(event, (Message, CallbackQuery)):
+                user_id = event.from_user.id if event.from_user else None
+            if user_id:
+                user = await get_or_create_user(
+                    platform="telegram",
+                    platform_user_id=user_id,
+                    username=getattr(event.from_user, "username", None),
+                    first_name=getattr(event.from_user, "first_name", None),
+                )
+                data["user"] = user
+            return await handler(event, data)
+
         user_id = None
         if isinstance(event, Message):
             user_id = event.from_user.id if event.from_user else None
@@ -44,8 +87,8 @@ class BlockCheckMiddleware(BaseMiddleware):
             user = await get_or_create_user(
                 platform="telegram",
                 platform_user_id=user_id,
-                username=getattr(event.from_user, "username", None) if hasattr(event, "from_user") and event.from_user else None,
-                first_name=getattr(event.from_user, "first_name", None) if hasattr(event, "from_user") and event.from_user else None,
+                username=getattr(event.from_user, "username", None) if event.from_user else None,
+                first_name=getattr(event.from_user, "first_name", None) if event.from_user else None,
             )
             if user and user.is_blocked:
                 if isinstance(event, Message):

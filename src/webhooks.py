@@ -1,5 +1,8 @@
 """Webhook HTTP server for YooKassa notifications."""
 import asyncio
+import hashlib
+import hmac
+import ipaddress
 import json
 import uuid
 
@@ -11,11 +14,78 @@ from src.models.base import get_session_factory
 from src.models.subscription import Subscription
 from sqlalchemy import select
 
+# YooKassa official IP ranges for webhook sources.
+# Requests from outside these ranges are rejected.
+_YOOKASSA_IP_RANGES = [
+    ipaddress.ip_network("185.71.76.0/27"),
+    ipaddress.ip_network("185.71.77.0/27"),
+    ipaddress.ip_network("77.75.153.0/25"),
+    ipaddress.ip_network("77.75.154.128/25"),
+    ipaddress.ip_network("2a02:5180::/32"),
+]
+
+
+def _is_yookassa_ip(remote_ip: str) -> bool:
+    """Return True if remote_ip belongs to known YooKassa IP ranges."""
+    try:
+        addr = ipaddress.ip_address(remote_ip)
+        return any(addr in net for net in _YOOKASSA_IP_RANGES)
+    except ValueError:
+        return False
+
+
+def _verify_yookassa_signature(body: bytes, signature_header: str, secret_key: str) -> bool:
+    """
+    Verify YooKassa webhook HMAC-SHA256 signature.
+
+    YooKassa signs the raw body with the shop's secret key using HMAC-SHA256
+    and puts the hex digest in the 'X-Content-Signature' header.
+    """
+    if not signature_header or not secret_key:
+        return False
+    try:
+        expected = hmac.new(
+            secret_key.encode("utf-8"),
+            body,
+            hashlib.sha256,
+        ).hexdigest()
+        # compare_digest prevents timing attacks
+        return hmac.compare_digest(expected, signature_header.lower())
+    except Exception as e:
+        logger.warning("Signature verification error: %s", e)
+        return False
+
 
 async def handle_yookassa_webhook(request) -> tuple[int, dict]:
-    """Handle YooKassa notification. Returns (status_code, body)."""
+    """
+    Handle YooKassa notification.
+
+    Security: requests are verified via EITHER:
+    1. HMAC-SHA256 signature in X-Content-Signature header, OR
+    2. Source IP belonging to known YooKassa IP ranges.
+
+    Returns (status_code, body).
+    """
+    settings = get_settings()
+
+    # ── Signature / IP verification ──────────────────────────────────────────
+    body = await request.read()
+    signature = request.headers.get("X-Content-Signature", "")
+    remote_ip = request.remote or ""
+
+    sig_valid = _verify_yookassa_signature(
+        body, signature, settings.yookassa_secret_key or ""
+    )
+    ip_valid = _is_yookassa_ip(remote_ip)
+
+    if not sig_valid and not ip_valid:
+        logger.warning(
+            "YooKassa webhook rejected: invalid signature and untrusted IP %s", remote_ip
+        )
+        return 401, {"error": "Unauthorized"}
+
+    # ── Parse payload ─────────────────────────────────────────────────────────
     try:
-        body = await request.read()
         data = json.loads(body) if body else {}
     except json.JSONDecodeError:
         return 400, {"error": "Invalid JSON"}
@@ -52,7 +122,9 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
                                     "❤️ Спасибо за поддержку проекта!",
                                 )
                             except Exception as e:
-                                logger.warning("Cannot thank donor %s: %s", u.platform_user_id, e)
+                                logger.warning(
+                                    "Cannot thank donor %s: %s", u.platform_user_id, e
+                                )
             except (ValueError, TypeError):
                 pass
         return 200, {"status": "ok", "type": "donate"}
@@ -85,7 +157,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
         logger.error("YooKassa webhook: activate_subscription failed for %s", user_id)
         return 200, {"status": "activate_failed"}
 
-    # Notify user via bot (inject bot from app)
+    # Notify user via bot
     bot = getattr(handle_yookassa_webhook, "_bot", None)
     if bot:
         from src.models.user import User
@@ -136,5 +208,4 @@ async def run_webhook_server(bot=None):
     site = web.TCPSite(runner, "0.0.0.0", settings.webhook_port)
     await site.start()
     logger.info("Webhook server listening on port %s", settings.webhook_port)
-    # Keep running (server is now accepting connections)
     await asyncio.Event().wait()
