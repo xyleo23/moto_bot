@@ -283,11 +283,7 @@ async def msg_admin_text_about(message: Message, state: FSMContext, user=None):
 
 @router.message(F.text == "🏠 Главное меню")
 async def msg_admin_main_menu(message: Message, state: FSMContext, user=None):
-    """Return to main menu, replace admin keyboard with user keyboard."""
-    is_sa = _is_superadmin(message.from_user.id)
-    is_ca = user and user.city_id and await is_city_admin(message.from_user.id, user.city_id)
-    if not is_sa and not is_ca:
-        return
+    """Return to main menu — always works as escape hatch (e.g. after losing admin rights)."""
     from src import texts
     await state.clear()
     await message.answer("⌨️", reply_markup=get_persistent_kb())

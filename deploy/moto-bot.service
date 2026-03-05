@@ -4,11 +4,11 @@ After=network.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
-User=www-data
+User=root
 WorkingDirectory=/opt/moto_bot
 Environment=PLATFORM=telegram
 EnvironmentFile=/opt/moto_bot/.env
-ExecStart=/usr/bin/python3 -m src.main
+ExecStart=/opt/moto_bot/venv/bin/python -m src.main
 Restart=always
 RestartSec=5
 

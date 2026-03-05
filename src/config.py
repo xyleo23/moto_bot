@@ -1,6 +1,13 @@
 """Configuration via Pydantic Settings."""
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
+
+
+def _parse_superadmin_ids(v: str) -> list[int]:
+    """Parse comma-separated IDs string to list[int]."""
+    if not v or not isinstance(v, str):
+        return []
+    return [int(x.strip()) for x in v.split(",") if x.strip()]
 
 
 class Settings(BaseSettings):
@@ -8,6 +15,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,  # env SUPERADMIN_IDS → superadmin_ids_raw via alias
     )
 
     # Platform
@@ -37,22 +45,18 @@ class Settings(BaseSettings):
     yookassa_secret_key: str | None = Field(default=None, description="YooKassa secret key")
     webhook_port: int = Field(default=8080, description="Port for YooKassa webhook server")
 
-    # App
-    superadmin_ids: list[int] = Field(
-        default_factory=list,
-        description="Comma-separated Telegram/MAX user IDs of superadmins (env: SUPERADMIN_IDS)",
+    # App — str избегает JSON-парсинга Pydantic; список через @computed_field
+    superadmin_ids_raw: str = Field(
+        default="",
+        alias="SUPERADMIN_IDS",
+        description="Comma-separated Telegram/MAX user IDs of superadmins",
     )
 
-    @field_validator("superadmin_ids", mode="before")
-    @classmethod
-    def parse_superadmin_ids(cls, v) -> list[int]:
-        if isinstance(v, int):
-            return [v]
-        if isinstance(v, str):
-            return [int(x.strip()) for x in v.split(",") if x.strip()]
-        if isinstance(v, list):
-            return v
-        return []
+    @computed_field
+    @property
+    def superadmin_ids(self) -> list[int]:
+        return _parse_superadmin_ids(self.superadmin_ids_raw)
+
     support_username: str = Field(default="support", description="Support Telegram username")
     support_email: str = Field(default="support@example.com", description="Support email")
 

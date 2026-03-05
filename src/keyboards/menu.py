@@ -64,3 +64,45 @@ def get_back_to_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
     ])
+
+
+def get_admin_superadmin_kb() -> ReplyKeyboardMarkup:
+    """Постоянная клавиатура суперадмина (как в референсном проекте)."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📊 Статистика"),
+                KeyboardButton(text="👥 Пользователи"),
+            ],
+            [
+                KeyboardButton(text="🏙 Админы городов"),
+                KeyboardButton(text="📅 Мероприятия"),
+            ],
+            [
+                KeyboardButton(text="⚙️ Настройки"),
+                KeyboardButton(text="📢 Рассылка"),
+            ],
+            [
+                KeyboardButton(text="📇 Контакты"),
+                KeyboardButton(text="📝 О нас"),
+            ],
+            [KeyboardButton(text="🏠 Главное меню")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def get_admin_city_kb() -> ReplyKeyboardMarkup:
+    """Постоянная клавиатура админа города."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📅 Мероприятия"),
+                KeyboardButton(text="📇 Контакты"),
+            ],
+            [KeyboardButton(text="🏠 Главное меню")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
