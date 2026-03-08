@@ -381,7 +381,10 @@ async def pilot_preview_save(callback: CallbackQuery, state: FSMContext, user=No
         await _finish_pilot_registration(callback.message, state, user)
     except Exception as e:
         logger.exception("_finish_pilot_registration error: %s", e)
-        await callback.message.answer(texts.REG_ERROR_SAVE)
+        try:
+            await callback.message.answer(texts.REG_ERROR_SAVE)
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data == "pilot_preview_edit", PilotRegistration.preview)
@@ -398,6 +401,8 @@ async def pilot_preview_edit(callback: CallbackQuery, state: FSMContext):
 async def _finish_pilot_registration(message: Message, state: FSMContext, user):
     data = await state.get_data()
     await state.clear()
+    platform_user_id = message.from_user.id if message.from_user else None
+    logger.info("_finish_pilot_registration: platform_user_id=%s data_keys=%s", platform_user_id, list(data.keys()))
 
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -412,6 +417,7 @@ async def _finish_pilot_registration(message: Message, state: FSMContext, user):
         )
         u = result.scalar_one_or_none()
         if not u:
+            logger.warning("_finish_pilot_registration: User not found for platform_user_id=%s", platform_user_id)
             await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
             return
 
@@ -427,7 +433,11 @@ async def _finish_pilot_registration(message: Message, state: FSMContext, user):
             from datetime import datetime as dt_cls
             ds = dt_cls.strptime(ds, "%Y-%m-%d").date()
 
-        phone = str(data["phone"])[:20]
+        phone = str(data.get("phone") or "")[:20]
+        if not phone or len(phone) < 5:
+            logger.warning("pilot registration: invalid phone %r", data.get("phone"))
+            await message.answer(texts.REG_ERROR_SAVE)
+            return
         max_about = get_settings().about_text_max_length
         about_clean = (data.get("about") or "")[:max_about] or None
 
@@ -720,7 +730,10 @@ async def passenger_preview_save(callback: CallbackQuery, state: FSMContext, use
         await _finish_passenger_registration(callback.message, state, user)
     except Exception as e:
         logger.exception("_finish_passenger_registration error: %s", e)
-        await callback.message.answer(texts.REG_ERROR_SAVE)
+        try:
+            await callback.message.answer(texts.REG_ERROR_SAVE)
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data == "pax_preview_edit", PassengerRegistration.preview)
@@ -737,6 +750,8 @@ async def passenger_preview_edit(callback: CallbackQuery, state: FSMContext):
 async def _finish_passenger_registration(message: Message, state: FSMContext, user):
     data = await state.get_data()
     await state.clear()
+    platform_user_id = message.from_user.id if message.from_user else None
+    logger.info("_finish_passenger_registration: platform_user_id=%s data_keys=%s", platform_user_id, list(data.keys()))
 
     from sqlalchemy import select
     from src.models.user import User, Platform
@@ -752,6 +767,7 @@ async def _finish_passenger_registration(message: Message, state: FSMContext, us
         )
         u = result.scalar_one_or_none()
         if not u:
+            logger.warning("_finish_passenger_registration: User not found for platform_user_id=%s", platform_user_id)
             await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
             return
 
@@ -774,11 +790,17 @@ async def _finish_passenger_registration(message: Message, state: FSMContext, us
             select(ProfilePassenger).where(ProfilePassenger.user_id == u.id)
         )
         profile = existing.scalar_one_or_none()
+        phone_str = str(data.get("phone") or "")[:20]
+        if not phone_str or len(phone_str) < 5:
+            logger.warning("passenger registration: invalid phone %r", data.get("phone"))
+            await message.answer(texts.REG_ERROR_SAVE)
+            return
+
         if profile:
             profile.name = data["name"]
-            profile.phone = data["phone"][:20]
+            profile.phone = phone_str
             profile.age = data["age"]
-            profile.gender = gender_map.get(data["gender"], PaxGender.OTHER)
+            profile.gender = gender_map.get(str(data.get("gender", "other")), PaxGender.OTHER)
             profile.weight = data["weight"]
             profile.height = data["height"]
             profile.preferred_style = style_map.get(
@@ -790,9 +812,9 @@ async def _finish_passenger_registration(message: Message, state: FSMContext, us
             profile = ProfilePassenger(
                 user_id=u.id,
                 name=data["name"],
-                phone=data["phone"][:20],
+                phone=phone_str,
                 age=data["age"],
-                gender=gender_map.get(data["gender"], PaxGender.OTHER),
+                gender=gender_map.get(str(data.get("gender", "other")), PaxGender.OTHER),
                 weight=data["weight"],
                 height=data["height"],
                 preferred_style=style_map.get(
