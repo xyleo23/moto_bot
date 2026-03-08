@@ -105,6 +105,30 @@ async def run_telegram():
         token=settings.telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+
+    # Сразу снимаем webhook — иначе polling не получит обновления
+    for attempt in range(3):
+        try:
+            wh = await bot.get_webhook_info()
+            if wh.url:
+                logger.warning("Webhook установлен: %s — снимаю (попытка %d)", wh.url, attempt + 1)
+            await bot.delete_webhook(drop_pending_updates=True)
+            # Проверка что webhook снят
+            wh_after = await bot.get_webhook_info()
+            if wh_after.url:
+                logger.error("Webhook всё ещё установлен после delete! URL: %s", wh_after.url)
+            else:
+                logger.info("Webhook снят, polling готов")
+            break
+        except Exception as e:
+            logger.warning("Снятие webhook (попытка %d) не удалось: %s", attempt + 1, e)
+            if attempt < 2:
+                await asyncio.sleep(2)
+            else:
+                logger.error(
+                    "НЕ УДАЛОСЬ СНЯТЬ WEBHOOK после 3 попыток! "
+                    "Бот не получит обновления. Выполни на сервере: ./deploy/check-telegram.sh"
+                )
     dp = Dispatcher(storage=storage)
 
     async def log_updates(handler, event, data):
@@ -172,31 +196,6 @@ async def run_telegram():
             "SUPERADMIN_IDS is empty in .env — никто не получит админ-панель. "
             "Добавь свой Telegram user_id (например через @userinfobot)"
         )
-    # Удаляем webhook — при polling Telegram отправляет обновления только в getUpdates.
-    # Если webhook установлен, polling не получает обновления.
-    for attempt in range(3):
-        try:
-            wh = await bot.get_webhook_info()
-            # #region agent log
-            import json
-            import time
-            try:
-                with open(str(__import__("pathlib").Path(__file__).resolve().parents[1] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"sessionId":"ca1ad6","location":"main.py:webhook","message":"Webhook info","data":{"webhook_url":wh.url or "(none)"},"timestamp":int(time.time()*1000),"hypothesisId":"H5"}, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-            # #endregion
-            if wh.url:
-                logger.warning("Webhook was set: %s — removing for polling (attempt %d)", wh.url, attempt + 1)
-            await bot.delete_webhook(drop_pending_updates=True)
-            logger.info("Webhook removed, polling ready")
-            break
-        except Exception as e:
-            logger.warning("Webhook check/delete attempt %d failed: %s", attempt + 1, e)
-            if attempt < 2:
-                await asyncio.sleep(2)
-            else:
-                logger.error("Webhook delete failed after 3 attempts — bot may not receive updates!")
     try:
         await dp.start_polling(bot)
     finally:

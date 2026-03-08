@@ -23,7 +23,7 @@ jobs:
           script: |
             cd $DEPLOY_PATH
             git pull origin main
-            ./deploy/check-telegram.sh 2>/dev/null || true
+            ./deploy/check-telegram.sh || echo "check-telegram.sh: выполни вручную при проблемах с /start"
             docker compose -f docker-compose.prod.yml build bot --no-cache
             docker compose -f docker-compose.prod.yml up -d
             echo "Deploy done."

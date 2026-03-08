@@ -1,5 +1,5 @@
 """Configuration via Pydantic Settings."""
-from pydantic import Field, computed_field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,16 +45,16 @@ class Settings(BaseSettings):
     yookassa_secret_key: str | None = Field(default=None, description="YooKassa secret key")
     webhook_port: int = Field(default=8080, description="Port for YooKassa webhook server")
 
-    # App — str избегает JSON-парсинга Pydantic; список через @computed_field
+    # App — str избегает JSON-парсинга; @property не участвует в env-загрузке
     superadmin_ids_raw: str = Field(
         default="",
         alias="SUPERADMIN_IDS",
         description="Comma-separated Telegram/MAX user IDs of superadmins",
     )
 
-    @computed_field
     @property
     def superadmin_ids(self) -> list[int]:
+        """List of superadmin IDs — computed from superadmin_ids_raw."""
         return _parse_superadmin_ids(self.superadmin_ids_raw)
 
     support_username: str = Field(default="support", description="Support Telegram username")
