@@ -378,7 +378,7 @@ async def _show_pilot_preview(message: Message, state: FSMContext):
 async def pilot_preview_save(callback: CallbackQuery, state: FSMContext, user=None):
     await callback.answer()
     try:
-        await _finish_pilot_registration(callback.message, state, user)
+        await _finish_pilot_registration(callback.message, state, user, platform_user_id=callback.from_user.id)
     except Exception as e:
         logger.exception("_finish_pilot_registration error: %s", e)
         try:
@@ -398,11 +398,14 @@ async def pilot_preview_edit(callback: CallbackQuery, state: FSMContext):
     )
 
 
-async def _finish_pilot_registration(message: Message, state: FSMContext, user):
+async def _finish_pilot_registration(
+    message: Message, state: FSMContext, user, *, platform_user_id: int | None = None
+):
+    """Finish pilot registration. platform_user_id обязателен при вызове из callback (message.from_user = бот)."""
     data = await state.get_data()
     await state.clear()
-    platform_user_id = message.from_user.id if message.from_user else None
-    logger.info("_finish_pilot_registration: platform_user_id=%s data_keys=%s", platform_user_id, list(data.keys()))
+    pid = platform_user_id or (message.from_user.id if message.from_user else None)
+    logger.info("_finish_pilot_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys()))
 
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -411,13 +414,13 @@ async def _finish_pilot_registration(message: Message, state: FSMContext, user):
 
         result = await session.execute(
             select(User).where(
-                User.platform_user_id == message.from_user.id,
+                User.platform_user_id == pid,
                 User.platform == Platform.TELEGRAM,
             )
         )
         u = result.scalar_one_or_none()
         if not u:
-            logger.warning("_finish_pilot_registration: User not found for platform_user_id=%s", platform_user_id)
+            logger.warning("_finish_pilot_registration: User not found for platform_user_id=%s", pid)
             await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
             return
 
@@ -481,7 +484,7 @@ async def _finish_pilot_registration(message: Message, state: FSMContext, user):
 
     await message.answer(
         texts.REG_DONE,
-        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+        reply_markup=get_main_menu_kb(platform_user_id=pid),
     )
 
 
@@ -727,7 +730,7 @@ async def _show_passenger_preview(message: Message, state: FSMContext):
 async def passenger_preview_save(callback: CallbackQuery, state: FSMContext, user=None):
     await callback.answer()
     try:
-        await _finish_passenger_registration(callback.message, state, user)
+        await _finish_passenger_registration(callback.message, state, user, platform_user_id=callback.from_user.id)
     except Exception as e:
         logger.exception("_finish_passenger_registration error: %s", e)
         try:
@@ -747,11 +750,14 @@ async def passenger_preview_edit(callback: CallbackQuery, state: FSMContext):
     )
 
 
-async def _finish_passenger_registration(message: Message, state: FSMContext, user):
+async def _finish_passenger_registration(
+    message: Message, state: FSMContext, user, *, platform_user_id: int | None = None
+):
+    """Finish passenger registration. platform_user_id обязателен при вызове из callback (message.from_user = бот)."""
     data = await state.get_data()
     await state.clear()
-    platform_user_id = message.from_user.id if message.from_user else None
-    logger.info("_finish_passenger_registration: platform_user_id=%s data_keys=%s", platform_user_id, list(data.keys()))
+    pid = platform_user_id or (message.from_user.id if message.from_user else None)
+    logger.info("_finish_passenger_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys()))
 
     from sqlalchemy import select
     from src.models.user import User, Platform
@@ -761,13 +767,13 @@ async def _finish_passenger_registration(message: Message, state: FSMContext, us
     async with session_factory() as session:
         result = await session.execute(
             select(User).where(
-                User.platform_user_id == message.from_user.id,
+                User.platform_user_id == pid,
                 User.platform == Platform.TELEGRAM,
             )
         )
         u = result.scalar_one_or_none()
         if not u:
-            logger.warning("_finish_passenger_registration: User not found for platform_user_id=%s", platform_user_id)
+            logger.warning("_finish_passenger_registration: User not found for platform_user_id=%s", pid)
             await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
             return
 
@@ -828,5 +834,5 @@ async def _finish_passenger_registration(message: Message, state: FSMContext, us
 
     await message.answer(
         texts.REG_DONE,
-        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+        reply_markup=get_main_menu_kb(platform_user_id=pid),
     )
