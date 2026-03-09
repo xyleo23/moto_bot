@@ -73,6 +73,111 @@ async def cmd_cancel(message: Message, state: FSMContext):
     )
 
 
+@router.message(Command("sos"))
+async def cmd_sos(message: Message, state: FSMContext, user=None):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.handlers.sos import SosStates
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
+        [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
+        [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
+        [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
+        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+    ])
+    await state.set_state(SosStates.choose_type)
+    await message.answer("🚨 Выбери тип SOS:", reply_markup=kb)
+
+
+@router.message(Command("profile"))
+async def cmd_profile(message: Message, state: FSMContext, user=None):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.profile_service import get_profile_text
+    from src.services.subscription import check_subscription_required
+    if not user:
+        await message.answer(texts.WELCOME_RETURNING, reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id))
+        return
+    profile_text = await get_profile_text(user)
+    sub_required = await check_subscription_required(user)
+    kb_rows = [[InlineKeyboardButton(text="Редактировать анкету", callback_data="profile_edit")]]
+    if sub_required:
+        kb_rows.append([InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")])
+    kb_rows.extend([
+        [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
+        [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
+        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+    ])
+    await message.answer(profile_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+
+
+@router.message(Command("motopair"))
+async def cmd_motopair(message: Message, state: FSMContext, user=None):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.subscription import check_subscription_required
+    if user and await check_subscription_required(user):
+        await message.answer(
+            "Для доступа к поиску мотопары нужна активная подписка.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+            ]),
+        )
+        return
+    await message.answer("🏍 Мотопара\n\nВыбери категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Анкеты Пилотов", callback_data="motopair_pilots")],
+        [InlineKeyboardButton(text="Анкеты Двоек", callback_data="motopair_passengers")],
+        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+    ]))
+
+
+@router.message(Command("events"))
+async def cmd_events(message: Message, state: FSMContext, user=None):
+    from src.services.subscription import check_subscription_required
+    from src.config import get_settings
+    from src.services.admin_service import is_city_admin
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    is_sa = message.from_user.id in get_settings().superadmin_ids
+    is_ca = user and user.city_id and await is_city_admin(message.from_user.id, user.city_id)
+    if not (is_sa or is_ca) and user and await check_subscription_required(user):
+        await message.answer(
+            "Для доступа к мероприятиям нужна активная подписка.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+            ]),
+        )
+        return
+    from src.keyboards.events import get_events_menu_kb
+    await message.answer("📅 Мероприятия", reply_markup=get_events_menu_kb())
+
+
+@router.message(Command("contacts"))
+async def cmd_contacts(message: Message, state: FSMContext, user=None):
+    from src.keyboards.contacts import get_contacts_menu_kb
+    await message.answer("📇 Полезные контакты", reply_markup=get_contacts_menu_kb())
+
+
+@router.message(Command("about"))
+async def cmd_about(message: Message, state: FSMContext, user=None):
+    from src.services.admin_service import get_global_text
+    from src.handlers.about import DEFAULT_ABOUT
+    from src.keyboards.menu import get_back_to_menu_kb
+    from src.config import get_settings
+    s = get_settings()
+    text_db = await get_global_text("about_us")
+    about_text = (text_db or DEFAULT_ABOUT).strip()
+    about_text += f"\n\n📧 {s.support_email}"
+    await message.answer(about_text, reply_markup=get_back_to_menu_kb())
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message, state: FSMContext, user=None):
+    from src.config import get_settings
+    if message.from_user.id not in get_settings().superadmin_ids:
+        return
+    from src.keyboards.admin import get_admin_panel_kb
+    await message.answer("⚙️ Панель администратора", reply_markup=get_admin_panel_kb())
+
+
 @router.callback_query(F.data == "menu_main")
 async def cb_menu_main(callback: CallbackQuery, state: FSMContext):
     await state.clear()

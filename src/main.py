@@ -166,6 +166,35 @@ async def run_telegram():
     webhook_task = asyncio.create_task(run_webhook_server(bot))
     scheduler_task = asyncio.create_task(run_scheduler(bot))
 
+    # Команды для всех пользователей
+    from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
+    user_commands = [
+        BotCommand(command="start",    description="🏠 Главное меню"),
+        BotCommand(command="cancel",   description="❌ Отменить текущее действие"),
+        BotCommand(command="sos",      description="🚨 Экстренный SOS"),
+        BotCommand(command="profile",  description="👤 Мой профиль"),
+        BotCommand(command="motopair", description="🏍 Поиск мотопары"),
+        BotCommand(command="events",   description="📅 Мероприятия"),
+        BotCommand(command="contacts", description="📞 Полезные контакты"),
+        BotCommand(command="about",    description="ℹ️ О нас"),
+    ]
+    await bot.set_my_commands(commands=user_commands, scope=BotCommandScopeDefault())
+
+    # Расширенное меню для суперадминов (добавляем /admin)
+    admin_commands = user_commands + [
+        BotCommand(command="admin", description="⚙️ Панель администратора"),
+    ]
+    for sa_id in settings.superadmin_ids:
+        try:
+            await bot.set_my_commands(
+                commands=admin_commands,
+                scope=BotCommandScopeChat(chat_id=sa_id),
+            )
+        except Exception as e:
+            logger.warning(f"Cannot set admin commands for {sa_id}: {e}")
+
+    logger.info("Bot commands registered")
+
     sa_count = len(settings.superadmin_ids)
     logger.info(f"Starting Telegram bot... (superadmins: {sa_count})")
     if sa_count == 0:
