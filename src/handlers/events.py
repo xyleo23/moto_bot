@@ -2,6 +2,7 @@
 import uuid
 from datetime import datetime
 
+from loguru import logger
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
@@ -214,8 +215,18 @@ async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext):
 @router.message(EventCreateStates.title, F.text)
 async def evcreate_title(message: Message, state: FSMContext):
     text = message.text.strip()
+    data = await state.get_data()
+    event_type = data.get("event_type", "")
+
     if text.lower() in ("пропустить", "skip", "-"):
+        # Для «Масштабных» название обязательно
+        if event_type == "large":
+            await message.answer(
+                "Для масштабного мероприятия название обязательно. Введи название:"
+            )
+            return
         text = None
+
     await state.update_data(title=text or None)
     await state.set_state(EventCreateStates.start_date)
     await message.answer("Дата начала (ДД.ММ.ГГГГ):")
@@ -536,8 +547,8 @@ async def cb_event_pair_request(callback: CallbackQuery, user=None, bot=None):
                 f"💌 Заявка на пару!\n\n{from_text} хочет поехать с тобой на мероприятие «{ev.title or 'Мероприятие'}».",
                 reply_markup=get_pair_request_kb(str(eid), str(user.id)),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Cannot send pair request notification to {to_platform_id}: {e}")
     await callback.answer("Заявка отправлена!")
 
 
@@ -571,8 +582,8 @@ async def cb_event_pair_accept(callback: CallbackQuery, user=None, bot=None):
                     [InlineKeyboardButton(text="Написать", url=f"tg://user?id={callback.from_user.id}")],
                 ]),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Cannot notify user {from_platform_id} about pair accept: {e}")
     await callback.message.edit_text("✅ Заявка принята!")
     await callback.answer()
 
@@ -636,8 +647,8 @@ async def cb_event_cancel(callback: CallbackQuery, user=None, bot=None):
                         pid,
                         f"❌ Мероприятие «{ev.title or 'Мероприятие'}» отменено организатором.",
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Cannot notify participant {pid} about event cancel: {e}")
     await callback.message.edit_text(
         "Мероприятие отменено. Участники уведомлены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
