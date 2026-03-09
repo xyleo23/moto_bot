@@ -92,6 +92,21 @@ def _format_event_share_text(e) -> str:
 
 @router.callback_query(F.data == "menu_events")
 async def cb_events_menu(callback: CallbackQuery, user=None):
+    from src.services.subscription import check_subscription_required
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    if user and await check_subscription_required(user):
+        await callback.message.edit_text(
+            "Для доступа к мероприятиям нужна активная подписка.\n"
+            "Подписка даёт доступ к просмотру, записи и поиску мотопары на мероприятиях.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+            ]),
+        )
+        await callback.answer()
+        return
+
     await callback.message.edit_text("📅 Мероприятия", reply_markup=get_events_menu_kb())
     await callback.answer()
 

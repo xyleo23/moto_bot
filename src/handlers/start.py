@@ -161,7 +161,21 @@ async def kb_sos(message: Message, state: FSMContext, user=None):
 
 @router.message(F.text == "🏍 Мотопара")
 async def kb_motopair(message: Message, state: FSMContext, user=None):
+    """Handle MotoPair from persistent keyboard. Must check subscription same as menu_motopair."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.subscription import check_subscription_required
+
+    if user and await check_subscription_required(user):
+        await message.answer(
+            "Для доступа к поиску мотопары нужна активная подписка.\n"
+            "Подписка даёт доступ к анкетам и контактам.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+            ]),
+        )
+        return
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Анкеты Пилотов", callback_data="motopair_pilots")],
         [InlineKeyboardButton(text="Анкеты Двоек", callback_data="motopair_passengers")],
@@ -175,10 +189,23 @@ async def kb_events(message: Message, state: FSMContext, user=None):
     from src.config import get_settings
     from src.services.admin_service import is_city_admin, get_admin_events
     from src.services.event_service import TYPE_LABELS
+    from src.services.subscription import check_subscription_required
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     is_sa = message.from_user.id in get_settings().superadmin_ids
     is_ca = user and user.city_id and await is_city_admin(message.from_user.id, user.city_id)
+
+    # Subscription check for regular users (admins bypass)
+    if not (is_sa or is_ca) and user and await check_subscription_required(user):
+        await message.answer(
+            "Для доступа к мероприятиям нужна активная подписка.\n"
+            "Подписка даёт доступ к просмотру, записи и поиску мотопары на мероприятиях.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+            ]),
+        )
+        return
     if is_sa or is_ca:
         events = await get_admin_events(superadmin=is_sa, city_id=user.city_id if user else None)
         rows = []
