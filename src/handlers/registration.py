@@ -130,7 +130,14 @@ async def pilot_phone(message: Message, state: FSMContext, user=None):
 
 @router.message(PilotRegistration.phone)
 async def pilot_phone_fallback(message: Message, state: FSMContext):
-    await message.answer("Нажми кнопку «Отправить мой номер» для передачи контакта.")
+    await message.answer(
+        "Нажми кнопку «Отправить мой номер» для передачи контакта.",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Отправить мой номер", request_contact=True)]],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+        ),
+    )
 
 
 @router.message(PilotRegistration.age, F.text)
@@ -526,7 +533,14 @@ async def passenger_phone(message: Message, state: FSMContext):
 
 @router.message(PassengerRegistration.phone)
 async def passenger_phone_fallback(message: Message, state: FSMContext):
-    await message.answer("Нажми кнопку «Отправить мой номер».")
+    await message.answer(
+        "Нажми кнопку «Отправить мой номер».",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Отправить мой номер", request_contact=True)]],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+        ),
+    )
 
 
 @router.message(PassengerRegistration.age, F.text)
