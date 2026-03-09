@@ -87,7 +87,7 @@ async def run_telegram():
         from src.services.sos_service import set_redis_client
         set_redis_client(redis)
     except Exception as e:
-        logger.warning("Redis unavailable (%s), using MemoryStorage", e)
+        logger.warning(f"Redis unavailable ({e}), using MemoryStorage")
         from aiogram.fsm.storage.memory import MemoryStorage
         storage = MemoryStorage()
         _redis = None
@@ -102,17 +102,17 @@ async def run_telegram():
         try:
             wh = await bot.get_webhook_info()
             if wh.url:
-                logger.warning("Webhook установлен: %s — снимаю (попытка %d)", wh.url, attempt + 1)
+                logger.warning(f"Webhook установлен: {wh.url} — снимаю (попытка {attempt + 1})")
             await bot.delete_webhook(drop_pending_updates=True)
             # Проверка что webhook снят
             wh_after = await bot.get_webhook_info()
             if wh_after.url:
-                logger.error("Webhook всё ещё установлен после delete! URL: %s", wh_after.url)
+                logger.error(f"Webhook всё ещё установлен после delete! URL: {wh_after.url}")
             else:
                 logger.info("Webhook снят, polling готов")
             break
         except Exception as e:
-            logger.warning("Снятие webhook (попытка %d) не удалось: %s", attempt + 1, e)
+            logger.warning(f"Снятие webhook (попытка {attempt + 1}) не удалось: {e}")
             if attempt < 2:
                 await asyncio.sleep(2)
             else:
@@ -124,9 +124,9 @@ async def run_telegram():
 
     async def log_updates(handler, event, data):
         if hasattr(event, "text") and event.text:
-            logger.info("INCOMING: user=%s text=%r", getattr(event.from_user, "id", None), event.text[:80])
+            logger.info(f"INCOMING: user={getattr(event.from_user, 'id', None)} text={event.text[:80]!r}")
         elif hasattr(event, "data") and event.data:
-            logger.info("INCOMING: callback user=%s data=%r", getattr(event.from_user, "id", None), event.data[:80])
+            logger.info(f"INCOMING: callback user={getattr(event.from_user, 'id', None)} data={event.data[:80]!r}")
         return await handler(event, data)
 
     dp.message.middleware(log_updates)
@@ -152,7 +152,7 @@ async def run_telegram():
 
     @dp.errors()
     async def errors_handler(event):
-        logger.exception("Update %s caused error: %s", event.update, event.exception)
+        logger.exception(f"Update {event.update} caused error: {event.exception}")
 
     await ensure_cities()
     await ensure_subscription_settings()
@@ -214,7 +214,7 @@ async def run_max():
                     if isinstance(upd, dict):
                         await process_max_update(adapter, upd)
             except Exception as e:
-                logger.exception("MAX poll error: %s", e)
+                logger.exception(f"MAX poll error: {e}")
                 await asyncio.sleep(5)
     finally:
         await adapter.close()
