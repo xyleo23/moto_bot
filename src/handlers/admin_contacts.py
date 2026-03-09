@@ -11,6 +11,7 @@ from src.keyboards.contacts import (
     get_admin_contacts_menu_kb,
     get_admin_contact_categories_kb,
     get_admin_contact_edit_kb,
+    get_admin_contact_edit_fields_kb,
 )
 from src.keyboards.menu import get_back_to_menu_kb
 from src.services.useful_contacts_service import (
@@ -33,6 +34,11 @@ class ContactAddStates(StatesGroup):
     phone = State()
     link = State()
     address = State()
+
+
+class ContactEditStates(StatesGroup):
+    """Editing single field of a contact."""
+    value = State()
 
 
 @router.callback_query(F.data == "admin_contacts")
@@ -213,14 +219,126 @@ async def cb_admin_contact_del(callback: CallbackQuery, user=None):
 
 
 @router.callback_query(F.data.startswith("admin_contact_edit_"))
-async def cb_admin_contact_edit(callback: CallbackQuery, user=None):
+async def cb_admin_contact_edit(callback: CallbackQuery, state: FSMContext, user=None):
     if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
         await callback.answer("Доступ запрещён.")
         return
+    cid = callback.data.replace("admin_contact_edit_", "")
+    c = await get_contact_by_id(uuid.UUID(cid))
+    if not c:
+        await callback.answer("Контакт не найден.", show_alert=True)
+        return
+    await state.clear()
     await callback.message.edit_text(
-        "Редактирование контакта — в разработке. Пока доступно только удаление.",
-        reply_markup=get_admin_contact_edit_kb(callback.data.replace("admin_contact_edit_", "")),
+        f"Выбери поле для редактирования контакта <b>{c.name}</b>:",
+        reply_markup=get_admin_contact_edit_fields_kb(cid),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_contact_ef_"))
+async def cb_admin_contact_edit_field(callback: CallbackQuery, state: FSMContext, user=None):
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+        await callback.answer("Доступ запрещён.")
+        return
+    # admin_contact_ef_{cid}_{field}
+    parts = callback.data.replace("admin_contact_ef_", "").split("_", 1)
+    if len(parts) != 2:
+        await callback.answer()
+        return
+    cid, field = parts[0], parts[1]
+    if field not in ("name", "description", "phone", "link", "address", "category"):
+        await callback.answer()
+        return
+    c = await get_contact_by_id(uuid.UUID(cid))
+    if not c:
+        await callback.answer("Контакт не найден.", show_alert=True)
+        return
+    prompts = {
+        "name": "Введи новое название:",
+        "description": "Введи новое описание (или «Пропустить» для очистки):",
+        "phone": "Введи новый телефон (или «Пропустить» для очистки):",
+        "link": "Введи новую ссылку (или «Пропустить» для очистки):",
+        "address": "Введи новый адрес (или «Пропустить» для очистки):",
+        "category": "Выбери категорию:",
+    }
+    await state.update_data(contact_edit_id=cid, contact_edit_field=field)
+    await state.set_state(ContactEditStates.value)
+    if field == "category":
+        await callback.message.edit_text(
+            "Выбери новую категорию:",
+            reply_markup=get_admin_contact_categories_kb(f"admin_contact_ev_{cid}"),
+        )
+    else:
+        await callback.message.edit_text(prompts[field])
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_contact_ev_"), ContactEditStates.value)
+async def cb_admin_contact_edit_value_category(callback: CallbackQuery, state: FSMContext, user=None):
+    """Обработка выбора категории при редактировании."""
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+        await callback.answer("Доступ запрещён.")
+        return
+    # admin_contact_ev_{cid}_{category}
+    raw = callback.data.replace("admin_contact_ev_", "")
+    parts = raw.split("_", 1)
+    if len(parts) != 2:
+        await callback.answer()
+        return
+    cid, cat = parts[0], parts[1]
+    if cat not in ("motoshop", "motoservice", "motoschool", "motoclubs", "motoevac", "other"):
+        await callback.answer()
+        return
+    data = await state.get_data()
+    if data.get("contact_edit_field") != "category" or data.get("contact_edit_id") != cid:
+        await callback.answer()
+        return
+    ok = await update_contact(uuid.UUID(cid), category=cat)
+    await state.clear()
+    if ok:
+        c = await get_contact_by_id(uuid.UUID(cid))
+        text = (
+            f"✅ Категория обновлена.\n\n<b>{c.name}</b>\n"
+            f"Категория: {CAT_LABELS.get(c.category.value, c.category.value)}\n"
+            f"Описание: {c.description or '—'}\nТелефон: {c.phone or '—'}\n"
+            f"Ссылка: {c.link or '—'}\nАдрес: {c.address or '—'}"
+        )
+        await callback.message.edit_text(text, reply_markup=get_admin_contact_edit_kb(cid))
+    else:
+        await callback.message.edit_text("Ошибка.", reply_markup=get_admin_contact_edit_kb(cid))
+    await callback.answer()
+
+
+@router.message(ContactEditStates.value, F.text)
+async def admin_contact_edit_value_message(message: Message, state: FSMContext, user=None):
+    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+        return
+    data = await state.get_data()
+    cid = data.get("contact_edit_id")
+    field = data.get("contact_edit_field")
+    if not cid or not field or field == "category":
+        await state.clear()
+        return
+    text = message.text.strip()
+    if text.lower() in ("пропустить", "skip", "-") and field != "name":
+        text = None
+    elif field == "name" and not text:
+        await message.answer("Название не может быть пустым.")
+        return
+    updates = {field: text if text else None}
+    ok = await update_contact(uuid.UUID(cid), **updates)
+    await state.clear()
+    if ok:
+        c = await get_contact_by_id(uuid.UUID(cid))
+        text_msg = (
+            f"✅ Поле обновлено.\n\n<b>{c.name}</b>\n"
+            f"Категория: {CAT_LABELS.get(c.category.value, c.category.value)}\n"
+            f"Описание: {c.description or '—'}\nТелефон: {c.phone or '—'}\n"
+            f"Ссылка: {c.link or '—'}\nАдрес: {c.address or '—'}"
+        )
+        await message.answer(text_msg, reply_markup=get_admin_contact_edit_kb(cid))
+    else:
+        await message.answer("Ошибка.", reply_markup=get_admin_contacts_menu_kb())
 
 

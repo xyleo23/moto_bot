@@ -86,17 +86,6 @@ class BlockCheckMiddleware(BaseMiddleware):
 
         user = None
         if user_id:
-            # #region agent log
-            text = getattr(event, "text", "") or ""
-            if "/start" in text:
-                import json
-                import time
-                try:
-                    with open(str(__import__("pathlib").Path(__file__).resolve().parents[2] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"ca1ad6","location":"middleware.py:BlockCheck","message":"BlockCheck before get_or_create_user","data":{"user_id":user_id},"timestamp":int(time.time()*1000),"hypothesisId":"H3"}, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-            # #endregion
             try:
                 user = await get_or_create_user(
                     platform="telegram",
@@ -106,25 +95,7 @@ class BlockCheckMiddleware(BaseMiddleware):
                 )
             except Exception as e:
                 logger.warning("BlockCheckMiddleware: get_or_create_user failed for %s: %s", user_id, e)
-                # #region agent log
-                import json
-                import time
-                try:
-                    with open(str(__import__("pathlib").Path(__file__).resolve().parents[2] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"ca1ad6","location":"middleware.py:BlockCheck","message":"get_or_create_user FAILED","data":{"user_id":user_id,"error":str(e)},"timestamp":int(time.time()*1000),"hypothesisId":"H3,H5"}, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-                # #endregion
             if user and user.is_blocked:
-                # #region agent log
-                import json
-                import time
-                try:
-                    with open(str(__import__("pathlib").Path(__file__).resolve().parents[2] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"ca1ad6","location":"middleware.py:BlockCheck","message":"User BLOCKED - handler NOT called","data":{"user_id":user_id},"timestamp":int(time.time()*1000),"hypothesisId":"H3"}, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-                # #endregion
                 if isinstance(event, Message):
                     await event.answer("Вы заблокированы. Обратитесь в поддержку.")
                 elif isinstance(event, CallbackQuery):

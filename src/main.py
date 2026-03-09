@@ -76,15 +76,6 @@ async def run_telegram():
     if not settings.telegram_bot_token:
         raise ValueError("TELEGRAM_BOT_TOKEN is required for Telegram platform")
 
-    # #region agent log
-    import json
-    import time
-    try:
-        with open(str(__import__("pathlib").Path(__file__).resolve().parents[1] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
-            f.write(json.dumps({"sessionId":"ca1ad6","location":"main.py:run_telegram","message":"run_telegram starting","data":{},"timestamp":int(time.time()*1000),"hypothesisId":"H1,H5"}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
     init_db()
 
     try:
@@ -132,17 +123,6 @@ async def run_telegram():
     dp = Dispatcher(storage=storage)
 
     async def log_updates(handler, event, data):
-        # #region agent log
-        import json
-        import time
-        text = getattr(event, "text", None) or ""
-        if "/start" in (text or ""):
-            try:
-                with open(str(__import__("pathlib").Path(__file__).resolve().parents[1] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"sessionId":"ca1ad6","location":"main.py:log_updates","message":"INCOMING /start","data":{"user_id":getattr(event.from_user,"id",None),"text":text[:50]},"timestamp":int(time.time()*1000),"hypothesisId":"H2"}, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-        # #endregion
         if hasattr(event, "text") and event.text:
             logger.info("INCOMING: user=%s text=%r", getattr(event.from_user, "id", None), event.text[:80])
         elif hasattr(event, "data") and event.data:
@@ -247,16 +227,6 @@ def main():
     setup_logging()
     settings = get_settings()
     platform = settings.platform.lower()
-
-    # #region agent log
-    import json
-    import time
-    try:
-        with open(str(__import__("pathlib").Path(__file__).resolve().parents[1] / "debug-ca1ad6.log"), "a", encoding="utf-8") as f:
-            f.write(json.dumps({"sessionId":"ca1ad6","location":"main.py:main","message":"Platform selected","data":{"platform":platform,"has_telegram_token":bool(settings.telegram_bot_token)},"timestamp":int(time.time()*1000),"hypothesisId":"H1"}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
 
     if platform == "telegram":
         asyncio.run(run_telegram())

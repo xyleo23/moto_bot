@@ -56,3 +56,22 @@ def get_admin_contact_edit_kb(contact_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_contact_del_{contact_id}")],
         [InlineKeyboardButton(text="« Назад", callback_data="admin_contact_list")],
     ])
+
+
+def get_admin_contact_edit_fields_kb(contact_id: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора поля для редактирования."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Название", callback_data=f"admin_contact_ef_{contact_id}_name"),
+            InlineKeyboardButton(text="Описание", callback_data=f"admin_contact_ef_{contact_id}_description"),
+        ],
+        [
+            InlineKeyboardButton(text="Телефон", callback_data=f"admin_contact_ef_{contact_id}_phone"),
+            InlineKeyboardButton(text="Ссылка", callback_data=f"admin_contact_ef_{contact_id}_link"),
+        ],
+        [
+            InlineKeyboardButton(text="Адрес", callback_data=f"admin_contact_ef_{contact_id}_address"),
+            InlineKeyboardButton(text="Категория", callback_data=f"admin_contact_ef_{contact_id}_category"),
+        ],
+        [InlineKeyboardButton(text="« Назад", callback_data=f"admin_contact_view_{contact_id}")],
+    ])
