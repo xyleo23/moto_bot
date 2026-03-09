@@ -64,21 +64,45 @@ async def cb_profile_menu(callback: CallbackQuery, user=None):
 @router.callback_query(F.data == "profile_subscribe")
 async def cb_profile_subscribe(callback: CallbackQuery, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.admin_service import get_subscription_settings
     from src.config import get_settings
 
+    # БД — источник истины, env — fallback
+    settings_db = await get_subscription_settings()
     s = get_settings()
+
+    monthly_price = (
+        settings_db.monthly_price_kopecks // 100
+        if settings_db and settings_db.monthly_price_kopecks
+        else s.subscription_monthly_price // 100
+    )
+    season_price = (
+        settings_db.season_price_kopecks // 100
+        if settings_db and settings_db.season_price_kopecks
+        else s.subscription_season_price // 100
+    )
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text=f"1 месяц — {s.subscription_monthly_price // 100} ₽",
+            text=f"1 месяц — {monthly_price} ₽",
             callback_data="sub_monthly",
         )],
         [InlineKeyboardButton(
-            text=f"Сезон — {s.subscription_season_price // 100} ₽",
+            text=f"Сезон — {season_price} ₽",
             callback_data="sub_season",
         )],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
     ])
-    await callback.message.edit_text("Выбери срок подписки:", reply_markup=kb)
+    await callback.message.edit_text(
+        "Для доступа к поиску мотопары нужна активная подписка.\n\n"
+        "Подписка даёт:\n"
+        "• Просмотр анкет пилотов и двоек\n"
+        "• Лайки и совпадения с контактами\n"
+        "• Создание мероприятий бесплатно\n"
+        "• Поднятие анкеты (по настройке)\n\n"
+        "Выбери срок:",
+        reply_markup=kb,
+    )
     await callback.answer()
 
 
