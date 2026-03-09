@@ -1,7 +1,7 @@
 """Progress bar utility for FSM registration steps."""
 
 FILLED = "🔘"
-CURRENT = "🔸"
+CURRENT = "🏍"
 EMPTY = "⚪"
 
 
