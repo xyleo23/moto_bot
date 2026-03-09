@@ -167,10 +167,7 @@ async def run_telegram():
     scheduler_task = asyncio.create_task(run_scheduler(bot))
 
     sa_count = len(settings.superadmin_ids)
-    logger.info(
-        "Starting Telegram bot... (superadmins: %d)",
-        sa_count,
-    )
+    logger.info(f"Starting Telegram bot... (superadmins: {sa_count})")
     if sa_count == 0:
         logger.warning(
             "SUPERADMIN_IDS is empty in .env — никто не получит админ-панель. "
