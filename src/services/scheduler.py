@@ -56,7 +56,7 @@ async def _check_expiring_subscriptions(bot) -> None:
             except Exception as e:
                 logger.debug("Cannot send expiry reminder to %s: %s", user.platform_user_id, e)
 
-        logger.info("Subscription expiry check done: %d users notified", len(rows))
+        logger.info(f"Subscription expiry check done: {len(rows)} users notified")
     except Exception as e:
         logger.exception("Error in _check_expiring_subscriptions: %s", e)
 

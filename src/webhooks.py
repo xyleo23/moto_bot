@@ -255,5 +255,5 @@ async def run_webhook_server(bot=None):
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", settings.webhook_port)
     await site.start()
-    logger.info("Webhook server listening on port %s", settings.webhook_port)
+    logger.info(f"Webhook server listening on port {settings.webhook_port}")
     await asyncio.Event().wait()
