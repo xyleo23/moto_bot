@@ -177,9 +177,22 @@ def _format_profile(profile, username: str | None = None) -> str:
 async def cb_motopair_list(callback: CallbackQuery, user=None):
     from src.services.motopair_service import get_next_profile
     from src.services.filter_store import get_filter
+    from src.services.subscription import check_subscription_required
 
     if not user:
         await callback.answer("Ошибка: пользователь не определён.", show_alert=True)
+        return
+
+    if await check_subscription_required(user):
+        await callback.message.edit_text(
+            "Для просмотра анкет нужна активная подписка.\n\n"
+            "Оформить можно в разделе «Мой профиль».",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile"),
+                InlineKeyboardButton(text="◀️ Назад", callback_data="menu_motopair"),
+            ]]),
+        )
+        await callback.answer()
         return
 
     from src.services.motopair_service import get_user_for_profile

@@ -515,6 +515,21 @@ async def cb_event_share(callback: CallbackQuery, user=None):
 # ——— Register ———
 @router.callback_query(F.data.startswith("event_register_"))
 async def cb_event_register(callback: CallbackQuery, user=None):
+    from src.services.subscription import check_subscription_required
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    if user and await check_subscription_required(user):
+        await callback.message.edit_text(
+            "Для записи на мероприятие нужна активная подписка.\n\n"
+            "Оформить подписку можно в разделе «Мой профиль».",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile"),
+                InlineKeyboardButton(text="◀️ Назад", callback_data="menu_events"),
+            ]]),
+        )
+        await callback.answer()
+        return
+
     parts = callback.data.replace("event_register_", "").split("_")
     if len(parts) < 2:
         await callback.answer()

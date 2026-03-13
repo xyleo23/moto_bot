@@ -1,6 +1,7 @@
 """SOS block — emergency alerts with timer and all-clear."""
 import asyncio
 
+from loguru import logger
 from aiogram import Router, F
 from aiogram.types import (
     Message,
@@ -239,8 +240,8 @@ async def cb_sos_check_ready(callback: CallbackQuery, user=None):
                 texts.SOS_READY_WAIT.format(mins=mins, secs=secs),
                 reply_markup=kb,
             )
-        except Exception:
-            pass  # Message may not have changed — ignore edit conflict
+        except Exception as e:
+            logger.debug("sos_timer_tick: edit_text skipped (message not modified or deleted): %s", e)
 
     await callback.answer()
 

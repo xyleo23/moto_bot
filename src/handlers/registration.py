@@ -376,8 +376,8 @@ async def _show_pilot_preview(message: Message, state: FSMContext):
                 reply_markup=kb,
             )
             return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("pilot_preview_show: answer_photo failed, falling back to text: %s", e)
     await message.answer(text, reply_markup=kb)
 
 
@@ -390,8 +390,8 @@ async def pilot_preview_save(callback: CallbackQuery, state: FSMContext, user=No
         logger.exception("_finish_pilot_registration error: %s", e)
         try:
             await callback.message.answer(texts.REG_ERROR_SAVE)
-        except Exception:
-            pass
+        except Exception as e2:
+            logger.debug("pilot_preview_save: failed to deliver REG_ERROR_SAVE to user: %s", e2)
 
 
 @router.callback_query(F.data == "pilot_preview_edit", PilotRegistration.preview)
@@ -735,8 +735,8 @@ async def _show_passenger_preview(message: Message, state: FSMContext):
                 reply_markup=kb,
             )
             return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("passenger_preview_show: answer_photo failed, falling back to text: %s", e)
     await message.answer(text, reply_markup=kb)
 
 
@@ -749,8 +749,8 @@ async def passenger_preview_save(callback: CallbackQuery, state: FSMContext, use
         logger.exception("_finish_passenger_registration error: %s", e)
         try:
             await callback.message.answer(texts.REG_ERROR_SAVE)
-        except Exception:
-            pass
+        except Exception as e2:
+            logger.debug("passenger_preview_save: failed to deliver REG_ERROR_SAVE to user: %s", e2)
 
 
 @router.callback_query(F.data == "pax_preview_edit", PassengerRegistration.preview)

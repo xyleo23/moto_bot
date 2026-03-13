@@ -125,8 +125,8 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
                                 logger.warning(
                                     "Cannot thank donor %s: %s", u.platform_user_id, e
                                 )
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as e:
+                logger.warning("donate webhook: malformed metadata user_id=%r: %s", user_id_str, e)
         return 200, {"status": "ok", "type": "donate"}
 
     if pay_type == "event_creation":

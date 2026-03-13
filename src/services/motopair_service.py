@@ -1,7 +1,7 @@
 """MotoPair service - profiles, likes, matches."""
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.models.base import get_session_factory
@@ -9,6 +9,12 @@ from src.models.profile_pilot import ProfilePilot
 from src.models.profile_passenger import ProfilePassenger
 from src.models.like import Like, LikeBlacklist
 from src.models.user import User
+
+
+def _like_pair_lock_key(a: int, b: int) -> int:
+    """Deterministic lock key for a user pair — same for A→B and B→A."""
+    lo, hi = min(a, b), max(a, b)
+    return (lo * 1_000_000_007 + hi) & 0x7FFFFFFFFFFFFFFF
 
 DISLIKE_BLACKLIST_THRESHOLD = 3
 
@@ -141,9 +147,9 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
     """
     Record like or dislike.
 
-    Uses SELECT FOR UPDATE on the Like row to prevent race conditions when
-    multiple concurrent dislikes could simultaneously trigger the blacklist
-    threshold and create duplicate blacklist entries.
+    Uses a PostgreSQL transaction-level advisory lock keyed on the user pair
+    to serialize concurrent like operations and guarantee correct mutual-like
+    detection without race conditions.
 
     Returns:
         matched: bool — mutual like detected
@@ -153,14 +159,22 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
     """
     session_factory = get_session_factory()
     async with session_factory() as session:
-        # Lock the Like row for this pair to serialize concurrent operations
+        # Acquire transaction-level advisory lock for this user pair.
+        # pg_advisory_xact_lock is order-independent (same key for A→B and B→A)
+        # and prevents the mutual-like race condition where both users like
+        # simultaneously and neither side detects the match.
+        lock_key = _like_pair_lock_key(from_user_id.int, to_user_id.int)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": lock_key},
+        )
+
         existing = await session.execute(
             select(Like)
             .where(
                 Like.from_user_id == from_user_id,
                 Like.to_user_id == to_user_id,
             )
-            .with_for_update()
         )
         like_rec = existing.scalar_one_or_none()
 
@@ -178,7 +192,7 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
                 )
                 session.add(like_rec)
 
-            # Check for mutual like (no lock needed here — read-only check)
+            # Advisory lock guarantees we see committed B→A if it exists
             reverse = await session.execute(
                 select(Like).where(
                     Like.from_user_id == to_user_id,
