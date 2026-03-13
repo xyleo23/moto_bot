@@ -66,13 +66,24 @@ class EventEditStates(StatesGroup):
     description = State()
 
 
+def _format_location(value: str | None) -> str:
+    """Return a Maps link if value looks like coordinates, otherwise return as-is."""
+    if not value:
+        return "—"
+    import re
+    if re.match(r"^-?\d+\.\d+,-?\d+\.\d+$", value.strip()):
+        lat, lon = value.strip().split(",")
+        return f'<a href="https://maps.google.com/?q={lat},{lon}">📍 Открыть на карте</a>'
+    return value
+
+
 def _format_event_card(e) -> str:
     return (
         f"<b>{e.title or TYPE_LABELS.get(e.type.value, e.type.value)}</b>\n"
         f"Тип: {TYPE_LABELS.get(e.type.value, e.type.value)}\n"
         f"📅 {e.start_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"📍 Старт: {e.point_start}\n"
-        f"📍 Финиш: {e.point_end or '—'}\n"
+        f"📍 Старт: {_format_location(e.point_start)}\n"
+        f"📍 Финиш: {_format_location(e.point_end)}\n"
         f"Формат: {RIDE_LABELS.get(e.ride_type.value if e.ride_type else '', '—')}\n"
         f"Скорость: {e.avg_speed or '—'} км/ч\n"
         f"Описание: {e.description or '—'}"
