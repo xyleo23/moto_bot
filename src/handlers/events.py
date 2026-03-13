@@ -276,31 +276,51 @@ async def evcreate_time(message: Message, state: FSMContext):
 
 @router.message(EventCreateStates.point_start, F.text)
 async def evcreate_point_start(message: Message, state: FSMContext):
-    from aiogram.types import ReplyKeyboardRemove
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
     await state.update_data(point_start=message.text.strip()[:500])
     await state.set_state(EventCreateStates.point_end)
-    await message.answer("Точка финиша (или «Пропустить»):", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или «Пропустить»:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
+                [KeyboardButton(text="Пропустить")],
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+        ),
+    )
 
 
 @router.message(EventCreateStates.point_start, F.location)
 async def evcreate_point_start_location(message: Message, state: FSMContext):
-    from aiogram.types import ReplyKeyboardRemove
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
     lat = message.location.latitude
     lon = message.location.longitude
     point_str = f"{lat},{lon}"
     await state.update_data(point_start=point_str)
     await state.set_state(EventCreateStates.point_end)
-    await message.answer("Точка финиша (или «Пропустить»):", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или «Пропустить»:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
+                [KeyboardButton(text="Пропустить")],
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+        ),
+    )
 
 
 @router.message(EventCreateStates.point_end, F.text)
 async def evcreate_point_end(message: Message, state: FSMContext):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
     text = message.text.strip()
     if text.lower() in ("пропустить", "skip", "-"):
         text = None
     await state.update_data(point_end=text[:500] if text else None)
     await state.set_state(EventCreateStates.ride_type)
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
@@ -308,7 +328,26 @@ async def evcreate_point_end(message: Message, state: FSMContext):
         ],
         [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
     ])
-    await message.answer("Формат движения:", reply_markup=kb)
+    await message.answer("Формат движения:", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Выберите формат движения:", reply_markup=kb)
+
+
+@router.message(EventCreateStates.point_end, F.location)
+async def evcreate_point_end_location(message: Message, state: FSMContext):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+    lat = message.location.latitude
+    lon = message.location.longitude
+    await state.update_data(point_end=f"{lat},{lon}")
+    await state.set_state(EventCreateStates.ride_type)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
+            InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
+        ],
+        [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
+    ])
+    await message.answer("Формат движения:", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Выберите формат движения:", reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("evcreate_ride_"), EventCreateStates.ride_type)
