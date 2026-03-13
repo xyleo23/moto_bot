@@ -31,7 +31,7 @@ async def _do_broadcast(
         if exclude_id is not None and uid == exclude_id:
             continue
         try:
-            kwargs = {"text": text}
+            kwargs = {"text": text, "parse_mode": "HTML"}
             if reply_markup is not None:
                 kwargs["reply_markup"] = reply_markup
             await bot.send_message(uid, **kwargs)

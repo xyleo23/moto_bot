@@ -974,7 +974,15 @@ async def cb_admin_broadcast_segment(callback: CallbackQuery, state: FSMContext)
         return
     await state.update_data(admin_bc_segment=seg)
     await state.set_state(AdminBroadcastStates.message)
-    await callback.message.edit_text("Введи текст рассылки (поддерживается HTML):")
+    await callback.message.edit_text(
+        "Введи текст рассылки.\n\n"
+        "<b>Поддерживается HTML-разметка:</b>\n"
+        "• <code>&lt;b&gt;жирный&lt;/b&gt;</code>\n"
+        "• <code>&lt;i&gt;курсив&lt;/i&gt;</code>\n"
+        "• <code>&lt;a href='...'&gt;ссылка&lt;/a&gt;</code>\n"
+        "• <code>&lt;code&gt;моноширинный&lt;/code&gt;</code>",
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
@@ -1018,7 +1026,7 @@ async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext)
     sent, failed = 0, 0
     for uid in recipients:
         try:
-            await callback.bot.send_message(uid, text)
+            await callback.bot.send_message(uid, text, parse_mode="HTML")
             sent += 1
         except Exception as e:
             failed += 1
