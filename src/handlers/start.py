@@ -174,8 +174,8 @@ async def cmd_admin(message: Message, state: FSMContext, user=None):
     from src.config import get_settings
     if message.from_user.id not in get_settings().superadmin_ids:
         return
-    from src.keyboards.admin import get_admin_panel_kb
-    await message.answer("⚙️ Панель администратора", reply_markup=get_admin_panel_kb())
+    from src.keyboards.admin import get_admin_main_kb
+    await message.answer("⚙️ Панель администратора", reply_markup=get_admin_main_kb())
 
 
 @router.callback_query(F.data == "menu_main")
