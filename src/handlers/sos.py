@@ -29,55 +29,87 @@ class SosStates(StatesGroup):
 
 @router.callback_query(F.data == "menu_sos")
 async def cb_sos_menu(callback: CallbackQuery, state: FSMContext, user=None):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
-        [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
-        [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
-        [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
-    await callback.message.edit_text(texts.SOS_CHOOSE_TYPE, reply_markup=kb)
-    await state.set_state(SosStates.choose_type)
+    try:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
+            [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
+            [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
+            [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ])
+        await callback.message.edit_text(texts.SOS_CHOOSE_TYPE, reply_markup=kb)
+        await state.set_state(SosStates.choose_type)
+    except Exception:
+        logger.exception("cb_sos_menu: error")
+        await state.clear()
+        await callback.message.answer(
+            "Произошла ошибка. Попробуй снова.",
+            reply_markup=get_back_to_menu_kb(),
+        )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("sos_"), SosStates.choose_type)
 async def cb_sos_type(callback: CallbackQuery, state: FSMContext, user=None):
-    sos_type = callback.data
-    await state.update_data(sos_type=sos_type)
-    await state.set_state(SosStates.location)
-    await callback.message.edit_text(texts.SOS_SEND_LOCATION)
-    await callback.message.answer(
-        "Нажми кнопку ниже, чтобы отправить местоположение:",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
-            resize_keyboard=True,
-            one_time_keyboard=True,
-        ),
-    )
+    try:
+        sos_type = callback.data
+        await state.update_data(sos_type=sos_type)
+        await state.set_state(SosStates.location)
+        await callback.message.edit_text(texts.SOS_SEND_LOCATION)
+        await callback.message.answer(
+            "Нажми кнопку ниже, чтобы отправить местоположение:",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+            ),
+        )
+    except Exception:
+        logger.exception("cb_sos_type: error")
+        await state.clear()
+        await callback.message.answer(
+            "Произошла ошибка. Попробуй снова.",
+            reply_markup=get_back_to_menu_kb(),
+        )
     await callback.answer()
 
 
 @router.message(SosStates.location, F.location)
 async def sos_location(message: Message, state: FSMContext, user=None, bot=None):
-    loc = message.location
-    await state.update_data(lat=loc.latitude, lon=loc.longitude)
-    await state.set_state(SosStates.comment)
-    await message.answer(
-        texts.SOS_ASK_COMMENT,
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    await message.answer(
-        "Можешь добавить описание ситуации.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="sos_skip_comment")],
-        ]),
-    )
+    try:
+        loc = message.location
+        await state.update_data(lat=loc.latitude, lon=loc.longitude)
+        await state.set_state(SosStates.comment)
+        await message.answer(
+            texts.SOS_ASK_COMMENT,
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await message.answer(
+            "Можешь добавить описание ситуации.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="sos_skip_comment")],
+            ]),
+        )
+    except Exception:
+        logger.exception("sos_location: error")
+        await state.clear()
+        await message.answer(
+            "Произошла ошибка. Попробуй снова.",
+            reply_markup=get_back_to_menu_kb(),
+        )
 
 
 @router.callback_query(F.data == "sos_skip_comment", SosStates.comment)
 async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None, bot=None):
-    await _send_sos_alert(callback.message, state, user, None, bot)
+    try:
+        await _send_sos_alert(callback.message, state, user, None, bot)
+    except Exception:
+        logger.exception("sos_skip_comment: error in _send_sos_alert")
+        await state.clear()
+        await callback.message.answer(
+            "Произошла ошибка при отправке SOS. Попробуй снова.",
+            reply_markup=get_back_to_menu_kb(),
+        )
     await callback.answer()
 
 
@@ -220,42 +252,44 @@ def _sos_cooldown_kb(remaining_seconds: int) -> InlineKeyboardMarkup:
 
 
 @router.callback_query(F.data == "sos_check_ready")
-async def cb_sos_check_ready(callback: CallbackQuery, user=None):
+async def cb_sos_check_ready(callback: CallbackQuery, state: FSMContext, user=None):
     """Edit the SOS message to show current remaining cooldown time."""
     from src.services.sos_service import check_sos_cooldown
 
-    if not user:
-        await callback.answer("Ошибка.")
-        return
+    try:
+        if not user:
+            await callback.answer("Ошибка.")
+            return
 
-    remaining = await check_sos_cooldown(user.id)
-    if remaining <= 0:
-        # Ready — update message to show SOS is available
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚨 Отправить новый SOS", callback_data="menu_sos")],
-            [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-        ])
-        await callback.message.edit_text(texts.SOS_READY_NOW, reply_markup=kb)
-    else:
-        mins = remaining // 60
-        secs = remaining % 60
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
-            [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-        ])
-        try:
-            await callback.message.edit_text(
-                texts.SOS_READY_WAIT.format(mins=mins, secs=secs),
-                reply_markup=kb,
-            )
-        except Exception as e:
-            logger.debug("sos_timer_tick: edit_text skipped (message not modified or deleted): %s", e)
-
+        remaining = await check_sos_cooldown(user.id)
+        if remaining <= 0:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🚨 Отправить новый SOS", callback_data="menu_sos")],
+                [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+            ])
+            await callback.message.edit_text(texts.SOS_READY_NOW, reply_markup=kb)
+        else:
+            mins = remaining // 60
+            secs = remaining % 60
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
+                [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+            ])
+            try:
+                await callback.message.edit_text(
+                    texts.SOS_READY_WAIT.format(mins=mins, secs=secs),
+                    reply_markup=kb,
+                )
+            except Exception as e:
+                logger.exception("cb_sos_check_ready: edit_text failed: %s", e)
+    except Exception:
+        logger.exception("cb_sos_check_ready: error")
+        await state.clear()
     await callback.answer()
 
 
 @router.callback_query(F.data == "sos_all_clear")
-async def cb_sos_all_clear(callback: CallbackQuery, user=None, bot=None):
+async def cb_sos_all_clear(callback: CallbackQuery, state: FSMContext, user=None, bot=None):
     """
     User signals help received. Broadcast all-clear to city.
     Broadcast runs as a background task.
@@ -264,31 +298,39 @@ async def cb_sos_all_clear(callback: CallbackQuery, user=None, bot=None):
     from src.services.broadcast import broadcast_background
     from src.services.user import get_user_profile_display
 
-    if not user or not user.city_id:
-        await callback.answer(texts.SOS_NO_CITY, show_alert=True)
-        return
+    try:
+        if not user or not user.city_id:
+            await callback.answer(texts.SOS_NO_CITY, show_alert=True)
+            return
 
-    profile = await get_user_profile_display(user)
-    # Extract user's display name for the broadcast message
-    name = (
-        getattr(user, "platform_first_name", None)
-        or getattr(callback.from_user, "first_name", None)
-        or "Участник"
-    )
-
-    user_ids = await get_city_telegram_user_ids(user.city_id)
-    send_bot = bot or callback.bot
-
-    if send_bot and user_ids:
-        broadcast_background(
-            send_bot,
-            user_ids,
-            texts.SOS_ALL_CLEAR_BROADCAST.format(name=name),
-            exclude_id=callback.from_user.id,
+        profile = await get_user_profile_display(user)
+        # Extract user's display name for the broadcast message
+        name = (
+            getattr(user, "platform_first_name", None)
+            or getattr(callback.from_user, "first_name", None)
+            or "Участник"
         )
 
-    await callback.message.edit_text(
-        "✅ Рады, что всё хорошо! Отбой разослан.",
-        reply_markup=get_back_to_menu_kb(),
-    )
+        user_ids = await get_city_telegram_user_ids(user.city_id)
+        send_bot = bot or callback.bot
+
+        if send_bot and user_ids:
+            broadcast_background(
+                send_bot,
+                user_ids,
+                texts.SOS_ALL_CLEAR_BROADCAST.format(name=name),
+                exclude_id=callback.from_user.id,
+            )
+
+        await callback.message.edit_text(
+            "✅ Рады, что всё хорошо! Отбой разослан.",
+            reply_markup=get_back_to_menu_kb(),
+        )
+    except Exception:
+        logger.exception("cb_sos_all_clear: error")
+        await state.clear()
+        await callback.message.answer(
+            "Произошла ошибка. Попробуй снова.",
+            reply_markup=get_back_to_menu_kb(),
+        )
     await callback.answer()

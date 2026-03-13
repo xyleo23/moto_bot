@@ -844,7 +844,12 @@ async def _finish_passenger_registration(
                 about=about_clean,
             )
             session.add(profile)
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as e:
+            await session.rollback()
+            logger.exception("Passenger commit failed: %s", e)
+            raise
 
     await message.answer(
         texts.REG_DONE,

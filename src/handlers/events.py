@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from src.keyboards.menu import get_back_to_menu_kb
+from src.utils.callback_short import get_pair_callback
 from src.keyboards.events import (
     get_events_menu_kb,
     get_event_list_filter_kb,
@@ -611,13 +612,13 @@ async def cb_event_seek_yes(callback: CallbackQuery, user=None):
             ]),
         )
     else:
+        from src.utils.callback_short import put_pair_callback
+
         rows = []
         for reg, u in seekers:
             name = await get_profile_display(u.id)
-            rows.append([InlineKeyboardButton(
-                text=name[:40],
-                callback_data=f"event_pair_req_{eid}_{u.id}",
-            )])
+            code = put_pair_callback(eid, u.id)
+            rows.append([InlineKeyboardButton(text=name[:40], callback_data=f"epr_{code}")])
         rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"event_detail_{eid}")])
         await callback.message.edit_text(
             "Выбери, кому отправить заявку:",
@@ -639,10 +640,14 @@ async def cb_event_seek_no(callback: CallbackQuery, user=None):
 
 
 # ——— Pair request ———
-@router.callback_query(F.data.startswith("event_pair_req_"))
+@router.callback_query(F.data.startswith("epr_"))
 async def cb_event_pair_request(callback: CallbackQuery, user=None, bot=None):
-    parts = callback.data.replace("event_pair_req_", "").split("_")
-    eid, to_user_id = uuid.UUID(parts[0]), uuid.UUID(parts[1])
+    code = callback.data[4:]  # after "epr_"
+    pair = get_pair_callback(code)
+    if not pair:
+        await callback.answer("Заявка устарела.", show_alert=True)
+        return
+    eid, to_user_id = pair
     ok, msg = await send_pair_request(eid, user.id, to_user_id)
     if not ok:
         await callback.answer(msg, show_alert=True)
@@ -670,12 +675,16 @@ async def cb_event_pair_request(callback: CallbackQuery, user=None, bot=None):
     await callback.answer("Заявка отправлена!")
 
 
-@router.callback_query(F.data.startswith("event_pair_accept_"))
+@router.callback_query(F.data.startswith("epa"))
 async def cb_event_pair_accept(callback: CallbackQuery, user=None, bot=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-    parts = callback.data.replace("event_pair_accept_", "").split("_")
-    eid, from_user_id = uuid.UUID(parts[0]), uuid.UUID(parts[1])
+    code = callback.data[3:]  # after "epa"
+    pair = get_pair_callback(code)
+    if not pair:
+        await callback.answer("Заявка устарела.", show_alert=True)
+        return
+    eid, from_user_id = pair
     ok = await accept_pair_request(eid, from_user_id, user.id)
     if not ok:
         await callback.answer()
@@ -706,10 +715,14 @@ async def cb_event_pair_accept(callback: CallbackQuery, user=None, bot=None):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("event_pair_reject_"))
+@router.callback_query(F.data.startswith("epj"))
 async def cb_event_pair_reject(callback: CallbackQuery, user=None):
-    parts = callback.data.replace("event_pair_reject_", "").split("_")
-    eid, from_user_id = uuid.UUID(parts[0]), uuid.UUID(parts[1])
+    code = callback.data[3:]  # after "epj"
+    pair = get_pair_callback(code)
+    if not pair:
+        await callback.answer()
+        return
+    eid, from_user_id = pair
     await reject_pair_request(eid, from_user_id, user.id)
     await callback.message.edit_text("Заявка отклонена.")
     await callback.answer()

@@ -1,12 +1,15 @@
 """Events keyboards."""
+import uuid
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from src.utils.callback_short import put_pair_callback
 
 
 def get_events_menu_kb() -> InlineKeyboardMarkup:
+    """Events menu: Create, List, My. Callbacks ≤64 bytes."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Создать мероприятие", callback_data="event_create")],
-        [InlineKeyboardButton(text="Просмотреть мероприятия", callback_data="event_list")],
-        [InlineKeyboardButton(text="Мои мероприятия", callback_data="event_my")],
+        [InlineKeyboardButton(text="Список", callback_data="event_list")],
+        [InlineKeyboardButton(text="Мои", callback_data="event_my")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
 
@@ -52,22 +55,25 @@ def get_seeking_confirm_kb(event_id: str) -> InlineKeyboardMarkup:
 def get_seeking_list_kb(event_id: str, seekers: list, viewer_role: str) -> InlineKeyboardMarkup:
     """Viewer is pilot -> show passengers. Viewer is passenger -> show pilots."""
     rows = []
+    eid = uuid.UUID(event_id)
     for s in seekers[:8]:  # limit 8
         reg, user = s
         name = getattr(user, "platform_first_name", None) or "Участник"
-        rows.append([InlineKeyboardButton(
-            text=name,
-            callback_data=f"event_pair_req_{event_id}_{user.id}",
-        )])
+        code = put_pair_callback(eid, user.id)
+        rows.append([InlineKeyboardButton(text=name, callback_data=f"epr_{code}")])
     rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"event_detail_{event_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_pair_request_kb(event_id: str, from_user_id: str) -> InlineKeyboardMarkup:
+    """Short callbacks (≤64 bytes) to avoid BUTTON_DATA_INVALID."""
+    eid = uuid.UUID(event_id)
+    from_uid = uuid.UUID(from_user_id)
+    code = put_pair_callback(eid, from_uid)
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Принять", callback_data=f"event_pair_accept_{event_id}_{from_user_id}"),
-            InlineKeyboardButton(text="Отклонить", callback_data=f"event_pair_reject_{event_id}_{from_user_id}"),
+            InlineKeyboardButton(text="Принять", callback_data=f"epa{code}"),
+            InlineKeyboardButton(text="Отклонить", callback_data=f"epj{code}"),
         ],
     ])
 
