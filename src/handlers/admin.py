@@ -421,8 +421,8 @@ async def cb_admin_user_block_toggle(callback: CallbackQuery):
                 u.platform_user_id,
                 "Вы заблокированы. Обратитесь в поддержку.",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("block_user: could not notify user {}: {}", u.platform_user_id, e)
         u.is_blocked = True
     else:
         await unblock_user(user_uuid)
@@ -742,8 +742,8 @@ async def cb_admin_ev_cancel(callback: CallbackQuery, user=None):
     for pid in notify_ids:
         try:
             await bot.send_message(pid, f"⚠️ Мероприятие «{ev.title or 'Мероприятие'}» отменено.")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("cancel_event: could not notify participant {}: {}", pid, e)
     await callback.answer("Мероприятие отменено. Участники уведомлены.")
     await callback.message.edit_text(
         "Мероприятие отменено.",

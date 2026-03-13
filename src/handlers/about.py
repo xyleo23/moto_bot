@@ -1,4 +1,5 @@
 """About us, support, donations — Stage 9."""
+from loguru import logger
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -82,8 +83,8 @@ async def about_feedback_text(message: Message, state: FSMContext, user=None):
     for admin_id in s.superadmin_ids:
         try:
             await message.bot.send_message(admin_id, msg)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("about: could not notify superadmin {}: {}", admin_id, e)
 
     await message.answer(
         "✅ Спасибо! Твоё сообщение отправлено администрации.",
