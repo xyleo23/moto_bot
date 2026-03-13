@@ -83,7 +83,15 @@ async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None
 
 @router.message(SosStates.comment, F.text)
 async def sos_comment(message: Message, state: FSMContext, user=None, bot=None):
-    await _send_sos_alert(message, state, user, message.text.strip(), bot)
+    try:
+        await _send_sos_alert(message, state, user, message.text.strip(), bot)
+    except Exception:
+        logger.exception("sos_comment: error in _send_sos_alert")
+        await state.clear()
+        await message.answer(
+            "Произошла ошибка при отправке SOS. Попробуй снова.",
+            reply_markup=get_back_to_menu_kb(),
+        )
 
 
 async def _get_user_phone(user) -> str | None:

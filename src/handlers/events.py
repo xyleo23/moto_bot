@@ -5,6 +5,7 @@ from datetime import datetime
 from loguru import logger
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -108,18 +109,27 @@ async def cb_events_menu(callback: CallbackQuery, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     if user and await check_subscription_required(user):
-        await callback.message.edit_text(
+        text = (
             "Для доступа к мероприятиям нужна активная подписка.\n"
-            "Подписка даёт доступ к просмотру, записи и поиску мотопары на мероприятиях.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
-                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-            ]),
+            "Подписка даёт доступ к просмотру, записи и поиску мотопары на мероприятиях."
         )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ])
+        try:
+            await callback.message.edit_text(text, reply_markup=kb)
+        except TelegramBadRequest as e:
+            logger.debug("cb_events_menu: edit_text failed ({}), falling back to answer", e)
+            await callback.message.answer(text, reply_markup=kb)
         await callback.answer()
         return
 
-    await callback.message.edit_text("📅 Мероприятия", reply_markup=get_events_menu_kb())
+    try:
+        await callback.message.edit_text("📅 Мероприятия", reply_markup=get_events_menu_kb())
+    except TelegramBadRequest as e:
+        logger.debug("cb_events_menu: edit_text failed ({}), falling back to answer", e)
+        await callback.message.answer("📅 Мероприятия", reply_markup=get_events_menu_kb())
     await callback.answer()
 
 
@@ -431,10 +441,14 @@ async def evcreate_description(message: Message, state: FSMContext, user=None):
 # ——— List ———
 @router.callback_query(F.data == "event_list")
 async def cb_event_list(callback: CallbackQuery, user=None):
-    await callback.message.edit_text(
-        "Фильтр по типу:",
-        reply_markup=get_event_list_filter_kb(),
-    )
+    try:
+        await callback.message.edit_text(
+            "Фильтр по типу:",
+            reply_markup=get_event_list_filter_kb(),
+        )
+    except TelegramBadRequest as e:
+        logger.debug("cb_event_list: edit_text failed ({}), falling back to answer", e)
+        await callback.message.answer("Фильтр по типу:", reply_markup=get_event_list_filter_kb())
     await callback.answer()
 
 
@@ -445,10 +459,14 @@ async def cb_event_list_filtered(callback: CallbackQuery, user=None):
 
     events = await get_events_list(user.city_id if user else None, ev_type)
     if not events:
-        await callback.message.edit_text(
-            "Мероприятий пока нет.",
-            reply_markup=get_back_to_menu_kb(),
-        )
+        try:
+            await callback.message.edit_text(
+                "Мероприятий пока нет.",
+                reply_markup=get_back_to_menu_kb(),
+            )
+        except TelegramBadRequest as e:
+            logger.debug("cb_event_list_filtered: edit_text failed ({}), falling back to answer", e)
+            await callback.message.answer("Мероприятий пока нет.", reply_markup=get_back_to_menu_kb())
     else:
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         rows = []
@@ -458,10 +476,17 @@ async def cb_event_list_filtered(callback: CallbackQuery, user=None):
                 callback_data=f"event_detail_{e['id']}",
             )])
         rows.append([InlineKeyboardButton(text="« Назад", callback_data="menu_events")])
-        await callback.message.edit_text(
-            "Мероприятия:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-        )
+        try:
+            await callback.message.edit_text(
+                "Мероприятия:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            )
+        except TelegramBadRequest as e:
+            logger.debug("cb_event_list_filtered: edit_text failed ({}), falling back to answer", e)
+            await callback.message.answer(
+                "Мероприятия:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            )
     await callback.answer()
 
 
@@ -477,14 +502,22 @@ async def cb_event_detail(callback: CallbackQuery, user=None):
 
     ev = await get_event_by_id(ev_uuid)
     if not ev:
-        await callback.message.edit_text("Мероприятие не найдено.", reply_markup=get_back_to_menu_kb())
+        try:
+            await callback.message.edit_text("Мероприятие не найдено.", reply_markup=get_back_to_menu_kb())
+        except TelegramBadRequest as e:
+            logger.debug("cb_event_detail: edit_text failed ({}), falling back to answer", e)
+            await callback.message.answer("Мероприятие не найдено.", reply_markup=get_back_to_menu_kb())
         await callback.answer()
         return
 
     reg = await get_user_registration(ev_uuid, user.id) if user else None
     user_role = reg.role if reg else None
     kb = get_event_card_kb(eid, bool(reg), user_role)
-    await callback.message.edit_text(_format_event_card(ev), reply_markup=kb)
+    try:
+        await callback.message.edit_text(_format_event_card(ev), reply_markup=kb)
+    except TelegramBadRequest as e:
+        logger.debug("cb_event_detail: edit_text failed ({}), falling back to answer", e)
+        await callback.message.answer(_format_event_card(ev), reply_markup=kb)
     await callback.answer()
 
 

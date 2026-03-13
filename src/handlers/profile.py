@@ -37,16 +37,36 @@ async def cb_profile_menu(callback: CallbackQuery, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.profile_service import get_profile_text
     from src.services.subscription import check_subscription_required
+    from src.models.subscription import Subscription
+    from src.models.base import get_session_factory
+    from sqlalchemy import select
 
     text = await get_profile_text(user)
     sub_required = await check_subscription_required(user)
 
+    # Check if user has an active subscription to decide which button to show
+    sub_active = False
+    if user:
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            sub_r = await session.execute(
+                select(Subscription).where(
+                    Subscription.user_id == user.id,
+                    Subscription.is_active.is_(True),
+                ).limit(1)
+            )
+            sub_active = sub_r.scalar_one_or_none() is not None
+
     kb_rows = [
         [InlineKeyboardButton(text="Редактировать анкету", callback_data="profile_edit")],
     ]
-    if sub_required:
+    if sub_active:
         kb_rows.append(
-            [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")]
+            [InlineKeyboardButton(text="🔄 Продлить подписку", callback_data="profile_subscribe")]
+        )
+    elif sub_required:
+        kb_rows.append(
+            [InlineKeyboardButton(text="💳 Оформить подписку", callback_data="profile_subscribe")]
         )
     kb_rows.extend([
         [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
@@ -152,9 +172,16 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
             )
             await callback.answer()
             return
-        await callback.answer("Платёжный сервис недоступен.", show_alert=False)
+        # Payment is required but service unavailable — do not raise for free
+        logger.warning("cb_profile_raise: payment required but service unavailable, blocking free raise")
+        await callback.message.edit_text(
+            "Платёжный сервис временно недоступен. Попробуй позже.",
+            reply_markup=get_back_to_menu_kb(),
+        )
+        await callback.answer()
+        return
 
-    # Free raise
+    # Free raise (payment not configured or disabled)
     ok = await raise_profile(user.id, role)
     if ok:
         await callback.message.edit_text(

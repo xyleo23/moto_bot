@@ -954,7 +954,7 @@ async def cb_admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin_bc_"))
+@router.callback_query(F.data.startswith("admin_bc_") & (F.data != "admin_bc_confirm"))
 async def cb_admin_broadcast_segment(callback: CallbackQuery, state: FSMContext):
     if not _is_superadmin(callback.from_user.id):
         await callback.answer("Доступ запрещён.")
@@ -1023,6 +1023,7 @@ async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext)
         role=seg.get("role"),
         with_subscription=seg.get("with_subscription"),
     )
+    logger.info("Broadcast started: {} recipients, segment={}", len(recipients), seg)
     sent, failed = 0, 0
     for uid in recipients:
         try:
@@ -1031,6 +1032,7 @@ async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext)
         except Exception as e:
             failed += 1
             logger.warning("Broadcast failed to %s: %s", uid, e)
+    logger.info("Broadcast finished: sent={}, failed={}", sent, failed)
     await state.clear()
     await callback.message.edit_text(
         f"✅ Рассылка завершена: отправлено {sent}, ошибок {failed}",

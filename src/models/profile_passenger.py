@@ -28,7 +28,10 @@ class ProfilePassenger(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
-    gender: Mapped[Gender] = mapped_column(Enum(Gender), nullable=False)
+    gender: Mapped[Gender] = mapped_column(
+        Enum(Gender, name="gender_passenger", values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     weight: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     preferred_style: Mapped[PreferredStyle] = mapped_column(Enum(PreferredStyle), nullable=False)

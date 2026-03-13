@@ -1,4 +1,5 @@
 """Profile service."""
+from datetime import datetime
 from sqlalchemy import select
 
 from src.models.base import get_session_factory
@@ -30,7 +31,12 @@ async def get_profile_text(user) -> str:
             ).order_by(Subscription.expires_at.desc()).limit(1)
         )
         sub = sub_result.scalar_one_or_none()
-        sub_text = (f"\n\nПодписка до {sub.expires_at}" if sub else "\n\nПодписка не активна")
+        if sub and sub.expires_at:
+            expires_fmt = sub.expires_at.strftime("%d.%m.%Y")
+            days_left = max(0, (sub.expires_at - datetime.utcnow()).days)
+            sub_text = f"\n\n✅ Подписка активна до {expires_fmt} (осталось {days_left} дн.)"
+        else:
+            sub_text = "\n\n❌ Подписка не активна"
 
         if user.role == UserRole.PILOT:
             return f"👤 {p.name}\nВозраст: {p.age}\n{p.bike_brand} {p.bike_model}, {p.engine_cc} см³{sub_text}"
