@@ -261,16 +261,36 @@ async def evcreate_time(message: Message, state: FSMContext):
         dt_cls.strptime(message.text.strip(), "%H:%M")
         await state.update_data(start_time=message.text.strip())
         await state.set_state(EventCreateStates.point_start)
-        await message.answer("Точка старта (адрес или описание):")
+        from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+        await message.answer(
+            "Точка старта — отправь геолокацию кнопкой или введи адрес текстом:",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+            ),
+        )
     except ValueError:
         await message.answer("Формат: ЧЧ:ММ (например 10:00)")
 
 
 @router.message(EventCreateStates.point_start, F.text)
 async def evcreate_point_start(message: Message, state: FSMContext):
+    from aiogram.types import ReplyKeyboardRemove
     await state.update_data(point_start=message.text.strip()[:500])
     await state.set_state(EventCreateStates.point_end)
-    await message.answer("Точка финиша (или «Пропустить»):")
+    await message.answer("Точка финиша (или «Пропустить»):", reply_markup=ReplyKeyboardRemove())
+
+
+@router.message(EventCreateStates.point_start, F.location)
+async def evcreate_point_start_location(message: Message, state: FSMContext):
+    from aiogram.types import ReplyKeyboardRemove
+    lat = message.location.latitude
+    lon = message.location.longitude
+    point_str = f"{lat},{lon}"
+    await state.update_data(point_start=point_str)
+    await state.set_state(EventCreateStates.point_end)
+    await message.answer("Точка финиша (или «Пропустить»):", reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(EventCreateStates.point_end, F.text)
