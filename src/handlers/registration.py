@@ -72,6 +72,10 @@ async def cmd_cancel(message: Message, state: FSMContext):
         await state.clear()
     await message.answer(
         texts.FSM_CANCEL_TEXT,
+        reply_markup=get_persistent_kb(),
+    )
+    await message.answer(
+        "Меню:",
         reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
     )
 
@@ -222,10 +226,34 @@ async def pilot_engine_cc_fallback(message: Message, state: FSMContext):
     await message.answer(texts.REG_ERROR_NOT_NUMBER)
 
 
+RUSSIAN_MONTHS = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
+    "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+}
+
+
+def _parse_russian_date(text: str):
+    """Parse date in format 'DD месяц YYYY' (e.g. '26 июня 2006'). Returns date or None."""
+    import re
+    text = (text or "").strip()
+    # Match: число (1-31) + месяц + год (4 digits)
+    m = re.search(r"(\d{1,2})\s+(\S+)\s+(\d{4})", text, re.IGNORECASE)
+    if not m:
+        return None
+    day, month_name, year = int(m.group(1)), m.group(2).lower(), int(m.group(3))
+    month_num = RUSSIAN_MONTHS.get(month_name)
+    if not month_num:
+        return None
+    try:
+        return datetime(year, month_num, day).date()
+    except ValueError:
+        return None
+
+
 def _parse_date(text: str):
     """Parse date from various formats. Returns date or None."""
     text = (text or "").strip()
-    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%y", "%d/%m/%y"):
+    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%y", "%d/%m/%y", "%d%m%Y"):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
@@ -235,6 +263,9 @@ def _parse_date(text: str):
             return datetime.strptime(f"{text[:2]}.{text[2:4]}.{text[4:]}", "%d.%m.%Y").date()
         except ValueError:
             pass
+    parsed = _parse_russian_date(text)
+    if parsed:
+        return parsed
     return None
 
 

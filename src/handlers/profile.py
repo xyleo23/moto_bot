@@ -64,7 +64,7 @@ async def cb_profile_menu(callback: CallbackQuery, user=None):
         kb_rows.append(
             [InlineKeyboardButton(text="🔄 Продлить подписку", callback_data="profile_subscribe")]
         )
-    elif sub_required:
+    else:
         kb_rows.append(
             [InlineKeyboardButton(text="💳 Оформить подписку", callback_data="profile_subscribe")]
         )

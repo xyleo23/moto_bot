@@ -69,6 +69,10 @@ async def cmd_cancel(message: Message, state: FSMContext):
         await state.clear()
     await message.answer(
         texts.FSM_CANCEL_TEXT,
+        reply_markup=get_persistent_kb(),
+    )
+    await message.answer(
+        "Меню:",
         reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
     )
 

@@ -374,13 +374,35 @@ async def evcreate_point_end_location(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("evcreate_ride_"), EventCreateStates.ride_type)
 async def cb_evcreate_ride(callback: CallbackQuery, state: FSMContext):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
     if "skip" in callback.data:
         await state.update_data(ride_type=None)
     else:
         rt = "column" if "column" in callback.data else "free"
         await state.update_data(ride_type=rt)
     await state.set_state(EventCreateStates.avg_speed)
-    await callback.message.edit_text("Средняя скорость (км/ч), число или «Пропустить»:")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="60 км/ч", callback_data="evcreate_speed_60"),
+            InlineKeyboardButton(text="80 км/ч", callback_data="evcreate_speed_80"),
+            InlineKeyboardButton(text="100 км/ч", callback_data="evcreate_speed_100"),
+        ],
+        [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_speed_skip")],
+    ])
+    await callback.message.edit_text("Средняя скорость:", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("evcreate_speed_"), EventCreateStates.avg_speed)
+async def cb_evcreate_speed(callback: CallbackQuery, state: FSMContext):
+    val = callback.data.replace("evcreate_speed_", "")
+    if val == "skip":
+        await state.update_data(avg_speed=None)
+    else:
+        await state.update_data(avg_speed=int(val))
+    await state.set_state(EventCreateStates.description)
+    await callback.message.edit_text("Описание (или «Пропустить»):")
     await callback.answer()
 
 

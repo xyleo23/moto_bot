@@ -102,7 +102,9 @@ async def sos_location(message: Message, state: FSMContext, user=None, bot=None)
 @router.callback_query(F.data == "sos_skip_comment", SosStates.comment)
 async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None, bot=None):
     try:
+        logger.info("SOS sending...")
         await _send_sos_alert(callback.message, state, user, None, bot)
+        await state.clear()
     except Exception:
         logger.exception("sos_skip_comment: error in _send_sos_alert")
         await state.clear()
@@ -116,7 +118,9 @@ async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None
 @router.message(SosStates.comment, F.text)
 async def sos_comment(message: Message, state: FSMContext, user=None, bot=None):
     try:
+        logger.info("SOS sending...")
         await _send_sos_alert(message, state, user, message.text.strip(), bot)
+        await state.clear()
     except Exception:
         logger.exception("sos_comment: error in _send_sos_alert")
         await state.clear()
@@ -167,14 +171,18 @@ async def _send_sos_alert(
         await message.answer(texts.SOS_NO_CITY)
         return
 
-    ok, remaining = await create_sos_alert(
-        user_id=user.id,
-        city_id=user.city_id,
-        sos_type=data["sos_type"],
-        lat=data["lat"],
-        lon=data["lon"],
-        comment=comment,
-    )
+    try:
+        ok, remaining = await create_sos_alert(
+            user_id=user.id,
+            city_id=user.city_id,
+            sos_type=data["sos_type"],
+            lat=data["lat"],
+            lon=data["lon"],
+            comment=comment,
+        )
+    except Exception as e:
+        logger.exception("_send_sos_alert: create_sos_alert failed: %s", e)
+        raise
 
     if not ok:
         mins = remaining // 60

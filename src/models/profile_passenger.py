@@ -29,7 +29,13 @@ class ProfilePassenger(Base):
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
     gender: Mapped[Gender] = mapped_column(
-        Enum(Gender, name="gender_passenger", values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            Gender,
+            name="gender_passenger",
+            create_constraint=False,
+            native_enum=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
     )
     weight: Mapped[int] = mapped_column(Integer, nullable=False)
