@@ -1,12 +1,14 @@
 """Event service."""
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, date
+from calendar import monthrange
 
 from sqlalchemy import select, func
 
 from src.models.base import get_session_factory
 from src.models.event import Event, EventRegistration, EventType, RideType
 from src.models.event_pair_request import EventPairRequest, PairRequestStatus
+from src.models.subscription import Subscription, SubscriptionSettings
 from src.models.user import User
 from src.models.profile_pilot import ProfilePilot
 from src.models.profile_passenger import ProfilePassenger
@@ -65,6 +67,85 @@ async def get_events_list(city_id: UUID | None, event_type: str | None = None):
                 "passengers": passengers,
             })
         return out
+
+
+async def count_motorcades_this_month(user_id: UUID) -> int:
+    """Count motorcade events created by user in current calendar month."""
+    today = date.today()
+    start_dt = datetime(today.year, today.month, 1)
+    _, last_day = monthrange(today.year, today.month)
+    end_dt = datetime(today.year, today.month, last_day, 23, 59, 59)
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.scalar(
+            select(func.count()).select_from(Event).where(
+                Event.creator_id == user_id,
+                Event.type == EventType.MOTORCADE,
+                Event.start_at >= start_dt,
+                Event.start_at <= end_dt,
+                Event.is_cancelled.is_(False),
+            )
+        )
+        return r or 0
+
+
+async def event_creation_payment_required(
+    user_id: UUID,
+    platform_user_id: int,
+    city_id: UUID,
+    event_type: str,
+    settings: SubscriptionSettings | None,
+) -> tuple[bool, int | None]:
+    """
+    Determine if payment is required for creating an event.
+    Returns (needs_payment, price_kopecks).
+    - large: admin free, user always paid (not in subscription)
+    - motorcade: admin free; no sub = paid; with sub = 2/month free, then paid
+    - run: admin free; no sub = paid; with sub = free unlimited
+    """
+    if not settings or not settings.event_creation_enabled or settings.event_creation_price_kopecks <= 0:
+        return False, None
+
+    from src.services.admin_service import can_create_event_free
+
+    if await can_create_event_free(platform_user_id, city_id):
+        return False, None
+
+    price = settings.event_creation_price_kopecks
+
+    if event_type == "large":
+        return True, price
+
+    if event_type == "motorcade":
+        has_sub = await _user_has_active_subscription(user_id)
+        if not has_sub:
+            return True, price
+        limit = getattr(settings, "event_motorcade_limit_per_month", 2) or 2
+        count = await count_motorcades_this_month(user_id)
+        return count >= limit, price if count >= limit else None
+
+    if event_type == "run":
+        has_sub = await _user_has_active_subscription(user_id)
+        return not has_sub, price if not has_sub else None
+
+    return True, price
+
+
+async def _user_has_active_subscription(user_id: UUID) -> bool:
+    session_factory = get_session_factory()
+    today = date.today()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(Subscription)
+            .where(
+                Subscription.user_id == user_id,
+                Subscription.is_active.is_(True),
+                Subscription.expires_at >= today,
+            )
+            .limit(1)
+        )
+        return r.scalar_one_or_none() is not None
 
 
 async def get_event_by_id(event_id: UUID):

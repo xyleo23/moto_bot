@@ -38,6 +38,7 @@ class SubscriptionSettings(Base):
     season_price_kopecks: Mapped[int] = mapped_column(Integer, default=79900)
     event_creation_enabled: Mapped[bool] = mapped_column(default=False)
     event_creation_price_kopecks: Mapped[int] = mapped_column(Integer, default=9900)
+    event_motorcade_limit_per_month: Mapped[int] = mapped_column(Integer, default=2)
     raise_profile_enabled: Mapped[bool] = mapped_column(default=False)
     raise_profile_price_kopecks: Mapped[int] = mapped_column(Integer, default=4900)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

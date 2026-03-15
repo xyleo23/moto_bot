@@ -150,49 +150,10 @@ def _evcreate_type_kb() -> "InlineKeyboardMarkup":
 
 @router.callback_query(F.data == "event_create")
 async def cb_event_create_start(callback: CallbackQuery, state: FSMContext, user=None):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from src.services.admin_service import get_subscription_settings
-    from src.services.payment import create_payment
-
     if not user or not user.city_id:
         await callback.message.edit_text("Сначала выбери город в /start.", reply_markup=get_back_to_menu_kb())
         await callback.answer()
         return
-
-    # Check if event creation requires payment
-    settings_db = await get_subscription_settings()
-    if (
-        settings_db
-        and settings_db.event_creation_enabled
-        and settings_db.event_creation_price_kopecks > 0
-    ):
-        price = settings_db.event_creation_price_kopecks
-        payment = await create_payment(
-            amount_kopecks=price,
-            description="Создание мероприятия",
-            metadata={"type": "event_creation", "user_id": str(user.id)},
-        )
-        if payment and payment.get("confirmation_url"):
-            await state.set_state(EventCreateStates.awaiting_payment)
-            await state.update_data(event_payment_id=payment["id"])
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
-                [InlineKeyboardButton(
-                    text="✅ Я оплатил — проверить",
-                    callback_data="evcreate_checkpay",
-                )],
-                [InlineKeyboardButton(text="« Отмена", callback_data="menu_events")],
-            ])
-            price_rub = price // 100
-            await callback.message.edit_text(
-                f"💳 Создание мероприятия платное: <b>{price_rub} ₽</b>\n\n"
-                f"Оплати и нажми «Я оплатил — проверить».",
-                reply_markup=kb,
-            )
-            await callback.answer()
-            return
-        # Payment service unavailable — allow free creation as fallback
-        await callback.answer("Платёжный сервис недоступен, создание бесплатно.", show_alert=False)
 
     await state.set_state(EventCreateStates.type)
     await callback.message.edit_text("Тип мероприятия:", reply_markup=_evcreate_type_kb())
@@ -212,8 +173,8 @@ async def cb_evcreate_check_payment(callback: CallbackQuery, state: FSMContext, 
 
     status = await check_payment_status(payment_id)
     if status == "succeeded":
-        await state.set_state(EventCreateStates.type)
-        await callback.message.edit_text("✅ Оплата прошла! Тип мероприятия:", reply_markup=_evcreate_type_kb())
+        await state.set_state(EventCreateStates.title)
+        await callback.message.edit_text("✅ Оплата прошла! Введи название мероприятия (или «Пропустить»):")
     elif status == "canceled":
         await state.clear()
         await callback.message.edit_text("❌ Платёж отменён.", reply_markup=get_back_to_menu_kb())
@@ -226,9 +187,49 @@ async def cb_evcreate_check_payment(callback: CallbackQuery, state: FSMContext, 
 
 
 @router.callback_query(F.data.startswith("evcreate_type_"), EventCreateStates.type)
-async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext):
+async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext, user=None):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.admin_service import get_subscription_settings
+    from src.services.payment import create_payment
+    from src.services.event_service import event_creation_payment_required
+
     ev_type = callback.data.replace("evcreate_type_", "")
+    if ev_type not in ("large", "motorcade", "run"):
+        await callback.answer("Неизвестный тип.", show_alert=True)
+        return
+
     await state.update_data(event_type=ev_type)
+
+    settings_db = await get_subscription_settings()
+    needs_payment, price = await event_creation_payment_required(
+        user.id, user.platform_user_id, user.city_id, ev_type, settings_db
+    )
+
+    if needs_payment and price and price > 0:
+        payment = await create_payment(
+            amount_kopecks=price,
+            description="Создание мероприятия",
+            metadata={"type": "event_creation", "user_id": str(user.id), "event_type": ev_type},
+        )
+        if payment and payment.get("confirmation_url"):
+            await state.set_state(EventCreateStates.awaiting_payment)
+            await state.update_data(event_payment_id=payment["id"])
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
+                [InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data="evcreate_checkpay")],
+                [InlineKeyboardButton(text="« Отмена", callback_data="menu_events")],
+            ])
+            price_rub = price // 100
+            await callback.message.edit_text(
+                f"💳 Создание мероприятия платное: <b>{price_rub} ₽</b>\n\n"
+                f"Оплати и нажми «Я оплатил — проверить».",
+                reply_markup=kb,
+            )
+            await callback.answer()
+            return
+        await callback.answer("Платёжный сервис недоступен.", show_alert=True)
+        return
+
     await state.set_state(EventCreateStates.title)
     await callback.message.edit_text("Введи название мероприятия (или «Пропустить»):")
     await callback.answer()

@@ -210,6 +210,15 @@ async def can_admin_events(platform_user_id: int, city_id: UUID | None, event_ci
     return await is_city_admin(platform_user_id, city_id)
 
 
+async def can_create_event_free(platform_user_id: int, city_id: UUID | None) -> bool:
+    """Admin (суперадмин или городской админ) создаёт мероприятия бесплатно."""
+    if platform_user_id in get_settings().superadmin_ids:
+        return True
+    if city_id and await is_city_admin(platform_user_id, city_id):
+        return True
+    return False
+
+
 async def get_subscription_settings() -> SubscriptionSettings | None:
     session_factory = get_session_factory()
     async with session_factory() as session:
