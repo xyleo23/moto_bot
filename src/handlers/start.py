@@ -26,7 +26,9 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
             )
 
         if not user or not user.city_id:
-            await message.answer(texts.WELCOME_NEW, reply_markup=get_city_select_kb())
+            from src.services.admin_service import get_cities
+            cities = await get_cities()
+            await message.answer(texts.WELCOME_NEW, reply_markup=get_city_select_kb(cities))
             return
 
         has_prof = await has_profile(user)
@@ -193,23 +195,34 @@ async def cb_menu_main(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "city_ekb")
-async def cb_city_ekb(callback: CallbackQuery, state: FSMContext, user=None):
+@router.callback_query(F.data.startswith("city_"))
+async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
     from src.models.base import get_session_factory
     from sqlalchemy import select
     from src.models.city import City
 
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        result = await session.execute(select(City).where(City.name == "Екатеринбург"))
-        city = result.scalar_one_or_none()
-        if city:
-            user = await get_or_create_user(
-                platform="telegram",
-                platform_user_id=callback.from_user.id,
-                username=callback.from_user.username,
-                first_name=callback.from_user.first_name,
-                city_id=city.id,
-            )
+    city_id = None
+    if callback.data == "city_ekb":
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            result = await session.execute(select(City).where(City.name == "Екатеринбург"))
+            city = result.scalar_one_or_none()
+            city_id = city.id if city else None
+    else:
+        try:
+            cid = callback.data.replace("city_", "")
+            city_id = uuid.UUID(cid)
+        except (ValueError, TypeError):
+            city_id = None
+
+    if city_id:
+        user = await get_or_create_user(
+            platform="telegram",
+            platform_user_id=callback.from_user.id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            city_id=city_id,
+        )
 
     await callback.message.edit_text(
         "Отлично! Теперь выбери свою роль:",

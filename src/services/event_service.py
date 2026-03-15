@@ -33,6 +33,7 @@ async def get_events_list(city_id: UUID | None, event_type: str | None = None):
             .where(
                 Event.city_id == city_id,
                 Event.is_cancelled.is_(False),
+                Event.is_hidden.is_(False),
                 Event.start_at >= datetime.utcnow(),
             )
             .order_by(Event.start_at)

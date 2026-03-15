@@ -26,7 +26,9 @@ def get_event_list_filter_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def get_event_card_kb(event_id: str, is_registered: bool, user_role: str) -> InlineKeyboardMarkup:
+def get_event_card_kb(
+    event_id: str, is_registered: bool, user_role: str, can_report: bool = True
+) -> InlineKeyboardMarkup:
     rows = []
     if not is_registered:
         rows.append([
@@ -35,8 +37,10 @@ def get_event_card_kb(event_id: str, is_registered: bool, user_role: str) -> Inl
         ])
     else:
         rows.append([InlineKeyboardButton(text="Ищу пару", callback_data=f"event_seeking_{event_id}")])
-    # Share button — generates ready-to-forward plain text
-    rows.append([InlineKeyboardButton(text="📤 Поделиться", callback_data=f"event_share_{event_id}")])
+    share_row = [InlineKeyboardButton(text="📤 Поделиться", callback_data=f"event_share_{event_id}")]
+    if can_report:
+        share_row.append(InlineKeyboardButton(text="🚩 Пожаловаться", callback_data=f"event_report_{event_id}"))
+    rows.append(share_row)
     rows.append([InlineKeyboardButton(text="« К списку", callback_data="event_list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

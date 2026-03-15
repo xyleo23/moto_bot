@@ -6,7 +6,10 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
-        [InlineKeyboardButton(text="🏙 Админы городов", callback_data="admin_city_admins")],
+        [
+            InlineKeyboardButton(text="🏙 Города", callback_data="admin_cities"),
+            InlineKeyboardButton(text="👤 Админы городов", callback_data="admin_city_admins"),
+        ],
         [InlineKeyboardButton(text="📅 Мероприятия", callback_data="admin_events")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
         [InlineKeyboardButton(text="📝 Текст «О нас»", callback_data="admin_text_about")],
@@ -92,6 +95,10 @@ def get_settings_kb(s: object) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="💵 Цена месяца (коп)", callback_data="admin_set_monthly")],
         [InlineKeyboardButton(text="💵 Цена сезона (коп)", callback_data="admin_set_season")],
+        [InlineKeyboardButton(
+            text="🏍 Мотопробегов/мес (с подпиской)",
+            callback_data="admin_set_motorcade_limit",
+        )],
         [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
     ])
 

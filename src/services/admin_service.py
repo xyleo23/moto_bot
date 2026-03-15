@@ -124,10 +124,64 @@ async def get_user_by_platform_id(platform_user_id: int) -> User | None:
 
 
 async def get_cities() -> list[City]:
+    """Active cities only (for user-facing selection)."""
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.execute(select(City).where(City.is_active.is_(True)).order_by(City.name))
         return list(r.scalars().all())
+
+
+async def get_all_cities() -> list[City]:
+    """All cities including inactive (for admin CRUD)."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(select(City).order_by(City.name))
+        return list(r.scalars().all())
+
+
+async def create_city(name: str) -> tuple[City | None, str]:
+    """Create city. Returns (city, error_msg)."""
+    name = (name or "").strip()[:100]
+    if not name:
+        return None, "Название не может быть пустым"
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        existing = await session.execute(select(City).where(City.name.ilike(name)))
+        if existing.scalar_one_or_none():
+            return None, "Город с таким названием уже есть"
+        city = City(name=name)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+        return city, ""
+
+
+async def update_city(
+    city_id: UUID,
+    name: str | None = None,
+    is_active: bool | None = None,
+) -> tuple[bool, str]:
+    """Update city. Returns (ok, error_msg)."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(select(City).where(City.id == city_id))
+        city = r.scalar_one_or_none()
+        if not city:
+            return False, "Город не найден"
+        if name is not None:
+            name = name.strip()[:100]
+            if not name:
+                return False, "Название не может быть пустым"
+            existing = await session.execute(
+                select(City).where(City.name.ilike(name), City.id != city_id)
+            )
+            if existing.scalar_one_or_none():
+                return False, "Город с таким названием уже есть"
+            city.name = name
+        if is_active is not None:
+            city.is_active = is_active
+        await session.commit()
+        return True, ""
 
 
 async def get_city_admins(city_id: UUID) -> list[tuple[CityAdmin, User]]:
@@ -238,6 +292,7 @@ async def update_subscription_settings(
     season_price_kopecks: int | None = None,
     event_creation_enabled: bool | None = None,
     event_creation_price_kopecks: int | None = None,
+    event_motorcade_limit_per_month: int | None = None,
     raise_profile_enabled: bool | None = None,
     raise_profile_price_kopecks: int | None = None,
 ) -> bool:
@@ -259,6 +314,8 @@ async def update_subscription_settings(
             s.event_creation_enabled = event_creation_enabled
         if event_creation_price_kopecks is not None:
             s.event_creation_price_kopecks = event_creation_price_kopecks
+        if event_motorcade_limit_per_month is not None:
+            s.event_motorcade_limit_per_month = max(0, event_motorcade_limit_per_month)
         if raise_profile_enabled is not None:
             s.raise_profile_enabled = raise_profile_enabled
         if raise_profile_price_kopecks is not None:
@@ -358,6 +415,19 @@ async def set_event_official(event_id: UUID, official: bool) -> bool:
         if not ev:
             return False
         ev.is_official = official
+        await session.commit()
+        return True
+
+
+async def set_event_hidden(event_id: UUID, hidden: bool) -> bool:
+    """Hide/unhide event (e.g. after complaint accepted)."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(select(Event).where(Event.id == event_id))
+        ev = r.scalar_one_or_none()
+        if not ev:
+            return False
+        ev.is_hidden = hidden
         await session.commit()
         return True
 

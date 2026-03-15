@@ -122,6 +122,19 @@ EVENT_SHARE_TEXT = (
     "{description}"
 )
 EVENT_SHARE_BTN = "📤 Поделиться"
+EVENT_REPORT_BTN = "🚩 Пожаловаться"
+EVENT_REPORT_SENT = "Жалоба на мероприятие отправлена администратору."
+EVENT_REPORT_ADMIN_TEXT = (
+    "🚩 <b>Жалоба на мероприятие</b>\n\n"
+    "От: {reporter}\n"
+    "Мероприятие: {event_title}\n"
+    "Организатор: {creator}\n\n"
+    "{event_text}"
+)
+EVENT_REPORT_BTN_ACCEPT = "✅ Принять (скрыть мероприятие)"
+EVENT_REPORT_BTN_REJECT = "❌ Отклонить жалобу"
+EVENT_REPORT_ACCEPTED = "Жалоба принята, мероприятие скрыто из списка."
+EVENT_REPORT_REJECTED = "Жалоба отклонена."
 
 # ——— Профиль / смена телефона ———
 PHONE_CHANGE_REQUEST_SENT = (

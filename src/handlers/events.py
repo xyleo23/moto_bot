@@ -536,7 +536,8 @@ async def cb_event_detail(callback: CallbackQuery, user=None):
 
     reg = await get_user_registration(ev_uuid, user.id) if user else None
     user_role = reg.role if reg else None
-    kb = get_event_card_kb(eid, bool(reg), user_role)
+    can_report = bool(user) and ev.creator_id != user.id
+    kb = get_event_card_kb(eid, bool(reg), user_role, can_report)
     try:
         await callback.message.edit_text(_format_event_card(ev), reply_markup=kb)
     except TelegramBadRequest as e:
@@ -567,6 +568,79 @@ async def cb_event_share(callback: CallbackQuery, user=None):
         reply_markup=get_back_to_menu_kb(),
     )
     await callback.answer()
+
+
+# ——— Report ———
+@router.callback_query(F.data.startswith("event_report_"))
+async def cb_event_report(callback: CallbackQuery, user=None):
+    """User reports an event. Notifies city admins and superadmins."""
+    from src import texts
+    from src.services.admin_service import get_city_admins
+    from src.config import get_settings
+
+    if not user:
+        await callback.answer("Ошибка.", show_alert=True)
+        return
+
+    eid = callback.data.replace("event_report_", "")
+    try:
+        ev_uuid = uuid.UUID(eid)
+    except ValueError:
+        await callback.answer()
+        return
+
+    ev = await get_event_by_id(ev_uuid)
+    if not ev:
+        await callback.answer("Мероприятие не найдено.", show_alert=True)
+        return
+
+    if ev.creator_id == user.id:
+        await callback.answer("Нельзя пожаловаться на своё мероприятие.", show_alert=True)
+        return
+
+    ev_title = ev.title or TYPE_LABELS.get(ev.type.value, ev.type.value)
+    reporter = f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
+    admin_text = texts.EVENT_REPORT_ADMIN_TEXT.format(
+        reporter=reporter,
+        event_title=ev_title,
+        event_date=ev.start_at.strftime("%d.%m.%Y %H:%M"),
+        event_type=TYPE_LABELS.get(ev.type.value, ev.type.value),
+    )
+
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=texts.EVENT_REPORT_BTN_ACCEPT,
+            callback_data=f"admin_evreport_accept_{eid}",
+        )],
+        [InlineKeyboardButton(
+            text=texts.EVENT_REPORT_BTN_REJECT,
+            callback_data=f"admin_evreport_reject_{eid}",
+        )],
+    ])
+
+    settings = get_settings()
+    bot = callback.bot
+    notified = False
+
+    if ev.city_id:
+        admins = await get_city_admins(ev.city_id)
+        for _, admin_user in admins:
+            try:
+                await bot.send_message(
+                    admin_user.platform_user_id, admin_text, reply_markup=admin_kb
+                )
+                notified = True
+            except Exception as e:
+                logger.warning("Cannot notify city admin %s: %s", admin_user.platform_user_id, e)
+
+    for admin_id in settings.superadmin_ids:
+        try:
+            await bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
+            notified = True
+        except Exception as e:
+            logger.warning("Cannot notify superadmin %s: %s", admin_id, e)
+
+    await callback.answer(texts.EVENT_REPORT_SENT, show_alert=False)
 
 
 # ——— Register ———

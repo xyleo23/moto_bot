@@ -47,10 +47,13 @@ def get_persistent_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def get_city_select_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Екатеринбург", callback_data="city_ekb")],
-    ])
+def get_city_select_kb(cities: list | None = None) -> InlineKeyboardMarkup:
+    """Dynamic city list. Pass list of City from get_cities(). Backward compat: None = Екатеринбург."""
+    if cities:
+        rows = [[InlineKeyboardButton(text=c.name, callback_data=f"city_{c.id}")] for c in cities]
+    else:
+        rows = [[InlineKeyboardButton(text="Екатеринбург", callback_data="city_ekb")]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_role_select_kb() -> InlineKeyboardMarkup:

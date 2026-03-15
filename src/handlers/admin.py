@@ -31,6 +31,9 @@ from src.services.admin_service import (
     get_user_by_id,
     get_user_by_platform_id,
     get_cities,
+    get_all_cities,
+    create_city,
+    update_city,
     get_city_admins,
     add_city_admin,
     remove_city_admin,
@@ -45,6 +48,7 @@ from src.services.admin_service import (
     admin_cancel_event,
     set_event_recommended,
     set_event_official,
+    set_event_hidden,
     get_broadcast_recipients,
     get_global_text,
     set_global_text,
@@ -67,6 +71,10 @@ class AdminUserSearchStates(StatesGroup):
 
 class AdminAddCityAdminStates(StatesGroup):
     user_id = State()
+
+
+class AdminCitiesStates(StatesGroup):
+    name = State()
 
 
 class AdminBroadcastStates(StatesGroup):
@@ -477,6 +485,184 @@ async def admin_sub_extend_days(message: Message, state: FSMContext):
     await state.clear()
 
 
+# ——— Cities CRUD ———
+
+class AdminCitiesStates(StatesGroup):
+    name = State()
+
+
+def _admin_cities_kb() -> "InlineKeyboardMarkup":
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить город", callback_data="admin_cities_add")],
+        [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+    ])
+
+
+async def _admin_cities_list_text_kb():
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cities = await get_all_cities()
+    rows = []
+    for c in cities:
+        status = "✅" if c.is_active else "❌"
+        rows.append([
+            InlineKeyboardButton(text=f"{status} {c.name}", callback_data=f"admin_city_{c.id}"),
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Добавить город", callback_data="admin_cities_add")])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    text = "🏙 <b>Города</b>\n\n" + "\n".join(
+        f"{'✅' if c.is_active else '❌'} {c.name}" for c in cities
+    ) if cities else "Городов пока нет."
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "admin_cities")
+async def cb_admin_cities(callback: CallbackQuery):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    text, kb = await _admin_cities_list_text_kb()
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_city_edit_"))
+async def cb_admin_city_edit(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    cid = callback.data.replace("admin_city_edit_", "")
+    await state.set_state(AdminCitiesStates.name)
+    await state.update_data(admin_cities_action="edit", admin_cities_id=cid)
+    await callback.message.edit_text(
+        "Введи новое название города:",
+        reply_markup=get_admin_back_kb("admin_cities"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_city_toggle_"))
+async def cb_admin_city_toggle(callback: CallbackQuery):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    cid = callback.data.replace("admin_city_toggle_", "")
+    cities = await get_all_cities()
+    city = next((c for c in cities if str(c.id) == cid), None)
+    if not city:
+        await callback.answer("Город не найден.")
+        return
+    ok, _ = await update_city(uuid.UUID(cid), is_active=not city.is_active)
+    if ok:
+        await callback.answer(f"{'Активирован' if not city.is_active else 'Деактивирован'}")
+    else:
+        await callback.answer("Ошибка.", show_alert=True)
+    text, kb = await _admin_cities_list_text_kb()
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_city_"))
+async def cb_admin_city_detail(callback: CallbackQuery):
+    """Single city: Edit name, Activate/Deactivate."""
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    cid = callback.data.replace("admin_city_", "")
+    cities = await get_all_cities()
+    city = next((c for c in cities if str(c.id) == cid), None)
+    if not city:
+        await callback.answer("Город не найден.")
+        return
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = [
+        [InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"admin_city_edit_{cid}")],
+        [InlineKeyboardButton(
+            text="✅ Активировать" if not city.is_active else "❌ Деактивировать",
+            callback_data=f"admin_city_toggle_{cid}",
+        )],
+        [InlineKeyboardButton(text="« К списку", callback_data="admin_cities")],
+    ]
+    text = f"🏙 {city.name}\nСтатус: {'активен' if city.is_active else 'неактивен'}"
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_cities_add")
+async def cb_admin_cities_add(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    await state.set_state(AdminCitiesStates.name)
+    await state.update_data(admin_cities_action="add")
+    await callback.message.edit_text(
+        "Введи название нового города:",
+        reply_markup=get_admin_back_kb("admin_cities"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_city_edit_"))
+async def cb_admin_city_edit(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    cid = callback.data.replace("admin_city_edit_", "")
+    await state.set_state(AdminCitiesStates.name)
+    await state.update_data(admin_cities_action="edit", admin_cities_id=cid)
+    await callback.message.edit_text(
+        "Введи новое название города:",
+        reply_markup=get_admin_back_kb("admin_cities"),
+    )
+    await callback.answer()
+
+
+@router.message(AdminCitiesStates.name, F.text)
+async def admin_cities_name_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    action = data.get("admin_cities_action")
+    cid = data.get("admin_cities_id")
+    name = (message.text or "").strip()[:100]
+    await state.clear()
+    if not name:
+        await message.answer("Название не может быть пустым.", reply_markup=_admin_cities_kb())
+        return
+    if action == "add":
+        city, err = await create_city(name)
+        if city:
+            await message.answer(f"✅ Город «{city.name}» создан.", reply_markup=get_admin_back_kb("admin_cities"))
+        else:
+            await message.answer(f"❌ {err}", reply_markup=get_admin_back_kb("admin_cities"))
+    elif action == "edit" and cid:
+        ok, err = await update_city(uuid.UUID(cid), name=name)
+        if ok:
+            await message.answer(f"✅ Переименовано в «{name}».", reply_markup=get_admin_back_kb("admin_cities"))
+        else:
+            await message.answer(f"❌ {err}", reply_markup=get_admin_back_kb("admin_cities"))
+    else:
+        await message.answer("Ошибка.", reply_markup=get_admin_back_kb("admin_cities"))
+
+
+@router.callback_query(F.data.startswith("admin_city_toggle_"))
+async def cb_admin_city_toggle(callback: CallbackQuery):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    cid = callback.data.replace("admin_city_toggle_", "")
+    cities = await get_all_cities()
+    city = next((c for c in cities if str(c.id) == cid), None)
+    if not city:
+        await callback.answer("Город не найден.")
+        return
+    ok, _ = await update_city(uuid.UUID(cid), is_active=not city.is_active)
+    if ok:
+        await callback.answer(f"{'Активирован' if not city.is_active else 'Деактивирован'}")
+    else:
+        await callback.answer("Ошибка.", show_alert=True)
+    text, kb = await _admin_cities_list_text_kb()
+    await callback.message.edit_text(text, reply_markup=kb)
+
+
 # ——— City admins ———
 
 @router.callback_query(F.data == "admin_city_admins")
@@ -751,6 +937,54 @@ async def cb_admin_ev_cancel(callback: CallbackQuery, user=None):
     )
 
 
+@router.callback_query(F.data.startswith("admin_evreport_accept_"))
+async def cb_admin_evreport_accept(callback: CallbackQuery, user=None):
+    """Admin accepts event report — hides the event from public list."""
+    from src import texts
+    is_sa = _is_superadmin(callback.from_user.id)
+    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    if not is_sa and not is_ca:
+        await callback.answer("Доступ запрещён.", show_alert=True)
+        return
+    eid = callback.data.replace("admin_evreport_accept_", "")
+    try:
+        ev_uuid = uuid.UUID(eid)
+    except ValueError:
+        await callback.answer("Ошибка.")
+        return
+    ev = await get_event_by_id(ev_uuid)
+    if not ev:
+        await callback.answer("Мероприятие не найдено.")
+        return
+    if not is_sa and user.city_id != ev.city_id:
+        await callback.answer("Нет доступа к мероприятиям другого города.", show_alert=True)
+        return
+    await set_event_hidden(ev.id, True)
+    await callback.message.edit_text(texts.EVENT_REPORT_ACCEPTED)
+    await callback.answer("Мероприятие скрыто.")
+
+
+@router.callback_query(F.data.startswith("admin_evreport_reject_"))
+async def cb_admin_evreport_reject(callback: CallbackQuery, user=None):
+    """Admin rejects event report."""
+    from src import texts
+    is_sa = _is_superadmin(callback.from_user.id)
+    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    if not is_sa and not is_ca:
+        await callback.answer("Доступ запрещён.", show_alert=True)
+        return
+    eid = callback.data.replace("admin_evreport_reject_", "")
+    try:
+        ev = await get_event_by_id(uuid.UUID(eid))
+    except ValueError:
+        ev = None
+    if ev and not is_sa and user and user.city_id != ev.city_id:
+        await callback.answer("Нет доступа.")
+        return
+    await callback.message.edit_text(texts.EVENT_REPORT_REJECTED)
+    await callback.answer("Жалоба отклонена.")
+
+
 # ——— Settings ———
 
 @router.callback_query(F.data == "admin_settings")
@@ -772,13 +1006,15 @@ async def cb_admin_settings(callback: CallbackQuery):
 
 
 def _settings_text(s) -> str:
+    limit = getattr(s, "event_motorcade_limit_per_month", 2)
     return (
         "⚙️ <b>Настройки подписки</b>\n\n"
         f"Подписка: {'✅ вкл' if s.subscription_enabled else '❌ выкл'}\n"
         f"Цена месяца: {s.monthly_price_kopecks / 100:.0f} ₽\n"
         f"Цена сезона: {s.season_price_kopecks / 100:.0f} ₽\n"
         f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}\n"
-        f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}"
+        f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}\n"
+        f"Мотопробегов/мес (с подпиской): {limit}"
     )
 
 

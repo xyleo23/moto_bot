@@ -42,6 +42,7 @@ class Event(Base):
     is_recommended: Mapped[bool] = mapped_column(default=False)
     is_official: Mapped[bool] = mapped_column(default=False)
     is_cancelled: Mapped[bool] = mapped_column(default=False)
+    is_hidden: Mapped[bool] = mapped_column(default=False)  # скрыто по жалобе
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
