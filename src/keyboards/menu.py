@@ -18,6 +18,7 @@ def get_main_menu_kb(platform_user_id: int | None = None) -> InlineKeyboardMarku
         [InlineKeyboardButton(text="📅 Мероприятия", callback_data="menu_events")],
         [InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile")],
         [InlineKeyboardButton(text="ℹ️ О нас", callback_data="menu_about")],
+        [InlineKeyboardButton(text="📄 Документы", callback_data="menu_documents")],
     ]
     if platform_user_id is not None and platform_user_id in get_settings().superadmin_ids:
         rows.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")])

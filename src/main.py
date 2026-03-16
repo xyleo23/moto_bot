@@ -68,6 +68,7 @@ async def run_telegram():
         profile,
         profile_edit,
         about,
+        legal,
         admin,
     )
     from src.handlers.middleware import BlockCheckMiddleware, BotInjectMiddleware
@@ -145,6 +146,7 @@ async def run_telegram():
     dp.include_router(profile.router)
     dp.include_router(profile_edit.router)
     dp.include_router(about.router)
+    dp.include_router(legal.router)
     dp.include_router(admin.router)
     from src.handlers import admin_contacts, subscription
     dp.include_router(admin_contacts.router)
@@ -156,6 +158,8 @@ async def run_telegram():
 
     await ensure_cities()
     await ensure_subscription_settings()
+    from src.services.notification_templates import ensure_default_templates
+    await ensure_default_templates()
     # Ensure bot_settings row exists (creates with defaults if absent)
     from src.services.bot_settings_service import get_bot_settings
     await get_bot_settings()
@@ -177,6 +181,10 @@ async def run_telegram():
         BotCommand(command="events",   description="📅 Мероприятия"),
         BotCommand(command="contacts", description="📞 Полезные контакты"),
         BotCommand(command="about",    description="ℹ️ О нас"),
+        BotCommand(command="privacy",  description="🔒 Политика конфиденциальности"),
+        BotCommand(command="consent",  description="✅ Согласие на обработку ПД"),
+        BotCommand(command="delete_data", description="🗑 Удалить мои данные"),
+        BotCommand(command="support",  description="📞 Поддержка"),
     ]
     await bot.set_my_commands(commands=user_commands, scope=BotCommandScopeDefault())
 
