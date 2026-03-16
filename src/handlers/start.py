@@ -251,9 +251,10 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
         first_name=callback.from_user.first_name,
         city_id=city_id,
     )
+    role_text = f"{texts.WELCOME_LEGAL_DISCLAIMER}\n\nОтлично! Теперь выбери свою роль:"
     await callback.message.edit_text(
-        "Отлично! Теперь выбери свою роль:",
-        reply_markup=get_role_select_kb(),
+        role_text,
+        reply_markup=get_welcome_with_role_kb(),
     )
 
 
