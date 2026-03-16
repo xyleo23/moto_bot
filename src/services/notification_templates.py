@@ -1,37 +1,44 @@
-"""Editable notification templates (global_texts). Placeholders: {name}, {profile}, {period}, etc."""
-from src.services.admin_service import get_global_text, set_global_text
+"""Notification templates (global_texts). Placeholders: {profile}, {period}."""
+from sqlalchemy import select
 
-# Keys in global_texts table. Defaults used when key is missing.
+from src.models.base import get_session_factory
+from src.models.global_text import GlobalText
+
+
+# (default_text, description) for admin UI
 TEMPLATE_KEYS = {
     "template_mutual_like_self": (
         "🎉 <b>Взаимный лайк!</b>\n\n{profile}",
-        "Сообщение инициатору лайка. Плейсхолдеры: {profile}",
+        "Инициатору взаимного лайка. Плейсхолдеры: {profile}",
     ),
     "template_mutual_like_target": (
         "🎉 <b>Взаимный лайк!</b>\n\n{profile}\n\nВы понравились друг другу — напишите первым!",
-        "Сообщение получателю. Плейсхолдеры: {profile}",
+        "Получателю взаимного лайка. Плейсхолдеры: {profile}",
     ),
     "template_mutual_like_reply": (
         "🎉 <b>Взаимный лайк!</b>\n\n{profile}\n\nОни ответили на твой лайк — напиши первым!",
-        "Когда кто-то ответил на твой лайк. Плейсхолдеры: {profile}",
+        "При ответе на лайк. Плейсхолдеры: {profile}",
     ),
     "template_like_received": (
         "💌 <b>Кто-то лайкнул твою анкету!</b>\n\n{profile}",
-        "Уведомление о лайке. Плейсхолдеры: {profile}",
+        "Уведомление о новом лайке. Плейсхолдеры: {profile}",
     ),
     "template_subscription_activated": (
         "✅ Подписка на {period} активирована! Спасибо за поддержку.",
-        "После успешной оплаты подписки. Плейсхолдеры: {period}",
+        "После активации подписки. Плейсхолдеры: {period}",
     ),
 }
 
+DEFAULT_TEMPLATES = {k: v[0] for k, v in TEMPLATE_KEYS.items()}
+
 
 async def get_template(key: str, **placeholders) -> str:
-    """Get template text, apply placeholders. Falls back to default if missing."""
-    default = TEMPLATE_KEYS.get(key, ("", ""))[0]
-    text = await get_global_text(key)
-    if not text:
-        text = default
+    """Get template from DB, apply placeholders {profile}, {period}. Falls back to default if missing."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(select(GlobalText).where(GlobalText.key == key))
+        g = r.scalar_one_or_none()
+        text = g.value if g else DEFAULT_TEMPLATES.get(key, "")
     try:
         return text.format(**placeholders)
     except KeyError:
@@ -40,7 +47,10 @@ async def get_template(key: str, **placeholders) -> str:
 
 async def ensure_default_templates() -> None:
     """Insert default templates into global_texts if keys don't exist."""
-    for key, (default, _) in TEMPLATE_KEYS.items():
-        existing = await get_global_text(key)
-        if not existing:
-            await set_global_text(key, default)
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        for key, default in DEFAULT_TEMPLATES.items():
+            r = await session.execute(select(GlobalText).where(GlobalText.key == key))
+            if r.scalar_one_or_none() is None:
+                session.add(GlobalText(key=key, value=default))
+        await session.commit()
