@@ -51,4 +51,12 @@ async def activate_subscription(user_id, period: str, payment_id: str) -> bool:
         )
         session.add(sub)
         await session.commit()
+
+    from src.services.activity_log_service import log_event
+    from src.models.activity_log import ActivityEventType
+    await log_event(
+        ActivityEventType.SUBSCRIPTION,
+        user_id=user_id,
+        data={"period": period, "expires": str(expires), "payment_id": payment_id},
+    )
     return True

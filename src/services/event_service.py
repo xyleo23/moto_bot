@@ -189,6 +189,14 @@ async def create_event(
         session.add(ev)
         await session.commit()
         await session.refresh(ev)
+
+        from src.services.activity_log_service import log_event
+        from src.models.activity_log import ActivityEventType
+        await log_event(
+            ActivityEventType.EVENT_CREATED,
+            user_id=creator_id,
+            data={"event_id": str(ev.id), "event_type": event_type},
+        )
         return ev
 
 

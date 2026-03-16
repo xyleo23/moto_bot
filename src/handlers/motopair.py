@@ -551,18 +551,23 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
     result = await process_like(user.id, target_user.id, is_like=True)
 
     if result["matched"]:
+        from src.services.activity_log_service import log_event
+        from src.models.activity_log import ActivityEventType
+        await log_event(
+            ActivityEventType.MUTUAL_LIKE,
+            user_id=user.id,
+            data={"target_user_id": str(target_user.id), "from_user_id": str(user.id)},
+        )
         from_text, _ = await get_profile_info_text(target_user.id)
         to_text, _ = await get_profile_info_text(user.id)
 
         if bot and result["target_platform_user_id"]:
             try:
+                from src.services.notification_templates import get_template
+                msg_target = await get_template("template_mutual_like_target", profile=to_text)
                 await bot.send_message(
                     chat_id=result["target_platform_user_id"],
-                    text=(
-                        "🎉 <b>Взаимный лайк!</b>\n\n"
-                        f"{to_text}\n\n"
-                        "Вы понравились друг другу — напишите первым!"
-                    ),
+                    text=msg_target,
                     reply_markup=get_match_kb(
                         callback.from_user.username,
                         callback.from_user.id,
@@ -573,8 +578,10 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
                     "Cannot notify match user %s: %s", result["target_platform_user_id"], e
                 )
 
+        from src.services.notification_templates import get_template
+        msg_self = await get_template("template_mutual_like_self", profile=from_text)
         await callback.message.edit_text(
-            f"🎉 <b>Взаимный лайк!</b>\n\n{from_text}",
+            msg_self,
             reply_markup=get_match_kb(
                 target_user.platform_username,
                 target_user.platform_user_id,
@@ -584,10 +591,8 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
         if bot and result["target_platform_user_id"]:
             from_text, from_photo = await get_profile_info_text(user.id)
             try:
-                notify_text = (
-                    "💌 <b>Кто-то лайкнул твою анкету!</b>\n\n"
-                    f"{from_text}"
-                )
+                from src.services.notification_templates import get_template
+                notify_text = await get_template("template_like_received", profile=from_text)
                 kb = get_like_notification_kb(str(user.id))
                 if from_photo:
                     await bot.send_photo(
@@ -680,13 +685,11 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
     if bot and from_user.platform_user_id:
         to_text, _ = await get_profile_info_text(user.id)
         try:
+            from src.services.notification_templates import get_template
+            msg = await get_template("template_mutual_like_reply", profile=to_text)
             await bot.send_message(
                 chat_id=from_user.platform_user_id,
-                text=(
-                    "🎉 <b>Взаимный лайк!</b>\n\n"
-                    f"{to_text}\n\n"
-                    "Они ответили на твой лайк — напиши первым!"
-                ),
+                text=msg,
                 reply_markup=get_match_kb(
                     callback.from_user.username,
                     callback.from_user.id,
@@ -697,8 +700,10 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
                 "Cannot notify match reply user %s: %s", from_user.platform_user_id, e
             )
 
-    await callback.message.edit_text(
-        f"🎉 <b>Взаимный лайк!</b>\n\n{from_text}",
+        from src.services.notification_templates import get_template
+        text_self = await get_template("template_mutual_like_self", profile=from_text)
+        await callback.message.edit_text(
+            text_self,
         reply_markup=get_match_kb(
             from_user.platform_username,
             from_user.platform_user_id,

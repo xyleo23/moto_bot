@@ -10,6 +10,8 @@ from src.config import get_settings
 
 # Callback data prefixes and text triggers that bypass the block check.
 # SOS must be accessible at ALL times — even for blocked users.
+# Legal (privacy, delete_data) — для соблюдения ФЗ-152/GDPR заблокированный может удалить данные.
+_LEGAL_CALLBACK_PREFIXES = ("menu_documents", "doc_", "confirm_delete_data", "doc_cancel_delete")
 _SOS_CALLBACK_PREFIXES = (
     "menu_sos",
     "sos_accident",
@@ -20,6 +22,21 @@ _SOS_CALLBACK_PREFIXES = (
     "sos_all_clear_",
 )
 _SOS_TEXT_TRIGGERS = ("🆘 SOS",)
+
+# Юридические команды и callbacks — доступны даже заблокированным (ФЗ-152, GDPR)
+_LEGAL_PREFIXES = ("menu_documents", "doc_privacy", "doc_consent", "doc_delete", "doc_support", "doc_cancel_delete", "confirm_delete_data")
+_LEGAL_COMMANDS = ("/privacy", "/consent", "/delete_data", "/support")
+
+
+def _is_legal_event(event: TelegramObject) -> bool:
+    """Проверка: доступ к документам и удалению данных (ФЗ-152)."""
+    if isinstance(event, CallbackQuery):
+        data = event.data or ""
+        return any(data == p or data.startswith(p) for p in _LEGAL_PREFIXES)
+    if isinstance(event, Message):
+        text = (event.text or "").split()[0] if event.text else ""
+        return text in _LEGAL_COMMANDS
+    return False
 
 
 def _is_sos_event(event: TelegramObject) -> bool:

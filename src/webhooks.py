@@ -215,11 +215,10 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
             u = r.scalar_one_or_none()
             if u and u.platform_user_id:
                 try:
+                    from src.services.notification_templates import get_template
                     period_label = "1 месяц" if period == "monthly" else "Сезон"
-                    await bot.send_message(
-                        u.platform_user_id,
-                        f"✅ Подписка на {period_label} активирована! Спасибо за поддержку.",
-                    )
+                    msg = await get_template("template_subscription_activated", period=period_label)
+                    await bot.send_message(u.platform_user_id, msg)
                 except Exception as e:
                     logger.warning("Cannot notify user %s: %s", u.platform_user_id, e)
 

@@ -88,7 +88,10 @@ async def block_user(user_id: UUID, reason: str | None = None) -> bool:
         u.is_blocked = True
         u.block_reason = (reason or "")[:500]
         await session.commit()
-        return True
+    from src.services.activity_log_service import log_event
+    from src.models.activity_log import ActivityEventType
+    await log_event(ActivityEventType.BLOCK, user_id=user_id, data={"reason": (reason or "")[:200]})
+    return True
 
 
 async def unblock_user(user_id: UUID) -> bool:
@@ -101,7 +104,10 @@ async def unblock_user(user_id: UUID) -> bool:
         u.is_blocked = False
         u.block_reason = None
         await session.commit()
-        return True
+    from src.services.activity_log_service import log_event
+    from src.models.activity_log import ActivityEventType
+    await log_event(ActivityEventType.UNBLOCK, user_id=user_id)
+    return True
 
 
 async def get_user_by_id(user_id: UUID) -> User | None:

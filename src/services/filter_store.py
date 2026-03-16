@@ -2,6 +2,8 @@
 from uuid import UUID
 import json
 
+from loguru import logger
+
 from src.config import get_settings
 
 _memory_store: dict[str, dict] = {}
@@ -18,7 +20,8 @@ def _get_redis():
         try:
             from redis.asyncio import Redis
             _redis_client = Redis.from_url(get_settings().redis_url)
-        except Exception:
+        except Exception as e:
+            logger.warning("filter_store: Redis init failed: %s", e)
             _redis_client = None
     return _redis_client
 
@@ -32,8 +35,8 @@ async def get_filter(user_id: UUID | str, role: str) -> dict:
             raw = await r.get(k)
             if raw:
                 return json.loads(raw)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("filter_store get_filter Redis error for %s: %s", k, e)
     return _memory_store.get(k, {})
 
 
@@ -51,8 +54,8 @@ async def set_filter(user_id: UUID | str, role: str, f: dict) -> None:
         try:
             await r.set(k, json.dumps(data), ex=86400 * 30)
             return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("filter_store set_filter Redis error for %s: %s", k, e)
     _memory_store[k] = data
 
 
@@ -63,6 +66,6 @@ async def clear_filter(user_id: UUID | str, role: str) -> None:
     if r:
         try:
             await r.delete(k)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("filter_store clear_filter Redis error for %s: %s", k, e)
     _memory_store.pop(k, None)

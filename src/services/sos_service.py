@@ -94,6 +94,15 @@ async def create_sos_alert(
     # Set cooldown AFTER successful DB write
     await set_sos_cooldown(user_id)
 
+    from src.services.activity_log_service import log_event
+    from src.models.activity_log import ActivityEventType
+
+    await log_event(
+        ActivityEventType.SOS,
+        user_id=user_id,
+        data={"city_id": str(city_id), "type": sos_type, "lat": lat, "lon": lon},
+    )
+
     return True, 0
 
 
