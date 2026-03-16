@@ -105,8 +105,8 @@ async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None
         logger.info("SOS sending...")
         await _send_sos_alert(callback.message, state, user, None, bot)
         await state.clear()
-    except Exception:
-        logger.exception("sos_skip_comment: error in _send_sos_alert")
+    except Exception as e:
+        logger.exception("sos_skip_comment: error in _send_sos_alert: %s", e)
         await state.clear()
         await callback.message.answer(
             "Произошла ошибка при отправке SOS. Попробуй снова.",
@@ -121,8 +121,8 @@ async def sos_comment(message: Message, state: FSMContext, user=None, bot=None):
         logger.info("SOS sending...")
         await _send_sos_alert(message, state, user, message.text.strip(), bot)
         await state.clear()
-    except Exception:
-        logger.exception("sos_comment: error in _send_sos_alert")
+    except Exception as e:
+        logger.exception("sos_comment: error in _send_sos_alert: %s", e)
         await state.clear()
         await message.answer(
             "Произошла ошибка при отправке SOS. Попробуй снова.",
@@ -166,6 +166,31 @@ async def _send_sos_alert(
 
     data = await state.get_data()
     await state.clear()
+
+    # Fallback: load user if middleware didn't pass (e.g. text message in SOS flow)
+    if not user and message.from_user:
+        from src.services.user import get_or_create_user
+
+        user = await get_or_create_user(
+            platform="telegram",
+            platform_user_id=message.from_user.id,
+            username=getattr(message.from_user, "username", None),
+            first_name=getattr(message.from_user, "first_name", None),
+        )
+
+    # Validate FSM data — if state expired (Redis TTL), we may get empty dict
+    required_keys = ("sos_type", "lat", "lon")
+    if not all(k in data for k in required_keys):
+        logger.warning(
+            "SOS: missing FSM data keys=%s has=%s",
+            [k for k in required_keys if k not in data],
+            list(data.keys()),
+        )
+        await message.answer(
+            "Данные устарели. Начни SOS заново — нажми /sos или кнопку 🆘 SOS.",
+            reply_markup=get_back_to_menu_kb(),
+        )
+        return
 
     if not user or not user.city_id:
         await message.answer(texts.SOS_NO_CITY)
