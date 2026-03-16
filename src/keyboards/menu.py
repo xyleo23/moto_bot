@@ -60,29 +60,28 @@ def get_welcome_legal_kb() -> InlineKeyboardMarkup:
 
 
 def get_welcome_with_city_kb(cities: list) -> InlineKeyboardMarkup:
-    """Приветствие: юридические кнопки + выбор города."""
-    rows = [
+    """Город — основное действие сверху, юридические кнопки ниже."""
+    rows = [[InlineKeyboardButton(text=c.name, callback_data=f"city_{c.id}")] for c in cities]
+    rows.extend([
         [
             InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
             InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
         ],
         [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
-    ]
-    for c in cities:
-        rows.append([InlineKeyboardButton(text=c.name, callback_data=f"city_{c.id}")])
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_welcome_with_role_kb() -> InlineKeyboardMarkup:
-    """Приветствие: юридические кнопки + выбор роли."""
+    """Роль — основное действие сверху, юридические кнопки ниже."""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Я Пилот", callback_data="role_pilot")],
+        [InlineKeyboardButton(text="Я Двойка", callback_data="role_passenger")],
         [
             InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
             InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
         ],
         [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
-        [InlineKeyboardButton(text="Я Пилот", callback_data="role_pilot")],
-        [InlineKeyboardButton(text="Я Двойка", callback_data="role_passenger")],
     ])
 
 

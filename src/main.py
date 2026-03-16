@@ -77,8 +77,6 @@ async def run_telegram():
     if not settings.telegram_bot_token:
         raise ValueError("TELEGRAM_BOT_TOKEN is required for Telegram platform")
 
-    init_db()
-
     try:
         redis = Redis.from_url(settings.redis_url)
         await redis.ping()
@@ -156,11 +154,8 @@ async def run_telegram():
     async def errors_handler(event):
         logger.exception(f"Update {event.update} caused error: {event.exception}")
 
-    await ensure_cities()
-    await ensure_subscription_settings()
     from src.services.notification_templates import ensure_default_templates
     await ensure_default_templates()
-    # Ensure bot_settings row exists (creates with defaults if absent)
     from src.services.bot_settings_service import get_bot_settings
     await get_bot_settings()
 
@@ -234,10 +229,6 @@ async def run_max():
     if not settings.max_bot_token:
         raise ValueError("MAX_BOT_TOKEN is required for MAX platform")
 
-    init_db()
-    await ensure_cities()
-    await ensure_subscription_settings()
-
     adapter = MaxAdapter()
     logger.info("Starting MAX bot (long polling)...")
 
@@ -263,12 +254,25 @@ def main():
     platform = settings.platform.lower()
 
     if platform == "telegram":
-        asyncio.run(run_telegram())
+        async def _telegram_only():
+            init_db()
+            await ensure_cities()
+            await ensure_subscription_settings()
+            await run_telegram()
+        asyncio.run(_telegram_only())
     elif platform == "max":
-        asyncio.run(run_max())
+        async def _max_only():
+            init_db()
+            await ensure_cities()
+            await ensure_subscription_settings()
+            await run_max()
+        asyncio.run(_max_only())
     elif platform == "both":
-        # Run both in parallel
         async def run_both():
+            # Init DB and shared state ONCE before starting both bots concurrently
+            init_db()
+            await ensure_cities()
+            await ensure_subscription_settings()
             await asyncio.gather(run_telegram(), run_max())
         asyncio.run(run_both())
     else:

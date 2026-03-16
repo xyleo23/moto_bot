@@ -38,13 +38,13 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
         if not user or not user.city_id:
             from src.services.admin_service import get_cities
             cities = await get_cities()
-            welcome_text = f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_LEGAL_DISCLAIMER}"
+            welcome_text = f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_CITY_PROMPT}"
             await message.answer(welcome_text, reply_markup=get_welcome_with_city_kb(cities))
             return
 
         has_prof = await has_profile(user)
         if not has_prof:
-            welcome_text = f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_LEGAL_DISCLAIMER}"
+            welcome_text = f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_ROLE_PROMPT}"
             await message.answer(welcome_text, reply_markup=get_welcome_with_role_kb())
             return
 
@@ -251,7 +251,7 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
         first_name=callback.from_user.first_name,
         city_id=city_id,
     )
-    role_text = f"{texts.WELCOME_LEGAL_DISCLAIMER}\n\nОтлично! Теперь выбери свою роль:"
+    role_text = f"Отлично! {texts.WELCOME_ROLE_PROMPT}"
     await callback.message.edit_text(
         role_text,
         reply_markup=get_welcome_with_role_kb(),

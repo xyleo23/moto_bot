@@ -141,58 +141,64 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
 
     role = "pilot" if user.role == UserRole.PILOT else "passenger"
 
-    # Check if profile raise requires payment
     settings_db = await get_subscription_settings()
-    if (
-        settings_db
-        and settings_db.raise_profile_enabled
-        and settings_db.raise_profile_price_kopecks > 0
-    ):
-        price = settings_db.raise_profile_price_kopecks
-        payment = await create_payment(
-            amount_kopecks=price,
-            description="Поднятие анкеты",
-            metadata={"type": "raise_profile", "user_id": str(user.id), "role": role},
-        )
-        if payment and payment.get("confirmation_url"):
-            await state.set_state(ProfileRaiseStates.awaiting_payment)
-            await state.update_data(raise_payment_id=payment["id"], raise_role=role)
-            price_rub = price // 100
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
-                [InlineKeyboardButton(
-                    text="✅ Я оплатил — проверить",
-                    callback_data="raise_checkpay",
-                )],
-                [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
-            ])
-            await callback.message.edit_text(
-                f"💳 Поднятие анкеты платное: <b>{price_rub} ₽</b>\n\n"
-                f"Оплати и нажми «Я оплатил — проверить».",
-                reply_markup=kb,
-            )
-            await callback.answer()
-            return
-        # Payment is required but service unavailable — do not raise for free
-        logger.warning("cb_profile_raise: payment required but service unavailable, blocking free raise")
+
+    # Feature disabled entirely — block (do NOT raise for free)
+    if not settings_db or not settings_db.raise_profile_enabled:
         await callback.message.edit_text(
-            "Платёжный сервис временно недоступен. Попробуй позже.",
-            reply_markup=get_back_to_menu_kb(),
+            "Поднятие анкеты сейчас недоступно.", reply_markup=get_back_to_menu_kb()
         )
         await callback.answer()
         return
 
-    # Free raise (payment not configured or disabled)
-    ok = await raise_profile(user.id, role)
-    if ok:
+    price = settings_db.raise_profile_price_kopecks
+
+    # Free raise only when price is explicitly zero
+    if price <= 0:
+        ok = await raise_profile(user.id, role)
+        if ok:
+            await callback.message.edit_text(
+                "✅ Анкета поднята! Тебя будут видеть выше в поиске.",
+                reply_markup=get_back_to_menu_kb(),
+            )
+        else:
+            await callback.message.edit_text(
+                "Ошибка при поднятии анкеты.", reply_markup=get_back_to_menu_kb()
+            )
+        await callback.answer()
+        return
+
+    # Paid raise
+    payment = await create_payment(
+        amount_kopecks=price,
+        description="Поднятие анкеты",
+        metadata={"type": "raise_profile", "user_id": str(user.id), "role": role},
+    )
+    if payment and payment.get("confirmation_url"):
+        await state.set_state(ProfileRaiseStates.awaiting_payment)
+        await state.update_data(raise_payment_id=payment["id"], raise_role=role)
+        price_rub = price // 100
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
+            [InlineKeyboardButton(
+                text="✅ Я оплатил — проверить",
+                callback_data="raise_checkpay",
+            )],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
+        ])
         await callback.message.edit_text(
-            "✅ Анкета поднята! Тебя будут видеть выше в поиске.",
-            reply_markup=get_back_to_menu_kb(),
+            f"💳 Поднятие анкеты платное: <b>{price_rub} ₽</b>\n\n"
+            f"Оплати и нажми «Я оплатил — проверить».",
+            reply_markup=kb,
         )
-    else:
-        await callback.message.edit_text(
-            "Ошибка при поднятии анкеты.", reply_markup=get_back_to_menu_kb()
-        )
+        await callback.answer()
+        return
+
+    logger.warning("cb_profile_raise: payment service unavailable")
+    await callback.message.edit_text(
+        "Платёжный сервис временно недоступен. Попробуй позже.",
+        reply_markup=get_back_to_menu_kb(),
+    )
     await callback.answer()
 
 
