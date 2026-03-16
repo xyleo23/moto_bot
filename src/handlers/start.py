@@ -1,5 +1,5 @@
 """Start command, main menu, /cancel."""
-import uuid
+from uuid import UUID
 
 from loguru import logger
 
@@ -222,7 +222,7 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
         cid = callback.data.replace("city_", "").strip()
         if cid and len(cid) == 36:
             try:
-                city_id = uuid.UUID(cid)
+                city_id = UUID(cid)
             except (ValueError, TypeError):
                 pass
 
