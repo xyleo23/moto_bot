@@ -11,6 +11,7 @@ from src.models.event import Event, EventRegistration
 from src.models.event_pair_request import EventPairRequest
 from src.models.useful_contact import UsefulContact
 from src.models.global_text import GlobalText
+from src.models.activity_log import ActivityLog
 
 __all__ = [
     "Base",
@@ -31,4 +32,5 @@ __all__ = [
     "EventPairRequest",
     "UsefulContact",
     "GlobalText",
+    "ActivityLog",
 ]
