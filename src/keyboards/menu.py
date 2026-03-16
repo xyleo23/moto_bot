@@ -48,6 +48,44 @@ def get_persistent_kb() -> ReplyKeyboardMarkup:
     )
 
 
+def get_welcome_legal_kb() -> InlineKeyboardMarkup:
+    """Три кнопки документов в приветствии (как на Voditel66)."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
+            InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
+        ],
+        [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
+    ])
+
+
+def get_welcome_with_city_kb(cities: list) -> InlineKeyboardMarkup:
+    """Приветствие: юридические кнопки + выбор города."""
+    rows = [
+        [
+            InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
+            InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
+        ],
+        [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
+    ]
+    for c in cities:
+        rows.append([InlineKeyboardButton(text=c.name, callback_data=f"city_{c.id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_welcome_with_role_kb() -> InlineKeyboardMarkup:
+    """Приветствие: юридические кнопки + выбор роли."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
+            InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
+        ],
+        [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
+        [InlineKeyboardButton(text="Я Пилот", callback_data="role_pilot")],
+        [InlineKeyboardButton(text="Я Двойка", callback_data="role_passenger")],
+    ])
+
+
 def get_city_select_kb(cities: list | None = None) -> InlineKeyboardMarkup:
     """Dynamic city list. Pass list of City from get_cities(). Backward compat: None = Екатеринбург."""
     if cities:

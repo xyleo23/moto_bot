@@ -23,10 +23,20 @@ def _chunk_text(text: str, limit: int = MSG_LIMIT) -> list[str]:
     return chunks
 
 
+def _format_legal(template: str) -> str:
+    """Подставить support_email в шаблон, если есть плейсхолдер."""
+    s = get_settings()
+    try:
+        return template.format(support_email=s.support_email)
+    except KeyError:
+        return template
+
+
 def get_documents_menu_kb() -> InlineKeyboardMarkup:
     """Клавиатура меню документов."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔒 Политика конфиденциальности", callback_data="doc_privacy")],
+        [InlineKeyboardButton(text="📄 Пользовательское соглашение", callback_data="doc_agreement")],
         [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
         [InlineKeyboardButton(text="🗑 Удалить мои данные", callback_data="doc_delete")],
         [InlineKeyboardButton(text="📞 Поддержка", callback_data="doc_support")],
@@ -39,14 +49,16 @@ def get_documents_menu_kb() -> InlineKeyboardMarkup:
 @router.message(Command("privacy"))
 async def cmd_privacy(message: Message, user=None):
     """Политика конфиденциальности."""
-    for chunk in _chunk_text(texts.PRIVACY_TEXT):
+    text = _format_legal(texts.PRIVACY_TEXT)
+    for chunk in _chunk_text(text):
         await message.answer(chunk)
 
 
 @router.message(Command("consent"))
 async def cmd_consent(message: Message, user=None):
     """Согласие на обработку ПД."""
-    for chunk in _chunk_text(texts.CONSENT_TEXT):
+    text = _format_legal(texts.CONSENT_TEXT)
+    for chunk in _chunk_text(text):
         await message.answer(chunk)
 
 
@@ -90,7 +102,8 @@ async def cb_menu_documents(callback: CallbackQuery):
 async def cb_doc_privacy(callback: CallbackQuery):
     """Показать политику конфиденциальности."""
     await callback.answer()
-    for chunk in _chunk_text(texts.PRIVACY_TEXT):
+    text = _format_legal(texts.PRIVACY_TEXT)
+    for chunk in _chunk_text(text):
         await callback.message.answer(chunk)
     await callback.message.answer("Документы:", reply_markup=get_documents_menu_kb())
 
@@ -99,7 +112,20 @@ async def cb_doc_privacy(callback: CallbackQuery):
 async def cb_doc_consent(callback: CallbackQuery):
     """Показать согласие на обработку ПД."""
     await callback.answer()
-    for chunk in _chunk_text(texts.CONSENT_TEXT):
+    text = _format_legal(texts.CONSENT_TEXT)
+    for chunk in _chunk_text(text):
+        await callback.message.answer(chunk)
+    await callback.message.answer("Документы:", reply_markup=get_documents_menu_kb())
+
+
+@router.callback_query(F.data == "doc_agreement")
+async def cb_doc_agreement(callback: CallbackQuery):
+    """Показать пользовательское соглашение."""
+    await callback.answer()
+    text = texts.AGREEMENT_TEXT
+    if "{support_email}" in text:
+        text = _format_legal(text)
+    for chunk in _chunk_text(text):
         await callback.message.answer(chunk)
     await callback.message.answer("Документы:", reply_markup=get_documents_menu_kb())
 

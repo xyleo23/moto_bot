@@ -8,7 +8,15 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 
-from src.keyboards.menu import get_main_menu_kb, get_city_select_kb, get_role_select_kb, get_persistent_kb
+from src.keyboards.menu import (
+    get_main_menu_kb,
+    get_city_select_kb,
+    get_role_select_kb,
+    get_persistent_kb,
+    get_welcome_legal_kb,
+    get_welcome_with_city_kb,
+    get_welcome_with_role_kb,
+)
 from src.services.user import has_profile, get_or_create_user
 from src import texts
 
@@ -30,12 +38,14 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
         if not user or not user.city_id:
             from src.services.admin_service import get_cities
             cities = await get_cities()
-            await message.answer(texts.WELCOME_NEW, reply_markup=get_city_select_kb(cities))
+            welcome_text = f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_LEGAL_DISCLAIMER}"
+            await message.answer(welcome_text, reply_markup=get_welcome_with_city_kb(cities))
             return
 
         has_prof = await has_profile(user)
         if not has_prof:
-            await message.answer(texts.WELCOME_NEW, reply_markup=get_role_select_kb())
+            welcome_text = f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_LEGAL_DISCLAIMER}"
+            await message.answer(welcome_text, reply_markup=get_welcome_with_role_kb())
             return
 
         # Show persistent keyboard once on /start, then inline menu

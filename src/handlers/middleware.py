@@ -24,7 +24,7 @@ _SOS_CALLBACK_PREFIXES = (
 _SOS_TEXT_TRIGGERS = ("🆘 SOS",)
 
 # Юридические команды и callbacks — доступны даже заблокированным (ФЗ-152, GDPR)
-_LEGAL_PREFIXES = ("menu_documents", "doc_privacy", "doc_consent", "doc_delete", "doc_support", "doc_cancel_delete", "confirm_delete_data")
+_LEGAL_PREFIXES = ("menu_documents", "doc_privacy", "doc_consent", "doc_agreement", "doc_delete", "doc_support", "doc_cancel_delete", "confirm_delete_data")
 _LEGAL_COMMANDS = ("/privacy", "/consent", "/delete_data", "/support")
 
 
@@ -82,6 +82,21 @@ class BlockCheckMiddleware(BaseMiddleware):
     ) -> Any:
         # SOS always passes through — safety-critical feature
         if _is_sos_event(event):
+            user_id = None
+            if isinstance(event, (Message, CallbackQuery)):
+                user_id = event.from_user.id if event.from_user else None
+            if user_id:
+                user = await get_or_create_user(
+                    platform="telegram",
+                    platform_user_id=user_id,
+                    username=getattr(event.from_user, "username", None),
+                    first_name=getattr(event.from_user, "first_name", None),
+                )
+                data["user"] = user
+            return await handler(event, data)
+
+        # Legal (privacy, consent, delete_data) — ФЗ-152: заблокированный может ознакомиться и удалить данные
+        if _is_legal_event(event):
             user_id = None
             if isinstance(event, (Message, CallbackQuery)):
                 user_id = event.from_user.id if event.from_user else None
