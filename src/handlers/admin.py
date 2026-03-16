@@ -54,6 +54,8 @@ from src.services.admin_service import (
     set_global_text,
 )
 from src.services.event_service import TYPE_LABELS, get_event_by_id
+from src.services.activity_log_service import get_logs, get_event_type_labels
+from src.models.activity_log import ActivityEventType
 from loguru import logger
 
 router = Router()
@@ -92,6 +94,11 @@ class AdminSettingsStates(StatesGroup):
 
 
 class AdminTextAboutStates(StatesGroup):
+    text = State()
+
+
+class AdminTemplatesStates(StatesGroup):
+    template_key = State()
     text = State()
 
 
@@ -154,6 +161,89 @@ async def cb_admin_stats(callback: CallbackQuery):
         f"Мероприятий: {stats.get('events', 0)}"
     )
     await callback.message.edit_text(text, reply_markup=get_admin_back_kb())
+    await callback.answer()
+
+
+LOGS_PAGE_SIZE = 15
+
+
+def _build_logs_page(logs: list, total: int, page: int, event_type: str | None):
+    """Build logs list text and keyboard."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.activity_log_service import get_event_type_labels
+    labels = get_event_type_labels()
+    lines = []
+    for log, user in logs:
+        ts = log.created_at.strftime("%d.%m %H:%M") if log.created_at else ""
+        lbl = labels.get(log.event_type, log.event_type)
+        uid = f"{user.platform_user_id}" if user else (str(log.user_id)[:8] if log.user_id else "-")
+        name = (user.platform_first_name or "?") if user else "-"
+        lines.append(f"• {ts} | {lbl} | {uid} {name}")
+    text = f"<b>📋 Логи активности</b> (всего {total})\n\n" + "\n".join(lines or ["Пока нет записей."])
+    rows = []
+    # Filter buttons
+    filter_rows = []
+    for et, lbl in labels.items():
+        sel = " ✓" if et == event_type else ""
+        filter_rows.append(InlineKeyboardButton(text=f"{lbl}{sel}", callback_data=f"admin_logs_t_{et}"))
+    if len(filter_rows) <= 4:
+        rows.append(filter_rows)
+    else:
+        rows.append(filter_rows[:3])
+        rows.append(filter_rows[3:])
+    rows.append([InlineKeyboardButton(text="Все типы", callback_data="admin_logs_t_")])
+    # Pagination
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀ Пред", callback_data=f"admin_logs_p{page - 1}_{event_type or ''}"))
+    if total > (page + 1) * LOGS_PAGE_SIZE:
+        nav.append(InlineKeyboardButton(text="След ▶", callback_data=f"admin_logs_p{page + 1}_{event_type or ''}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "admin_logs")
+async def cb_admin_logs(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    from src.services.activity_log_service import get_logs
+    logs, total = await get_logs(limit=LOGS_PAGE_SIZE, offset=0)
+    text, kb = _build_logs_page(logs, total, 0, None)
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_logs_t_"))
+async def cb_admin_logs_filter(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    event_type = callback.data.replace("admin_logs_t_", "") or None
+    from src.services.activity_log_service import get_logs
+    logs, total = await get_logs(event_type=event_type, limit=LOGS_PAGE_SIZE, offset=0)
+    text, kb = _build_logs_page(logs, total, 0, event_type)
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_logs_p"))
+async def cb_admin_logs_page(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    parts = callback.data.replace("admin_logs_p", "").split("_")
+    try:
+        page = int(parts[0]) if parts else 0
+    except ValueError:
+        page = 0
+    event_type = parts[1] if len(parts) > 1 and parts[1] else None
+    from src.services.activity_log_service import get_logs
+    logs, total = await get_logs(event_type=event_type, limit=LOGS_PAGE_SIZE, offset=page * LOGS_PAGE_SIZE)
+    text, kb = _build_logs_page(logs, total, page, event_type)
+    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
 
@@ -1159,6 +1249,73 @@ async def admin_text_about_save(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
         f"✅ Текст «О нас» сохранён ({len(text)} символов).",
+        reply_markup=get_admin_back_kb("admin_panel"),
+    )
+
+
+# ——— Шаблоны уведомлений ———
+
+@router.callback_query(F.data == "admin_templates")
+async def cb_admin_templates(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.notification_templates import TEMPLATE_KEYS
+    rows = []
+    for key, (default, desc) in TEMPLATE_KEYS.items():
+        label = key.replace("template_", "").replace("_", " ").title()
+        rows.append([InlineKeyboardButton(text=f"✏ {label}", callback_data=f"admin_tpl_edit_{key}")])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    await callback.message.edit_text(
+        "<b>📧 Шаблоны уведомлений</b>\n\n"
+        "Выбери шаблон для редактирования. Поддерживаются плейсхолдеры: "
+        "<code>{profile}</code>, <code>{period}</code> и т.д.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_tpl_edit_"))
+async def cb_admin_templates_edit(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    key = callback.data.replace("admin_tpl_edit_", "")
+    from src.services.notification_templates import TEMPLATE_KEYS
+    if key not in TEMPLATE_KEYS:
+        await callback.answer("Шаблон не найден.")
+        return
+    default, desc = TEMPLATE_KEYS[key]
+    text = await get_global_text(key) or default
+    await state.set_state(AdminTemplatesStates.text)
+    await state.update_data(admin_tpl_key=key)
+    await callback.message.edit_text(
+        f"<b>Редактирование шаблона:</b> {key}\n\n"
+        f"{desc}\n\n"
+        f"Текущий текст:\n{text}\n\n"
+        f"Отправь новый текст:",
+        reply_markup=get_admin_back_kb("admin_templates"),
+    )
+    await callback.answer()
+
+
+@router.message(AdminTemplatesStates.text, F.text)
+async def admin_templates_save(message: Message, state: FSMContext):
+    if not _is_superadmin(message.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    key = data.get("admin_tpl_key")
+    if not key:
+        await state.clear()
+        return
+    text = message.text.strip()[:5000]
+    await set_global_text(key, text)
+    await state.clear()
+    await message.answer(
+        f"✅ Шаблон {key} сохранён.",
         reply_markup=get_admin_back_kb("admin_panel"),
     )
 

@@ -13,6 +13,8 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📅 Мероприятия", callback_data="admin_events")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
         [InlineKeyboardButton(text="📝 Текст «О нас»", callback_data="admin_text_about")],
+        [InlineKeyboardButton(text="📧 Шаблоны уведомлений", callback_data="admin_templates")],
+        [InlineKeyboardButton(text="📋 Логи активности", callback_data="admin_logs")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="📇 Полезные контакты", callback_data="admin_contacts")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
