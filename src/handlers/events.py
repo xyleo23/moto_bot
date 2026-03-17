@@ -363,8 +363,8 @@ async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext)
     )
     try:
         await callback.message.answer("Выберите формат движения:", reply_markup=ReplyKeyboardRemove())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("evcreate_point_end_skip: answer with ReplyKeyboardRemove failed: %s", e)
     await callback.answer()
 
 

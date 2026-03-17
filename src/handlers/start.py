@@ -217,8 +217,8 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
 
     try:
         await callback.answer()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("cb_city_select: callback.answer failed: %s", e)
 
     city_id = None
     if callback.data == "city_ekb":

@@ -82,9 +82,11 @@ async def run_telegram():
         await redis.ping()
         storage = RedisStorage(redis=redis)
         _redis = redis
-        # Inject Redis client into SOS service for rate limiting
+        # Inject Redis client into SOS service and MAX registration FSM
         from src.services.sos_service import set_redis_client
         set_redis_client(redis)
+        from src.services import max_registration_state
+        max_registration_state.set_redis_client(redis)
     except Exception as e:
         logger.warning(f"Redis unavailable ({e}), using MemoryStorage")
         from aiogram.fsm.storage.memory import MemoryStorage
@@ -221,10 +223,20 @@ async def run_telegram():
 
 async def run_max():
     """Run MAX bot (long polling)."""
+    from redis.asyncio import Redis
     from src.platforms.max_adapter import MaxAdapter
     from src.max_runner import process_max_update
 
     settings = get_settings()
+
+    # Init Redis for MAX registration FSM (needed when platform=max only)
+    try:
+        redis = Redis.from_url(settings.redis_url)
+        await redis.ping()
+        from src.services import max_registration_state
+        max_registration_state.set_redis_client(redis)
+    except Exception as e:
+        logger.warning("Redis unavailable for MAX reg state (%s), using in-memory fallback", e)
     if not settings.max_bot_token:
         raise ValueError("MAX_BOT_TOKEN is required for MAX platform")
 

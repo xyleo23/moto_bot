@@ -594,15 +594,17 @@ async def _handle_fsm_callback(
     adapter: MaxAdapter, chat_id: str, user_id: int, cb_data: str, fsm: dict
 ) -> bool:
     """Handle FSM callback. Returns True if callback was consumed."""
-    state = fsm["state"]
-    data = fsm["data"]
-
-    # Cancel
+    # Cancel — handle first, fsm may be empty if state expired
     if cb_data == "max_reg_cancel":
         await reg_state.clear_state(user_id)
         logger.info("MAX reg: user_id=%s cancelled", user_id)
         await adapter.send_message(chat_id, texts.FSM_CANCEL_TEXT, get_main_menu_rows())
         return True
+
+    state = fsm.get("state")
+    data = fsm.get("data", {})
+    if not state:
+        return False
 
     # ── Pilot gender ─────────────────────────────────────────────────────────
     if cb_data.startswith("max_reg_gender_") and state == "pilot:gender":
@@ -1210,6 +1212,18 @@ async def handle_contacts_list(
 
 
 async def handle_events_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
+    from src.services.subscription import check_subscription_required
+
+    if await check_subscription_required(user):
+        await adapter.send_message(
+            chat_id,
+            "Для доступа к мероприятиям нужна подписка. Оформи в «Мой профиль».",
+            [
+                [Button("👤 Мой профиль", payload="menu_profile")],
+                [Button("« Назад", payload="menu_main")],
+            ],
+        )
+        return
     await adapter.send_message(chat_id, "📅 Мероприятия", get_events_menu_rows())
 
 
@@ -1217,7 +1231,15 @@ async def handle_events_list(
     adapter: MaxAdapter, chat_id: str, user, event_type: str | None = None
 ) -> None:
     from src.services.event_service import get_events_list
+    from src.services.subscription import check_subscription_required
 
+    if await check_subscription_required(user):
+        await adapter.send_message(
+            chat_id,
+            "Для доступа к мероприятиям нужна подписка. Оформи в «Мой профиль».",
+            [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_main")]],
+        )
+        return
     if not user.city_id:
         await adapter.send_message(chat_id, "Город не выбран. Нажми /start", get_back_to_menu_rows())
         return
@@ -1270,8 +1292,16 @@ async def handle_event_detail(adapter: MaxAdapter, chat_id: str, user, event_id:
 async def handle_event_register(
     adapter: MaxAdapter, chat_id: str, user, event_id: str, role: str
 ) -> None:
+    from src.services.subscription import check_subscription_required
     from src.services.event_service import register_for_event
 
+    if await check_subscription_required(user):
+        await adapter.send_message(
+            chat_id,
+            "Для записи на мероприятия нужна подписка. Оформи в «Мой профиль».",
+            get_back_to_menu_rows(),
+        )
+        return
     ok, _ = await register_for_event(uuid.UUID(event_id), user.id, role)
     if ok:
         await adapter.send_message(chat_id, "✅ Ты зарегистрирован!", get_back_to_menu_rows())
