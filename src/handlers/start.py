@@ -45,6 +45,8 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
 
         has_prof = await has_profile(user)
         if not has_prof:
+            if user.city_id:
+                await state.update_data(registration_city_id=str(user.city_id))
             welcome_text = f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_ROLE_PROMPT}"
             await message.answer(welcome_text, reply_markup=get_welcome_with_role_kb())
             return
@@ -252,6 +254,7 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
         first_name=callback.from_user.first_name,
         city_id=city_id,
     )
+    await state.update_data(registration_city_id=str(city_id))
     role_text = f"Отлично! {texts.WELCOME_ROLE_PROMPT}"
     await callback.message.edit_text(
         role_text,
@@ -266,6 +269,18 @@ async def cb_role_select(callback: CallbackQuery, state: FSMContext, user=None):
     from sqlalchemy import select
 
     role = UserRole.PILOT if callback.data == "role_pilot" else UserRole.PASSENGER
+    city_id = None
+    if user and user.city_id:
+        city_id = user.city_id
+    else:
+        data = await state.get_data()
+        cid_str = data.get("registration_city_id")
+        if cid_str:
+            try:
+                city_id = UUID(cid_str)
+            except (ValueError, TypeError):
+                pass
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await session.execute(
@@ -277,7 +292,24 @@ async def cb_role_select(callback: CallbackQuery, state: FSMContext, user=None):
         u = result.scalar_one_or_none()
         if u:
             u.role = role
+            if city_id:
+                u.city_id = city_id
             await session.commit()
+        else:
+            u = await get_or_create_user(
+                platform="telegram",
+                platform_user_id=callback.from_user.id,
+                username=callback.from_user.username,
+                first_name=callback.from_user.first_name,
+                city_id=city_id,
+            )
+            if u:
+                async with session_factory() as s2:
+                    r2 = await s2.execute(select(User).where(User.id == u.id))
+                    u_db = r2.scalar_one_or_none()
+                    if u_db:
+                        u_db.role = role
+                        await s2.commit()
 
     await state.update_data(registration_role=callback.data)
     text = (
