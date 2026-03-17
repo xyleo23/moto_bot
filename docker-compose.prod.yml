@@ -31,7 +31,6 @@ services:
     ports:
       - "8080:8080"
     environment:
-      PLATFORM: telegram
       DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/moto_bot
       REDIS_URL: redis://redis:6379/0
     depends_on:
