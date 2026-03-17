@@ -881,28 +881,28 @@ async def _finish_passenger_registration(
             return
 
         if profile:
-            profile.name = data["name"]
+            profile.name = str(data["name"]).strip()[:100]
             profile.phone = phone_str
-            profile.age = data["age"]
+            profile.age = int(data["age"])
             profile.gender = gender_map.get(str(data.get("gender", "other")), PaxGender.OTHER)
-            profile.weight = data["weight"]
-            profile.height = data["height"]
+            profile.weight = int(data["weight"])
+            profile.height = int(data["height"])
             profile.preferred_style = style_map.get(
-                data.get("preferred_style", "mixed"), PreferredStyle.MIXED
+                str(data.get("preferred_style", "mixed")), PreferredStyle.MIXED
             )
             profile.photo_file_id = data.get("photo_file_id")
             profile.about = about_clean
         else:
             profile = ProfilePassenger(
                 user_id=u.id,
-                name=data["name"],
+                name=str(data["name"]).strip()[:100],
                 phone=phone_str,
-                age=data["age"],
+                age=int(data["age"]),
                 gender=gender_map.get(str(data.get("gender", "other")), PaxGender.OTHER),
-                weight=data["weight"],
-                height=data["height"],
+                weight=int(data["weight"]),
+                height=int(data["height"]),
                 preferred_style=style_map.get(
-                    data.get("preferred_style", "mixed"), PreferredStyle.MIXED
+                    str(data.get("preferred_style", "mixed")), PreferredStyle.MIXED
                 ),
                 photo_file_id=data.get("photo_file_id"),
                 about=about_clean,
@@ -915,7 +915,11 @@ async def _finish_passenger_registration(
             logger.exception("Passenger commit failed: %s", e)
             raise
 
-    await message.answer(
-        texts.REG_DONE,
-        reply_markup=get_main_menu_kb(platform_user_id=pid),
-    )
+    try:
+        await message.answer(
+            texts.REG_DONE,
+            reply_markup=get_main_menu_kb(platform_user_id=pid),
+        )
+    except Exception as e:
+        logger.exception("Passenger REG_DONE send failed: %s", e)
+        raise

@@ -40,7 +40,16 @@ class ProfilePassenger(Base):
     )
     weight: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
-    preferred_style: Mapped[PreferredStyle] = mapped_column(Enum(PreferredStyle), nullable=False)
+    preferred_style: Mapped[PreferredStyle] = mapped_column(
+        Enum(
+            PreferredStyle,
+            name="preferredstyle",
+            create_constraint=False,
+            native_enum=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+    )
     photo_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     about: Mapped[str | None] = mapped_column(Text, nullable=True)
     raised_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
