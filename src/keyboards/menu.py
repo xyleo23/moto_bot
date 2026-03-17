@@ -7,8 +7,11 @@ from aiogram.types import (
 )
 
 
-def get_main_menu_kb(platform_user_id: int | None = None) -> InlineKeyboardMarkup:
-    """Inline keyboard for main menu. Superadmins see extra «Админ-панель» button."""
+def get_main_menu_kb(
+    platform_user_id: int | None = None,
+    show_admin: bool | None = None,
+) -> InlineKeyboardMarkup:
+    """Inline keyboard for main menu. show_admin=True или суперадмин → кнопка «Админ-панель»."""
     from src.config import get_settings
 
     rows = [
@@ -20,9 +23,28 @@ def get_main_menu_kb(platform_user_id: int | None = None) -> InlineKeyboardMarku
         [InlineKeyboardButton(text="ℹ️ О нас", callback_data="menu_about")],
         [InlineKeyboardButton(text="📄 Документы", callback_data="menu_documents")],
     ]
-    if platform_user_id is not None and platform_user_id in get_settings().superadmin_ids:
+    show = show_admin if show_admin is not None else (
+        platform_user_id is not None and platform_user_id in get_settings().superadmin_ids
+    )
+    if show:
         rows.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def get_main_menu_kb_for_user(platform_user_id: int | None, user) -> InlineKeyboardMarkup:
+    """Главное меню с учётом суперадмина и админа города."""
+    from src.config import get_settings
+    from src.services.admin_service import is_city_admin, get_city_admin_city
+
+    show_admin = False
+    if platform_user_id is not None:
+        if platform_user_id in get_settings().superadmin_ids:
+            show_admin = True
+        elif user and user.city_id and await is_city_admin(platform_user_id, user.city_id):
+            show_admin = True
+        elif await get_city_admin_city(platform_user_id) is not None:
+            show_admin = True
+    return get_main_menu_kb(platform_user_id=platform_user_id, show_admin=show_admin)
 
 
 def get_persistent_kb() -> ReplyKeyboardMarkup:

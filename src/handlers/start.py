@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 
 from src.keyboards.menu import (
     get_main_menu_kb,
+    get_main_menu_kb_for_user,
     get_city_select_kb,
     get_role_select_kb,
     get_persistent_kb,
@@ -52,7 +53,7 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
         await message.answer("⌨️", reply_markup=get_persistent_kb())
         await message.answer(
             texts.WELCOME_RETURNING,
-            reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+            reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
         )
     except Exception as e:
         logger.exception("cmd_start error: %s", e)
@@ -76,7 +77,7 @@ async def cmd_myid(message: Message):
 
 
 @router.message(Command("cancel"), StateFilter("*"))
-async def cmd_cancel(message: Message, state: FSMContext):
+async def cmd_cancel(message: Message, state: FSMContext, user=None):
     """Cancel any active FSM flow and return to main menu."""
     current = await state.get_state()
     if current is not None:
@@ -87,7 +88,7 @@ async def cmd_cancel(message: Message, state: FSMContext):
     )
     await message.answer(
         "Меню:",
-        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+        reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
     )
 
 
@@ -197,11 +198,11 @@ async def cmd_admin(message: Message, state: FSMContext, user=None):
 
 
 @router.callback_query(F.data == "menu_main")
-async def cb_menu_main(callback: CallbackQuery, state: FSMContext):
+async def cb_menu_main(callback: CallbackQuery, state: FSMContext, user=None):
     await state.clear()
     await callback.message.edit_text(
         texts.WELCOME_RETURNING,
-        reply_markup=get_main_menu_kb(platform_user_id=callback.from_user.id),
+        reply_markup=await get_main_menu_kb_for_user(callback.from_user.id, user),
     )
     await callback.answer()
 

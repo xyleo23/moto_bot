@@ -75,7 +75,7 @@ def _format_location(value: str | None) -> str:
     import re
     if re.match(r"^-?\d+\.\d+,-?\d+\.\d+$", value.strip()):
         lat, lon = value.strip().split(",")
-        return f'<a href="https://maps.google.com/?q={lat},{lon}">📍 Открыть на карте</a>'
+        return f'<a href="https://yandex.ru/maps/?pt={lon},{lat}&z=16">📍 Открыть на карте</a>'
     return value
 
 
@@ -299,41 +299,73 @@ async def evcreate_time(message: Message, state: FSMContext):
 
 @router.message(EventCreateStates.point_start, F.text)
 async def evcreate_point_start(message: Message, state: FSMContext):
-    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
     await state.update_data(point_start=message.text.strip()[:500])
     await state.set_state(EventCreateStates.point_end)
+    kb_inline = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
+    ])
     await message.answer(
-        "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или «Пропустить»:",
+        "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или нажми «Пропустить»:",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[
                 [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
                 [KeyboardButton(text="Пропустить")],
             ],
             resize_keyboard=True,
-            one_time_keyboard=True,
+            one_time_keyboard=False,
         ),
     )
+    await message.answer("Или нажми:", reply_markup=kb_inline)
 
 
 @router.message(EventCreateStates.point_start, F.location)
 async def evcreate_point_start_location(message: Message, state: FSMContext):
-    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
     lat = message.location.latitude
     lon = message.location.longitude
     point_str = f"{lat},{lon}"
     await state.update_data(point_start=point_str)
     await state.set_state(EventCreateStates.point_end)
+    kb_inline = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
+    ])
     await message.answer(
-        "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или «Пропустить»:",
+        "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или нажми «Пропустить»:",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[
                 [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
                 [KeyboardButton(text="Пропустить")],
             ],
             resize_keyboard=True,
-            one_time_keyboard=True,
+            one_time_keyboard=False,
         ),
     )
+    await message.answer("Или нажми:", reply_markup=kb_inline)
+
+
+@router.callback_query(F.data == "evcreate_point_end_skip", EventCreateStates.point_end)
+async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+
+    await state.update_data(point_end=None)
+    await state.set_state(EventCreateStates.ride_type)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
+            InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
+        ],
+        [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
+    ])
+    await callback.message.edit_text(
+        "Точка финиша — пропущено.\n\nФормат движения:",
+        reply_markup=kb,
+    )
+    try:
+        await callback.message.answer("Выберите формат движения:", reply_markup=ReplyKeyboardRemove())
+    except Exception:
+        pass
+    await callback.answer()
 
 
 @router.message(EventCreateStates.point_end, F.text)
@@ -397,18 +429,28 @@ async def cb_evcreate_ride(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("evcreate_speed_"), EventCreateStates.avg_speed)
 async def cb_evcreate_speed(callback: CallbackQuery, state: FSMContext):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
     val = callback.data.replace("evcreate_speed_", "")
     if val == "skip":
         await state.update_data(avg_speed=None)
     else:
         await state.update_data(avg_speed=int(val))
     await state.set_state(EventCreateStates.description)
-    await callback.message.edit_text("Описание (или «Пропустить»):")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_desc_skip")],
+    ])
+    await callback.message.edit_text(
+        "Описание (или нажми «Пропустить»):",
+        reply_markup=kb,
+    )
     await callback.answer()
 
 
 @router.message(EventCreateStates.avg_speed, F.text)
 async def evcreate_avg_speed(message: Message, state: FSMContext):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
     text = message.text.strip().lower()
     if text in ("пропустить", "skip", "-"):
         await state.update_data(avg_speed=None)
@@ -424,7 +466,56 @@ async def evcreate_avg_speed(message: Message, state: FSMContext):
             await message.answer("Введи число.")
             return
     await state.set_state(EventCreateStates.description)
-    await message.answer("Описание (или «Пропустить»):")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_desc_skip")],
+    ])
+    await message.answer(
+        "Описание (или нажми «Пропустить»):",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data == "evcreate_desc_skip", EventCreateStates.description)
+async def cb_evcreate_desc_skip(callback: CallbackQuery, state: FSMContext, user=None):
+    if not user or not user.city_id:
+        await callback.answer("Ошибка. Начни заново.", show_alert=True)
+        return
+    await state.update_data(description=None)
+    data = await state.get_data()
+    await state.clear()
+
+    start_at = _parse_datetime(data["start_date"], data["start_time"])
+    if not start_at:
+        await callback.message.answer("Ошибка даты. Создание отменено.", reply_markup=get_back_to_menu_kb())
+        await callback.answer()
+        return
+
+    ev = await create_event(
+        city_id=user.city_id,
+        creator_id=user.id,
+        event_type=data["event_type"],
+        title=data.get("title"),
+        start_at=start_at,
+        point_start=data["point_start"],
+        point_end=data.get("point_end"),
+        ride_type=data.get("ride_type"),
+        avg_speed=data.get("avg_speed"),
+        description=None,
+    )
+    if ev:
+        try:
+            await callback.message.edit_text(
+                f"✅ Мероприятие создано!\n\n{_format_event_card(ev)}",
+                reply_markup=get_back_to_menu_kb(),
+            )
+        except TelegramBadRequest:
+            await callback.message.answer(
+                f"✅ Мероприятие создано!\n\n{_format_event_card(ev)}",
+                reply_markup=get_back_to_menu_kb(),
+            )
+    else:
+        await callback.message.answer("Ошибка при создании.", reply_markup=get_back_to_menu_kb())
+    await callback.answer()
 
 
 @router.message(EventCreateStates.description, F.text)

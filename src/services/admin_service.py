@@ -262,6 +262,20 @@ async def is_city_admin(platform_user_id: int, city_id: UUID | None) -> bool:
         return r.one_or_none() is not None
 
 
+async def get_city_admin_city_id(platform_user_id: int) -> UUID | None:
+    """Возвращает city_id, если пользователь — админ какого-либо города. Иначе None."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(CityAdmin.city_id)
+            .join(User, CityAdmin.user_id == User.id)
+            .where(User.platform_user_id == platform_user_id)
+            .limit(1)
+        )
+        row = r.scalar_one_or_none()
+        return row[0] if row else None
+
+
 async def can_admin_events(platform_user_id: int, city_id: UUID | None, event_city_id: UUID) -> bool:
     if platform_user_id in get_settings().superadmin_ids:
         return True

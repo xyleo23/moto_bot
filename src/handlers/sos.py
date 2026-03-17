@@ -246,7 +246,7 @@ async def _send_sos_alert(
         broadcast_kb_rows.append([
             InlineKeyboardButton(text=texts.SOS_BTN_CALL, url=f"tel:{phone}"),
         ])
-    tg_id = message.from_user.id
+    tg_id = user.platform_user_id  # message.from_user может быть бот (при callback)
     broadcast_kb_rows.append([
         InlineKeyboardButton(text=texts.SOS_BTN_TELEGRAM, url=f"tg://user?id={tg_id}"),
     ])
@@ -259,7 +259,7 @@ async def _send_sos_alert(
             send_bot,
             user_ids,
             broadcast_text,
-            exclude_id=message.from_user.id,
+            exclude_id=tg_id,
             reply_markup=broadcast_kb,
         )
 

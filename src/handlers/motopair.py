@@ -682,6 +682,9 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
     result = await process_like(user.id, from_user_uuid, is_like=True)
     from_text, _ = await get_profile_info_text(from_user_uuid)
 
+    match_kb_target = get_match_kb(user.platform_username, user.platform_user_id)
+    match_kb_self = get_match_kb(from_user.platform_username, from_user.platform_user_id)
+
     if bot and from_user.platform_user_id:
         to_text, _ = await get_profile_info_text(user.id)
         try:
@@ -690,31 +693,43 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
             await bot.send_message(
                 chat_id=from_user.platform_user_id,
                 text=msg,
-                reply_markup=get_match_kb(
-                    callback.from_user.username,
-                    callback.from_user.id,
-                ),
+                reply_markup=match_kb_target,
             )
         except Exception as e:
             logger.warning(
                 "Cannot notify match reply user %s: %s", from_user.platform_user_id, e
             )
 
-        from src.services.notification_templates import get_template
-        text_self = await get_template("template_mutual_like_self", profile=from_text)
-        await callback.message.edit_text(
-            text_self,
-        reply_markup=get_match_kb(
-            from_user.platform_username,
-            from_user.platform_user_id,
-        ),
-    )
+    from src.services.notification_templates import get_template
+    text_self = await get_template("template_mutual_like_self", profile=from_text)
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption=text_self,
+                reply_markup=match_kb_self,
+                parse_mode="HTML",
+            )
+        else:
+            await callback.message.edit_text(
+                text_self,
+                reply_markup=match_kb_self,
+            )
+    except Exception as e:
+        logger.warning("cb_reply_like: edit failed, sending new message: %s", e)
+        await callback.message.answer(text_self, reply_markup=match_kb_self)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("reply_skip_"))
 async def cb_reply_skip(callback: CallbackQuery, user=None):
-    await callback.message.edit_text(
-        "Хорошо, пропускаем.", reply_markup=get_back_to_menu_kb()
-    )
+    text = "Хорошо, пропускаем."
+    kb = get_back_to_menu_kb()
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=text, reply_markup=kb)
+        else:
+            await callback.message.edit_text(text, reply_markup=kb)
+    except Exception as e:
+        logger.warning("cb_reply_skip: edit failed: %s", e)
+        await callback.message.answer(text, reply_markup=kb)
     await callback.answer()

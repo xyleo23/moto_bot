@@ -251,8 +251,25 @@ def _parse_russian_date(text: str):
 
 
 def _parse_date(text: str):
-    """Parse date from various formats. Returns date or None."""
+    """Parse date from year, month/year, or full date. Returns date or None."""
+    import re
     text = (text or "").strip()
+    # Только год: ГГГГ (1970–2030)
+    m_year = re.match(r"^(\d{4})$", text)
+    if m_year:
+        y = int(m_year.group(1))
+        if 1970 <= y <= 2030:
+            return datetime(y, 1, 1).date()
+    # Месяц.год: ММ.ГГГГ или М/ГГГГ
+    m_my = re.match(r"^(\d{1,2})[./](\d{4})$", text)
+    if m_my:
+        month, year = int(m_my.group(1)), int(m_my.group(2))
+        if 1 <= month <= 12 and 1970 <= year <= 2030:
+            try:
+                return datetime(year, month, 1).date()
+            except ValueError:
+                pass
+    # Полная дата (для совместимости)
     for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%y", "%d/%m/%y", "%d%m%Y"):
         try:
             return datetime.strptime(text, fmt).date()
@@ -804,6 +821,19 @@ async def _finish_passenger_registration(
     pid = platform_user_id or (message.from_user.id if message.from_user else None)
     logger.info("_finish_passenger_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys()))
 
+    if not pid:
+        logger.warning("_finish_passenger_registration: no platform_user_id")
+        await message.answer(texts.REG_ERROR_SAVE)
+        return
+
+    # Validate required fields
+    required = ("name", "phone", "age", "gender", "weight", "height", "preferred_style")
+    missing = [k for k in required if not data.get(k)]
+    if missing:
+        logger.warning("passenger registration: missing required fields %s", missing)
+        await message.answer(texts.REG_ERROR_SAVE)
+        return
+
     from sqlalchemy import select
     from src.models.user import User, Platform
     from src.models.profile_passenger import Gender as PaxGender
@@ -821,6 +851,9 @@ async def _finish_passenger_registration(
             logger.warning("_finish_passenger_registration: User not found for platform_user_id=%s", pid)
             await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
             return
+
+        # Ensure role is PASSENGER (in case cb_role_select didn't persist)
+        u.role = UserRole.PASSENGER
 
         gender_map = {
             "male": PaxGender.MALE,
@@ -841,7 +874,7 @@ async def _finish_passenger_registration(
             select(ProfilePassenger).where(ProfilePassenger.user_id == u.id)
         )
         profile = existing.scalar_one_or_none()
-        phone_str = str(data.get("phone") or "")[:20]
+        phone_str = str(data.get("phone") or "").strip()[:20]
         if not phone_str or len(phone_str) < 5:
             logger.warning("passenger registration: invalid phone %r", data.get("phone"))
             await message.answer(texts.REG_ERROR_SAVE)

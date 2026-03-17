@@ -28,6 +28,11 @@ def set_redis_client(redis_client) -> None:
     _redis = redis_client
 
 
+def get_redis_client():
+    """Return the shared Redis client (for scheduler, etc.)."""
+    return _redis
+
+
 def _cooldown_key(user_id: UUID) -> str:
     return _SOS_COOLDOWN_KEY.format(user_id=str(user_id))
 

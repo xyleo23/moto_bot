@@ -169,6 +169,7 @@ async def run_telegram():
     from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
     user_commands = [
         BotCommand(command="start",    description="🏠 Главное меню"),
+        BotCommand(command="admin",    description="⚙️ Панель администратора"),
         BotCommand(command="cancel",   description="❌ Отменить текущее действие"),
         BotCommand(command="sos",      description="🚨 Экстренный SOS"),
         BotCommand(command="profile",  description="👤 Мой профиль"),
@@ -183,10 +184,8 @@ async def run_telegram():
     ]
     await bot.set_my_commands(commands=user_commands, scope=BotCommandScopeDefault())
 
-    # Расширенное меню для суперадминов (добавляем /admin)
-    admin_commands = user_commands + [
-        BotCommand(command="admin", description="⚙️ Панель администратора"),
-    ]
+    # Суперадмины получают те же команды (admin уже в общем списке для всех)
+    admin_commands = user_commands
     for sa_id in settings.superadmin_ids:
         try:
             await bot.set_my_commands(
