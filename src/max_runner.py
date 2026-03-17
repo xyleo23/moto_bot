@@ -941,6 +941,11 @@ async def _resend_current_step(
 
 async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
     """Handle callback button press."""
+    # Acknowledge the button press immediately (removes loading state in MAX UI)
+    cb_id = (ev.raw.get("callback") or {}).get("callback_id") or ""
+    if cb_id:
+        await adapter.answer_callback(cb_id)
+
     user = await get_or_create_user(
         platform="max",
         platform_user_id=ev.user_id,
@@ -966,8 +971,7 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
     # ── City selection ────────────────────────────────────────────────────────
     if data == "city_ekb":
         from src.models.city import City
-        cq = ev.raw.get("callback_query") or ev.raw.get("callback") or ev.raw
-        from_obj = cq.get("from") or cq.get("user") or {}
+        cb_user = (ev.raw.get("callback") or {}).get("user") or {}
         session_factory = get_session_factory()
         async with session_factory() as session:
             r = await session.execute(select(City).where(City.name == "Екатеринбург"))
@@ -976,8 +980,8 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
                 user = await get_or_create_user(
                     platform="max",
                     platform_user_id=ev.user_id,
-                    username=from_obj.get("username"),
-                    first_name=from_obj.get("first_name"),
+                    username=cb_user.get("username"),
+                    first_name=cb_user.get("first_name") or cb_user.get("name"),
                     city_id=city.id,
                 )
         await adapter.send_message(

@@ -1,6 +1,4 @@
 """MAX messenger platform adapter."""
-import asyncio
-import json
 from typing import Any
 
 import aiohttp
@@ -61,7 +59,7 @@ class MaxAdapter(PlatformAdapter):
 
     def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self._token}",
+            "Authorization": self._token,
             "Content-Type": "application/json",
         }
 
@@ -83,7 +81,7 @@ class MaxAdapter(PlatformAdapter):
     ) -> dict[str, Any]:
         session = await self._get_session()
         url = f"{self._base_url}{path}"
-        kwargs = {"params": params} if params else {}
+        kwargs: dict = {"params": params} if params else {}
         if json_data is not None:
             kwargs["json"] = json_data
         async with session.request(method, url, **kwargs) as resp:
@@ -115,7 +113,8 @@ class MaxAdapter(PlatformAdapter):
             body["format"] = parse_mode.lower()
         return await self._request(
             "POST",
-            f"/messages?user_id={chat_id}",
+            "/messages",
+            params={"user_id": chat_id},
             json_data=body,
         )
 
@@ -147,7 +146,10 @@ class MaxAdapter(PlatformAdapter):
         text: str,
         keyboard: list[KeyboardRow] | None = None,
     ):
-        # MAX PATCH /messages/{messageId} - need chat context
+        """Edit message via PATCH /messages/{messageId}.
+
+        In callback flows prefer answer_callback_with_edit() which uses POST /answers.
+        """
         attachments = []
         if keyboard:
             max_kb = _build_max_keyboard(keyboard)
@@ -156,7 +158,7 @@ class MaxAdapter(PlatformAdapter):
                     "type": "inline_keyboard",
                     "payload": {"buttons": max_kb},
                 })
-        body = {"text": text}
+        body: dict = {"text": text}
         if attachments:
             body["attachments"] = attachments
         return await self._request(
@@ -164,6 +166,40 @@ class MaxAdapter(PlatformAdapter):
             f"/messages/{message_id}",
             json_data=body,
         )
+
+    async def answer_callback_with_edit(
+        self,
+        callback_id: str,
+        text: str,
+        keyboard: list[KeyboardRow] | None = None,
+    ):
+        """POST /answers?callback_id=... — edit the message that had the button pressed.
+
+        This is the correct MAX way to update a message in response to a button click.
+        """
+        if not callback_id:
+            return
+        attachments = []
+        if keyboard:
+            max_kb = _build_max_keyboard(keyboard)
+            if max_kb:
+                attachments.append({
+                    "type": "inline_keyboard",
+                    "payload": {"buttons": max_kb},
+                })
+        msg_body: dict = {"text": text}
+        if attachments:
+            msg_body["attachments"] = attachments
+        body = {"message": msg_body}
+        try:
+            return await self._request(
+                "POST",
+                "/answers",
+                params={"callback_id": callback_id},
+                json_data=body,
+            )
+        except Exception:
+            pass
 
     async def request_contact(self, chat_id: str, text: str):
         keyboard = [[Button("Отправить мой номер", type=ButtonType.REQUEST_CONTACT)]]
@@ -174,8 +210,21 @@ class MaxAdapter(PlatformAdapter):
         return await self.send_message(chat_id, text, keyboard)
 
     async def answer_callback(self, callback_id: str, text: str | None = None):
-        # MAX: answer callback if supported
-        pass
+        """POST /answers?callback_id=... — acknowledge button press with optional notification."""
+        if not callback_id:
+            return
+        body: dict = {}
+        if text:
+            body["notification"] = text
+        try:
+            await self._request(
+                "POST",
+                "/answers",
+                params={"callback_id": callback_id},
+                json_data=body,
+            )
+        except Exception:
+            pass
 
     async def get_file_url(self, file_id: str) -> str:
         # MAX file download - may need GET /files/{fileId}
@@ -187,7 +236,11 @@ class MaxAdapter(PlatformAdapter):
 
     async def poll_updates(self, marker: int | None = None, timeout: int = 30):
         """Long polling for updates."""
-        params = {"timeout": timeout, "limit": 100}
+        params: dict = {
+            "timeout": timeout,
+            "limit": 100,
+            "types": "message_created,message_callback,user_added",
+        }
         if marker is not None:
             params["marker"] = marker
         return await self._request("GET", "/updates", params=params)

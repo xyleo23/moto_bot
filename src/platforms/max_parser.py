@@ -1,4 +1,13 @@
-"""Parse MAX platform-api updates into normalized events."""
+"""Parse MAX platform-api updates into normalized events.
+
+Real MAX API payload structure (reverse-engineered, Feb 2026):
+- update_type: "message_created" | "message_callback" | "user_added"
+- Text: update['message']['body']['text']
+- Sender: update['message']['sender']['user_id']  (NOT 'from')
+- chat_id: update['message']['recipient']['chat_id'] or ['recipient']['user_id']
+- Callback user: update['callback']['user']['user_id']
+- Callback data: update['callback']['payload']
+"""
 from src.platforms.base import (
     IncomingMessage,
     IncomingCallback,
@@ -8,49 +17,9 @@ from src.platforms.base import (
 )
 
 
-def _get_user_id(obj: dict) -> int | None:
-    """Extract user id from various possible structures."""
-    if not obj:
-        return None
-    # Common patterns: from.id, user_id, user.id
-    from_obj = obj.get("from") or obj.get("user")
-    if from_obj:
-        uid = from_obj.get("id") or from_obj.get("user_id")
-        if uid is not None:
-            return int(uid) if isinstance(uid, str) and uid.isdigit() else uid
-    uid = obj.get("user_id") or obj.get("from_id")
-    if uid is not None:
-        return int(uid) if isinstance(uid, str) and uid.isdigit() else uid
-    return None
-
-
-def _get_username(obj: dict) -> str | None:
-    from_obj = obj.get("from") or obj.get("user") or {}
-    return from_obj.get("username") or from_obj.get("nickname")
-
-
-def _get_first_name(obj: dict) -> str | None:
-    from_obj = obj.get("from") or obj.get("user") or {}
-    return from_obj.get("first_name") or from_obj.get("name")
-
-
-def _extract_photo_file_id(msg: dict) -> str | None:
-    """Try to extract a photo file_id from a MAX message dict.
-
-    MAX may deliver photos as:
-    - ``message.photo`` (direct dict with ``token`` / ``file_id``)
-    - ``message.attachments[].type == "image"`` with ``payload.token`` or ``payload.file_id``
-    Returns the first found token/file_id string, or ``None``.
-    """
-    # Direct photo field
-    photo = msg.get("photo")
-    if isinstance(photo, dict):
-        fid = photo.get("token") or photo.get("file_id") or photo.get("id")
-        if fid:
-            return str(fid)
-
-    # Attachments list
-    attachments = msg.get("attachments") or []
+def _extract_photo_file_id(body: dict) -> str | None:
+    """Extract photo token from message body attachments."""
+    attachments = body.get("attachments") or []
     if isinstance(attachments, list):
         for att in attachments:
             if not isinstance(att, dict):
@@ -70,7 +39,7 @@ def _extract_photo_file_id(msg: dict) -> str | None:
     return None
 
 
-def parse_updates(response: dict) -> list[IncomingMessage | IncomingCallback | IncomingContact | IncomingLocation | IncomingPhoto]:
+def parse_updates(response: dict) -> list:
     """Parse MAX /updates response. Returns list of parsed events."""
     raw_updates = response.get("updates") or response.get("result") or []
     if isinstance(raw_updates, dict):
@@ -85,18 +54,43 @@ def parse_updates(response: dict) -> list[IncomingMessage | IncomingCallback | I
     return result
 
 
-def parse_update(raw: dict) -> IncomingMessage | IncomingCallback | IncomingContact | IncomingLocation | IncomingPhoto | None:
-    """Parse single raw MAX update. Returns event or None."""
-    # If update has nested message/callback_query
-    cq = raw.get("callback_query") or raw.get("callback")
-    if cq:
-        user_id = _get_user_id(cq)
+def parse_update(raw: dict):
+    """Parse single raw MAX update. Returns event or None.
+
+    Real MAX update structure:
+    {
+        "update_type": "message_created" | "message_callback" | "user_added",
+        "timestamp": <ms>,
+        "user_locale": "ru",
+        "message": { "sender": {...}, "recipient": {...}, "body": {"text": ..., "attachments": [...]} },
+        "callback": { "user": {...}, "payload": "...", "callback_id": "..." }  # only for message_callback
+    }
+    """
+    update_type = raw.get("update_type", "")
+
+    # ── Callback (button press) ────────────────────────────────────────────────
+    if update_type == "message_callback" or raw.get("callback"):
+        cb = raw.get("callback") or {}
+        cb_user = cb.get("user") or {}
+        user_id = cb_user.get("user_id")
         if user_id is None:
             return None
-        msg = cq.get("message") or {}
-        chat_id = str(msg.get("chat", {}).get("id") or msg.get("chat_id") or user_id)
-        msg_id = str(msg.get("message_id") or msg.get("id") or "")
-        data = cq.get("data") or cq.get("payload") or ""
+        user_id = int(user_id)
+
+        msg = raw.get("message") or {}
+        recipient = msg.get("recipient") or {}
+        # For dialogs: recipient.user_id is the user; use it as chat_id for sending replies.
+        # recipient.chat_id may be a group chat id (negative number).
+        chat_type = recipient.get("chat_type", "dialog")
+        if chat_type == "dialog":
+            chat_id = str(recipient.get("user_id") or user_id)
+        else:
+            chat_id = str(recipient.get("chat_id") or user_id)
+
+        body = msg.get("body") or {}
+        msg_id = str(body.get("mid") or "")
+        data = str(cb.get("payload") or "")
+
         return IncomingCallback(
             platform="max",
             chat_id=chat_id,
@@ -106,50 +100,83 @@ def parse_update(raw: dict) -> IncomingMessage | IncomingCallback | IncomingCont
             raw=raw,
         )
 
-    # Message
-    msg = raw.get("message") or raw
+    # ── user_added (user opens chat / unblocks bot) ────────────────────────────
+    if update_type == "user_added":
+        user_obj = raw.get("user") or {}
+        user_id = user_obj.get("user_id")
+        if user_id is None:
+            return None
+        user_id = int(user_id)
+        chat_id = str(raw.get("chat_id") or user_id)
+        first_name = user_obj.get("first_name") or user_obj.get("name")
+        return IncomingMessage(
+            platform="max",
+            chat_id=chat_id,
+            user_id=user_id,
+            username=user_obj.get("username"),
+            first_name=first_name,
+            text="/start",
+            raw=raw,
+        )
+
+    # ── message_created (text / media message) ────────────────────────────────
+    msg = raw.get("message")
     if not isinstance(msg, dict):
         return None
 
-    user_id = _get_user_id(msg)
+    sender = msg.get("sender") or {}
+    user_id = sender.get("user_id")
     if user_id is None:
         return None
+    user_id = int(user_id)
 
-    chat = msg.get("chat") or {}
-    chat_id = str(chat.get("id") or chat.get("chat_id") or user_id)
+    # Skip messages sent by the bot itself
+    if sender.get("is_bot"):
+        return None
 
-    # Contact
-    contact = msg.get("contact")
-    if contact:
-        phone = contact.get("phone_number", "")
-        if not phone and isinstance(contact, str):
-            phone = contact
-        return IncomingContact(
-            platform="max",
-            chat_id=chat_id,
-            user_id=user_id,
-            phone_number=str(phone),
-            raw=raw,
-        )
+    recipient = msg.get("recipient") or {}
+    # For dialogs: use recipient.user_id (the human side of the dialog).
+    # For group chats: use recipient.chat_id.
+    chat_type = recipient.get("chat_type", "dialog")
+    if chat_type == "dialog":
+        chat_id = str(recipient.get("user_id") or user_id)
+    else:
+        chat_id = str(recipient.get("chat_id") or user_id)
 
-    # Location
-    loc = msg.get("location") or msg.get("geo")
-    if loc:
-        lat = float(loc.get("latitude") or loc.get("lat") or 0)
-        lon = float(loc.get("longitude") or loc.get("lon") or 0)
-        return IncomingLocation(
-            platform="max",
-            chat_id=chat_id,
-            user_id=user_id,
-            latitude=lat,
-            longitude=lon,
-            raw=raw,
-        )
+    body = msg.get("body") or {}
 
-    # Photo — MAX may deliver via attachments[].type == "image" or message.photo
-    photo_file_id = _extract_photo_file_id(msg)
+    # Contact attachment
+    attachments = body.get("attachments") or []
+    for att in (attachments if isinstance(attachments, list) else []):
+        if not isinstance(att, dict):
+            continue
+        if att.get("type") == "contact":
+            payload = att.get("payload") or {}
+            phone = payload.get("phone_number") or payload.get("phone") or ""
+            return IncomingContact(
+                platform="max",
+                chat_id=chat_id,
+                user_id=user_id,
+                phone_number=str(phone),
+                raw=raw,
+            )
+        if att.get("type") in ("location", "geo"):
+            payload = att.get("payload") or {}
+            lat = float(payload.get("latitude") or payload.get("lat") or 0)
+            lon = float(payload.get("longitude") or payload.get("lon") or 0)
+            return IncomingLocation(
+                platform="max",
+                chat_id=chat_id,
+                user_id=user_id,
+                latitude=lat,
+                longitude=lon,
+                raw=raw,
+            )
+
+    # Photo
+    photo_file_id = _extract_photo_file_id(body)
     if photo_file_id:
-        caption = msg.get("text") or msg.get("caption") or None
+        caption = body.get("text") or None
         return IncomingPhoto(
             platform="max",
             chat_id=chat_id,
@@ -159,14 +186,17 @@ def parse_update(raw: dict) -> IncomingMessage | IncomingCallback | IncomingCont
             raw=raw,
         )
 
-    # Text message
-    text = msg.get("text") or msg.get("message") or ""
+    # Text message — text is at message.body.text (NOT message.text)
+    text = body.get("text") or ""
+    username = sender.get("username")
+    first_name = sender.get("first_name") or sender.get("name")
+
     return IncomingMessage(
         platform="max",
         chat_id=chat_id,
         user_id=user_id,
-        username=_get_username(msg),
-        first_name=_get_first_name(msg),
+        username=username,
+        first_name=first_name,
         text=str(text) if text else None,
         raw=raw,
     )
