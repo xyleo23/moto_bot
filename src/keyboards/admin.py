@@ -98,7 +98,7 @@ def get_settings_kb(s: object) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="💵 Цена месяца (коп)", callback_data="admin_set_monthly")],
         [InlineKeyboardButton(text="💵 Цена сезона (коп)", callback_data="admin_set_season")],
         [InlineKeyboardButton(
-            text="🏍 Мотопробегов/мес (с подпиской)",
+            text=f"🏍 Мотопробегов/мес: {getattr(s, 'event_motorcade_limit_per_month', 2)}",
             callback_data="admin_set_motorcade_limit",
         )],
         [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],

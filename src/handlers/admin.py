@@ -325,15 +325,7 @@ async def msg_admin_settings(message: Message, user=None):
     if not _is_superadmin(message.from_user.id):
         return
     s = await get_subscription_settings()
-    text = (
-        "⚙️ <b>Настройки подписки</b>\n\n"
-        f"Подписка: {'✅ вкл' if s.subscription_enabled else '❌ выкл'}\n"
-        f"Цена месяца: {s.monthly_price_kopecks / 100:.0f} ₽\n"
-        f"Цена сезона: {s.season_price_kopecks / 100:.0f} ₽\n"
-        f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}\n"
-        f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}"
-    )
-    await message.answer(text, reply_markup=get_settings_kb(s))
+    await message.answer(_settings_text(s), reply_markup=get_settings_kb(s))
 
 
 @router.message(F.text == "📢 Рассылка")
@@ -1086,15 +1078,7 @@ async def cb_admin_settings(callback: CallbackQuery):
         await callback.answer("Доступ запрещён.")
         return
     s = await get_subscription_settings()
-    text = (
-        "⚙️ <b>Настройки подписки</b>\n\n"
-        f"Подписка: {'✅ вкл' if s.subscription_enabled else '❌ выкл'}\n"
-        f"Цена месяца: {s.monthly_price_kopecks / 100:.0f} ₽\n"
-        f"Цена сезона: {s.season_price_kopecks / 100:.0f} ₽\n"
-        f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}\n"
-        f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}"
-    )
-    await callback.message.edit_text(text, reply_markup=get_settings_kb(s))
+    await callback.message.edit_text(_settings_text(s), reply_markup=get_settings_kb(s))
     await callback.answer()
 
 
@@ -1145,6 +1129,50 @@ async def cb_admin_set_raise_toggle(callback: CallbackQuery):
     s = await get_subscription_settings()
     await callback.message.edit_text(_settings_text(s), reply_markup=get_settings_kb(s))
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_set_motorcade_limit")
+async def cb_admin_set_motorcade_limit(callback: CallbackQuery):
+    """Show inline buttons to pick event_motorcade_limit_per_month."""
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    s = await get_subscription_settings()
+    current = getattr(s, "event_motorcade_limit_per_month", 2)
+    rows = [
+        [
+            InlineKeyboardButton(text="0", callback_data="admin_set_mcl_0"),
+            InlineKeyboardButton(text="1", callback_data="admin_set_mcl_1"),
+            InlineKeyboardButton(text="2", callback_data="admin_set_mcl_2"),
+            InlineKeyboardButton(text="5", callback_data="admin_set_mcl_5"),
+        ],
+        [InlineKeyboardButton(text="« Назад", callback_data="admin_settings")],
+    ]
+    await callback.message.edit_text(
+        f"Сколько мотопробегов/мотособытий бесплатно в месяц (с подпиской)? Сейчас: {current}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_set_mcl_"))
+async def cb_admin_set_motorcade_limit_val(callback: CallbackQuery):
+    """Save selected event_motorcade_limit_per_month."""
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    try:
+        val = int(callback.data.replace("admin_set_mcl_", ""))
+        if val < 0:
+            val = 0
+    except ValueError:
+        await callback.answer("Ошибка.")
+        return
+    await update_subscription_settings(event_motorcade_limit_per_month=val)
+    s = await get_subscription_settings()
+    await callback.message.edit_text(_settings_text(s), reply_markup=get_settings_kb(s))
+    await callback.answer(f"Установлено: {val} мотопробегов/мес")
 
 
 @router.callback_query(F.data == "admin_set_monthly")
