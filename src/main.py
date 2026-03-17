@@ -229,6 +229,19 @@ async def run_max():
         raise ValueError("MAX_BOT_TOKEN is required for MAX platform")
 
     adapter = MaxAdapter()
+
+    # Connection diagnostics
+    try:
+        me = await adapter.get_me()
+        logger.info(f"MAX bot connected: {me}")
+    except Exception as e1:
+        try:
+            await adapter.poll_updates(marker=None, timeout=1)
+            logger.info("MAX bot connected (API reachable via /updates)")
+        except Exception as e2:
+            logger.warning(f"MAX bot CANNOT connect: {e1}")
+            # Continue in retry mode
+
     logger.info("Starting MAX bot (long polling)...")
 
     marker = None

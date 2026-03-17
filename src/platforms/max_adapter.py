@@ -181,6 +181,10 @@ class MaxAdapter(PlatformAdapter):
         # MAX file download - may need GET /files/{fileId}
         return ""
 
+    async def get_me(self) -> dict[str, Any]:
+        """GET /me — get bot info. Raises on error."""
+        return await self._request("GET", "/me")
+
     async def poll_updates(self, marker: int | None = None, timeout: int = 30):
         """Long polling for updates."""
         params = {"timeout": timeout, "limit": 100}
