@@ -1,7 +1,24 @@
 """MAX messenger platform adapter."""
+import contextvars
 from typing import Any
 
 import aiohttp
+
+# When True, send_message uses chat_id param instead of user_id (for dialogs).
+_max_use_chat_id_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "max_use_chat_id", default=False
+)
+
+
+def set_max_use_chat_id(value: bool) -> None:
+    _max_use_chat_id_var.set(value)
+
+
+def _get_msg_params(target: str) -> dict[str, str]:
+    if _max_use_chat_id_var.get():
+        return {"chat_id": target}
+    return {"user_id": target}
+
 
 from src.platforms.base import (
     PlatformAdapter,
@@ -111,10 +128,11 @@ class MaxAdapter(PlatformAdapter):
             body["attachments"] = attachments
         if parse_mode:
             body["format"] = parse_mode.lower()
+        params = _get_msg_params(chat_id)
         return await self._request(
             "POST",
             "/messages",
-            params={"user_id": chat_id},
+            params=params,
             json_data=body,
         )
 
@@ -233,6 +251,10 @@ class MaxAdapter(PlatformAdapter):
     async def get_me(self) -> dict[str, Any]:
         """GET /me — get bot info. Raises on error."""
         return await self._request("GET", "/me")
+
+    async def set_my_commands(self, commands: list[dict]) -> dict[str, Any]:
+        """PATCH /me — set bot commands menu."""
+        return await self._request("PATCH", "/me", json_data={"commands": commands})
 
     async def poll_updates(self, marker: int | None = None, timeout: int = 30):
         """Long polling for updates."""

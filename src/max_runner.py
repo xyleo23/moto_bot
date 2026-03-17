@@ -269,12 +269,25 @@ async def _handle_fsm_message(
         return
 
     if state == "pilot:phone":
-        # Text in phone step — remind about contact button
-        await adapter.send_message(
-            chat_id,
-            "Нажми кнопку «Отправить мой номер» для передачи контакта.",
-            [get_contact_button_row(), _cancel_kb()[0]],
-        )
+        # Accept manual phone number as fallback text input
+        if text and len(text.strip()) >= 5:
+            phone = text.strip()
+            if not phone.startswith("+"):
+                phone = "+" + phone
+            data["phone"] = phone
+            await reg_state.set_state(user_id, "pilot:age", data)
+            logger.info("MAX reg: user_id=%s state=pilot:age (manual phone)", user_id)
+            await adapter.send_message(
+                chat_id,
+                progress_prefix(3, PILOT_TOTAL_STEPS) + texts.REG_ASK_AGE,
+                _cancel_kb(),
+            )
+        else:
+            await adapter.send_message(
+                chat_id,
+                "Нажми кнопку «Отправить мой номер» или введи номер вручную (например: +79001234567):",
+                [get_contact_button_row(), _cancel_kb()[0]],
+            )
         return
 
     if state == "pilot:age":
@@ -412,11 +425,24 @@ async def _handle_fsm_message(
         return
 
     if state == "passenger:phone":
-        await adapter.send_message(
-            chat_id,
-            "Нажми кнопку «Отправить мой номер».",
-            [get_contact_button_row(), _cancel_kb()[0]],
-        )
+        if text and len(text.strip()) >= 5:
+            phone = text.strip()
+            if not phone.startswith("+"):
+                phone = "+" + phone
+            data["phone"] = phone
+            await reg_state.set_state(user_id, "passenger:age", data)
+            logger.info("MAX reg: user_id=%s state=passenger:age (manual phone)", user_id)
+            await adapter.send_message(
+                chat_id,
+                progress_prefix(3, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_AGE,
+                _cancel_kb(),
+            )
+        else:
+            await adapter.send_message(
+                chat_id,
+                "Нажми кнопку «Отправить мой номер» или введи номер вручную (например: +79001234567):",
+                [get_contact_button_row(), _cancel_kb()[0]],
+            )
         return
 
     if state == "passenger:age":
@@ -536,6 +562,17 @@ async def _handle_fsm_contact(
     phone = phone_number.strip()
     if not phone.startswith("+"):
         phone = "+" + phone
+
+    if len(phone) < 5:
+        # Phone couldn't be extracted automatically — ask for manual entry
+        logger.warning("MAX reg: user_id=%s empty/invalid phone from contact attachment", user_id)
+        await adapter.send_message(
+            chat_id,
+            "Не удалось получить номер телефона автоматически. "
+            "Введи номер вручную (например: +79001234567):",
+            [get_contact_button_row(), _cancel_kb()[0]],
+        )
+        return
 
     data["phone"] = phone
     is_pilot = state.startswith("pilot")
@@ -750,9 +787,12 @@ async def _do_finish_pilot(
         await adapter.send_message(chat_id, texts.REG_ERROR_USER_NOT_FOUND, get_main_menu_rows())
         return
     if err:
-        # Keep state so user can retry
         logger.warning("MAX reg: pilot finish error=%s user_id=%s", err, user_id)
-        await adapter.send_message(chat_id, texts.REG_ERROR_SAVE)
+        await adapter.send_message(
+            chat_id,
+            texts.REG_ERROR_SAVE,
+            get_back_to_menu_rows(),
+        )
         return
     await reg_state.clear_state(user_id)
     logger.info("MAX reg: user_id=%s pilot registration done", user_id)
@@ -769,7 +809,11 @@ async def _do_finish_passenger(
         return
     if err:
         logger.warning("MAX reg: passenger finish error=%s user_id=%s", err, user_id)
-        await adapter.send_message(chat_id, texts.REG_ERROR_SAVE)
+        await adapter.send_message(
+            chat_id,
+            texts.REG_ERROR_SAVE,
+            get_back_to_menu_rows(),
+        )
         return
     await reg_state.clear_state(user_id)
     logger.info("MAX reg: user_id=%s passenger registration done", user_id)
@@ -778,11 +822,19 @@ async def _do_finish_passenger(
 
 # ── Top-level event handlers ──────────────────────────────────────────────────
 
+def _max_use_chat_id(ev) -> bool:
+    """True when event target is recipient.chat_id (use chat_id param for POST /messages)."""
+    return bool(getattr(ev, "raw", None) and ev.raw.get("_max_use_chat_id"))
+
+
 async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
     """Process one MAX update."""
+    from src.platforms.max_adapter import set_max_use_chat_id
+
     events = parse_updates({"updates": [raw]})
     for ev in events:
         try:
+            set_max_use_chat_id(_max_use_chat_id(ev))
             if isinstance(ev, IncomingCallback):
                 await handle_callback(adapter, ev)
             elif isinstance(ev, IncomingMessage):

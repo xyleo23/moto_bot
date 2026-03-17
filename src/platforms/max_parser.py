@@ -79,11 +79,11 @@ def parse_update(raw: dict):
 
         msg = raw.get("message") or {}
         recipient = msg.get("recipient") or {}
-        # Reply to whoever pressed the button (callback.user).
-        # For groups use recipient.chat_id.
+        # Use recipient.chat_id for dialogs (same as message_created).
         chat_type = recipient.get("chat_type", "dialog")
-        if chat_type == "dialog":
-            chat_id = str(user_id)  # callback.user.user_id — the human who pressed
+        if chat_type == "dialog" and recipient.get("chat_id") is not None:
+            chat_id = str(recipient["chat_id"])
+            raw["_max_use_chat_id"] = True
         else:
             chat_id = str(recipient.get("chat_id") or user_id)
 
@@ -134,9 +134,12 @@ def parse_update(raw: dict):
     if sender.get("is_bot"):
         return None
 
-    # Reply target: always the sender (user who wrote the message).
-    # recipient.user_id in "user→bot" dialogs is the BOT's id, not the user's.
-    chat_id = str(user_id)
+    # Reply target: use recipient.chat_id (dialog id) for POST /messages?chat_id=...
+    # API returns "Invalid chatId: 0" when using user_id for dialogs.
+    recipient = msg.get("recipient") or {}
+    chat_id = str(recipient.get("chat_id") or user_id)
+    if recipient.get("chat_id") is not None:
+        raw["_max_use_chat_id"] = True
 
     body = msg.get("body") or {}
 
@@ -147,12 +150,26 @@ def parse_update(raw: dict):
             continue
         if att.get("type") == "contact":
             payload = att.get("payload") or {}
-            phone = payload.get("phone_number") or payload.get("phone") or ""
+            # Try multiple locations: nested payload, top-level attachment, VCF
+            phone = (
+                payload.get("phone_number")
+                or payload.get("phone")
+                or att.get("phone_number")
+                or att.get("phone")
+                or ""
+            )
+            if not phone:
+                import re as _re
+                vcf = payload.get("vcf") or att.get("vcf") or ""
+                if vcf:
+                    m = _re.search(r"TEL[^:]*:([+\d\s\-().]+)", str(vcf))
+                    if m:
+                        phone = _re.sub(r"[\s\-().]", "", m.group(1))
             return IncomingContact(
                 platform="max",
                 chat_id=chat_id,
                 user_id=user_id,
-                phone_number=str(phone),
+                phone_number=str(phone).strip(),
                 raw=raw,
             )
         if att.get("type") in ("location", "geo"):

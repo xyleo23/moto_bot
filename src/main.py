@@ -254,6 +254,16 @@ async def run_max():
             logger.warning(f"MAX bot CANNOT connect: {e1}")
             # Continue in retry mode
 
+    # Register bot commands (shows slash-menu in MAX app)
+    try:
+        await adapter.set_my_commands([
+            {"name": "/start",  "description": "🏠 Главное меню"},
+            {"name": "/cancel", "description": "❌ Отменить текущее действие"},
+        ])
+        logger.info("MAX bot commands registered")
+    except Exception as e:
+        logger.warning(f"Failed to set MAX bot commands: {e}")
+
     logger.info("Starting MAX bot (long polling)...")
 
     marker = None
