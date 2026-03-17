@@ -79,11 +79,11 @@ def parse_update(raw: dict):
 
         msg = raw.get("message") or {}
         recipient = msg.get("recipient") or {}
-        # For dialogs: recipient.user_id is the user; use it as chat_id for sending replies.
-        # recipient.chat_id may be a group chat id (negative number).
+        # Reply to whoever pressed the button (callback.user).
+        # For groups use recipient.chat_id.
         chat_type = recipient.get("chat_type", "dialog")
         if chat_type == "dialog":
-            chat_id = str(recipient.get("user_id") or user_id)
+            chat_id = str(user_id)  # callback.user.user_id — the human who pressed
         else:
             chat_id = str(recipient.get("chat_id") or user_id)
 
@@ -107,7 +107,7 @@ def parse_update(raw: dict):
         if user_id is None:
             return None
         user_id = int(user_id)
-        chat_id = str(raw.get("chat_id") or user_id)
+        chat_id = str(user_id)  # reply to the user who opened the chat
         first_name = user_obj.get("first_name") or user_obj.get("name")
         return IncomingMessage(
             platform="max",
@@ -134,14 +134,9 @@ def parse_update(raw: dict):
     if sender.get("is_bot"):
         return None
 
-    recipient = msg.get("recipient") or {}
-    # For dialogs: use recipient.user_id (the human side of the dialog).
-    # For group chats: use recipient.chat_id.
-    chat_type = recipient.get("chat_type", "dialog")
-    if chat_type == "dialog":
-        chat_id = str(recipient.get("user_id") or user_id)
-    else:
-        chat_id = str(recipient.get("chat_id") or user_id)
+    # Reply target: always the sender (user who wrote the message).
+    # recipient.user_id in "user→bot" dialogs is the BOT's id, not the user's.
+    chat_id = str(user_id)
 
     body = msg.get("body") or {}
 
