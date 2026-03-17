@@ -201,11 +201,13 @@ async def cmd_admin(message: Message, state: FSMContext, user=None):
 
 @router.callback_query(F.data == "menu_main")
 async def cb_menu_main(callback: CallbackQuery, state: FSMContext, user=None):
+    from aiogram.exceptions import TelegramBadRequest
     await state.clear()
-    await callback.message.edit_text(
-        texts.WELCOME_RETURNING,
-        reply_markup=await get_main_menu_kb_for_user(callback.from_user.id, user),
-    )
+    menu_kb = await get_main_menu_kb_for_user(callback.from_user.id, user)
+    try:
+        await callback.message.edit_text(texts.WELCOME_RETURNING, reply_markup=menu_kb)
+    except TelegramBadRequest:
+        await callback.message.answer(texts.WELCOME_RETURNING, reply_markup=menu_kb)
     await callback.answer()
 
 
@@ -446,6 +448,16 @@ async def kb_profile(message: Message, state: FSMContext, user=None):
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
     await message.answer(profile_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+
+
+@router.message(F.text == "🏠 Главное меню")
+async def kb_main_menu(message: Message, state: FSMContext, user=None):
+    """Handle 'Главное меню' button from admin persistent keyboards."""
+    await state.clear()
+    await message.answer(
+        texts.WELCOME_RETURNING,
+        reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
+    )
 
 
 @router.message(F.text == "ℹ️ О нас")

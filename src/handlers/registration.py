@@ -537,9 +537,13 @@ async def _finish_pilot_registration(
             session.add(profile)
         await session.commit()
 
+    from src.keyboards.menu import get_main_menu_kb_for_user
+    from src.services.user import get_or_create_user as _get_user
+    _u = await _get_user(platform="telegram", platform_user_id=pid)
+    await message.answer("✅", reply_markup=get_persistent_kb())
     await message.answer(
         texts.REG_DONE,
-        reply_markup=get_main_menu_kb(platform_user_id=pid),
+        reply_markup=await get_main_menu_kb_for_user(pid, _u),
     )
 
 
@@ -916,9 +920,13 @@ async def _finish_passenger_registration(
             raise
 
     try:
+        from src.keyboards.menu import get_main_menu_kb_for_user
+        from src.services.user import get_or_create_user as _get_user
+        _u = await _get_user(platform="telegram", platform_user_id=pid)
+        await message.answer("✅", reply_markup=get_persistent_kb())
         await message.answer(
             texts.REG_DONE,
-            reply_markup=get_main_menu_kb(platform_user_id=pid),
+            reply_markup=await get_main_menu_kb_for_user(pid, _u),
         )
     except Exception as e:
         logger.exception("Passenger REG_DONE send failed: %s", e)

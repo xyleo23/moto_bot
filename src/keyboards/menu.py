@@ -34,7 +34,7 @@ def get_main_menu_kb(
 async def get_main_menu_kb_for_user(platform_user_id: int | None, user) -> InlineKeyboardMarkup:
     """Главное меню с учётом суперадмина и админа города."""
     from src.config import get_settings
-    from src.services.admin_service import is_city_admin, get_city_admin_city
+    from src.services.admin_service import is_city_admin, get_city_admin_city_id
 
     show_admin = False
     if platform_user_id is not None:
@@ -42,7 +42,7 @@ async def get_main_menu_kb_for_user(platform_user_id: int | None, user) -> Inlin
             show_admin = True
         elif user and user.city_id and await is_city_admin(platform_user_id, user.city_id):
             show_admin = True
-        elif await get_city_admin_city(platform_user_id) is not None:
+        elif await get_city_admin_city_id(platform_user_id) is not None:
             show_admin = True
     return get_main_menu_kb(platform_user_id=platform_user_id, show_admin=show_admin)
 

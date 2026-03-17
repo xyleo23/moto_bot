@@ -103,8 +103,7 @@ async def sos_location(message: Message, state: FSMContext, user=None, bot=None)
 async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None, bot=None):
     try:
         logger.info("SOS sending...")
-        await _send_sos_alert(callback.message, state, user, None, bot)
-        await state.clear()
+        await _send_sos_alert(callback.message, state, user, None, bot, platform_user_id=callback.from_user.id)
     except Exception as e:
         logger.exception("sos_skip_comment: error in _send_sos_alert: %s", e)
         await state.clear()
@@ -119,8 +118,7 @@ async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None
 async def sos_comment(message: Message, state: FSMContext, user=None, bot=None):
     try:
         logger.info("SOS sending...")
-        await _send_sos_alert(message, state, user, message.text.strip(), bot)
-        await state.clear()
+        await _send_sos_alert(message, state, user, message.text.strip(), bot, platform_user_id=message.from_user.id)
     except Exception as e:
         logger.exception("sos_comment: error in _send_sos_alert: %s", e)
         await state.clear()
@@ -157,6 +155,8 @@ async def _send_sos_alert(
     user,
     comment: str | None,
     bot=None,
+    *,
+    platform_user_id: int | None = None,
 ) -> None:
     """Create SOS alert and broadcast to city users as background task."""
     from src.services.sos_service import create_sos_alert, get_city_telegram_user_ids
@@ -167,16 +167,18 @@ async def _send_sos_alert(
     data = await state.get_data()
     await state.clear()
 
-    # Fallback: load user if middleware didn't pass (e.g. text message in SOS flow)
-    if not user and message.from_user:
+    # Fallback: load user if middleware didn't pass.
+    # Use explicit platform_user_id when called from callback (message.from_user = bot).
+    if not user:
         from src.services.user import get_or_create_user
-
-        user = await get_or_create_user(
-            platform="telegram",
-            platform_user_id=message.from_user.id,
-            username=getattr(message.from_user, "username", None),
-            first_name=getattr(message.from_user, "first_name", None),
-        )
+        uid = platform_user_id or (message.from_user.id if message.from_user else None)
+        if uid:
+            user = await get_or_create_user(
+                platform="telegram",
+                platform_user_id=uid,
+                username=getattr(message.from_user, "username", None) if message.from_user else None,
+                first_name=getattr(message.from_user, "first_name", None) if message.from_user else None,
+            )
 
     # Validate FSM data — if state expired (Redis TTL), we may get empty dict
     required_keys = ("sos_type", "lat", "lon")

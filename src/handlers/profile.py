@@ -23,9 +23,14 @@ class ProfileRaiseStates(StatesGroup):
 
 # ── Phone change FSM ──────────────────────────────────────────────────────────
 
+class UserPhoneChangeStates(StatesGroup):
+    """User enters new phone number before submitting a change request."""
+    enter_new_phone = State()
+
+
 class AdminPhoneApprovalStates(StatesGroup):
-    """Admin enters new phone number after approving a phone change request."""
-    enter_phone = State()
+    """Admin approves or rejects a phone change request (no longer enters phone)."""
+    enter_phone = State()  # kept for backward compatibility
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +38,7 @@ class AdminPhoneApprovalStates(StatesGroup):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "menu_profile")
-async def cb_profile_menu(callback: CallbackQuery, user=None):
+async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.profile_service import get_profile_text
     from src.services.subscription import check_subscription_required
@@ -41,6 +46,7 @@ async def cb_profile_menu(callback: CallbackQuery, user=None):
     from src.models.base import get_session_factory
     from sqlalchemy import select
 
+    await state.clear()
     text = await get_profile_text(user)
     sub_required = await check_subscription_required(user)
 
@@ -246,14 +252,11 @@ async def cb_raise_check_payment(callback: CallbackQuery, state: FSMContext, use
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "profile_phone_change")
-async def cb_phone_change_request(callback: CallbackQuery, user=None):
-    """User requests phone change. Creates a pending request and notifies superadmin."""
+async def cb_phone_change_request(callback: CallbackQuery, state: FSMContext, user=None):
+    """Step 1: Ask user to enter new phone number."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.models.base import get_session_factory
     from src.models.phone_change_request import PhoneChangeRequest, PhoneChangeStatus
-    from src.models.profile_pilot import ProfilePilot
-    from src.models.profile_passenger import ProfilePassenger
-    from src.config import get_settings
     from sqlalchemy import select
 
     if not user:
@@ -262,7 +265,6 @@ async def cb_phone_change_request(callback: CallbackQuery, user=None):
 
     session_factory = get_session_factory()
     async with session_factory() as session:
-        # Check for existing pending request
         existing = await session.execute(
             select(PhoneChangeRequest).where(
                 PhoneChangeRequest.user_id == user.id,
@@ -275,7 +277,47 @@ async def cb_phone_change_request(callback: CallbackQuery, user=None):
             )
             return
 
-        # Get current phone from profile
+    await state.set_state(UserPhoneChangeStates.enter_new_phone)
+    await callback.message.edit_text(
+        "📱 Введи новый номер телефона в формате +79991234567:\n\n"
+        "После ввода заявка будет отправлена администратору на подтверждение.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="« Отмена", callback_data="menu_profile")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(UserPhoneChangeStates.enter_new_phone, F.text)
+async def user_phone_change_enter(message: Message, state: FSMContext, user=None):
+    """Step 2: User entered new phone — validate and create request for admin."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.models.base import get_session_factory
+    from src.models.phone_change_request import PhoneChangeRequest, PhoneChangeStatus
+    from src.models.profile_pilot import ProfilePilot
+    from src.models.profile_passenger import ProfilePassenger
+    from src.config import get_settings
+    from sqlalchemy import select
+
+    new_phone = message.text.strip()
+    if not new_phone.startswith("+") or len(new_phone) < 10:
+        await message.answer(
+            "Введи номер в формате +79991234567.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="« Отмена", callback_data="menu_profile")],
+            ]),
+        )
+        return
+
+    await state.clear()
+
+    if not user:
+        await message.answer("Ошибка. Попробуй снова.", reply_markup=get_back_to_menu_kb())
+        return
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        # Get current phone
         pilot = await session.execute(
             select(ProfilePilot).where(ProfilePilot.user_id == user.id)
         )
@@ -288,22 +330,25 @@ async def cb_phone_change_request(callback: CallbackQuery, user=None):
             pp = pax.scalar_one_or_none()
             old_phone = pp.phone if pp else "—"
 
-        # Create pending request
-        req = PhoneChangeRequest(user_id=user.id)
+        # Create pending request with new_phone stored
+        req = PhoneChangeRequest(user_id=user.id, new_phone=new_phone[:20])
         session.add(req)
         await session.commit()
         req_id = str(req.id)
 
-    # Notify all superadmins
+    # Notify all superadmins with old and new phone
     settings = get_settings()
-    bot = callback.bot
+    bot = message.bot
     user_display = (
         f"@{user.platform_username}" if user.platform_username
         else str(user.platform_user_id)
     )
-    admin_text = texts.PHONE_CHANGE_ADMIN_TEXT.format(
-        user=user_display,
-        old_phone=old_phone,
+    admin_text = (
+        f"📱 <b>Запрос на смену телефона</b>\n\n"
+        f"Пользователь: {user_display}\n"
+        f"Текущий номер: {old_phone}\n"
+        f"Новый номер: <b>{new_phone}</b>\n\n"
+        f"Подтвердить смену?"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -321,60 +366,15 @@ async def cb_phone_change_request(callback: CallbackQuery, user=None):
         except Exception as e:
             logger.warning("Cannot notify admin %s about phone change: %s", admin_id, e)
 
-    await callback.message.edit_text(
+    await message.answer(
         texts.PHONE_CHANGE_REQUEST_SENT, reply_markup=get_back_to_menu_kb()
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("admin_phone_approve_"))
 async def cb_admin_phone_approve(callback: CallbackQuery, state: FSMContext):
-    """Superadmin approves phone change — enters new number next."""
+    """Superadmin approves phone change — applies new_phone stored in request."""
     from src.config import get_settings
-
-    settings = get_settings()
-    if callback.from_user.id not in settings.superadmin_ids:
-        await callback.answer("Доступ запрещён.", show_alert=True)
-        return
-
-    req_id = callback.data.replace("admin_phone_approve_", "")
-    await state.update_data(phone_change_req_id=req_id)
-    await state.set_state(AdminPhoneApprovalStates.enter_phone)
-    await callback.message.edit_text(
-        "Введи новый номер телефона (формат +79991234567):"
-    )
-    await callback.answer()
-
-
-@router.message(AdminPhoneApprovalStates.enter_phone, F.text)
-async def admin_phone_enter(message: Message, state: FSMContext):
-    """Superadmin enters new phone number, system updates DB and notifies user."""
-    from src.config import get_settings
-
-    settings = get_settings()
-    if message.from_user.id not in settings.superadmin_ids:
-        await state.clear()
-        return
-
-    new_phone = message.text.strip()
-    if not new_phone.startswith("+") or len(new_phone) < 10:
-        await message.answer("Введи номер в формате +79991234567.")
-        return
-
-    data = await state.get_data()
-    req_id = data.get("phone_change_req_id")
-    await state.clear()
-
-    if not req_id:
-        await message.answer("Ошибка: не найден запрос.")
-        return
-
-    try:
-        req_uuid = uuid.UUID(req_id)
-    except ValueError:
-        await message.answer("Некорректный ID запроса.")
-        return
-
     from src.models.base import get_session_factory
     from src.models.phone_change_request import PhoneChangeRequest, PhoneChangeStatus
     from src.models.profile_pilot import ProfilePilot
@@ -383,6 +383,18 @@ async def admin_phone_enter(message: Message, state: FSMContext):
     from sqlalchemy import select
     from datetime import datetime
 
+    settings = get_settings()
+    if callback.from_user.id not in settings.superadmin_ids:
+        await callback.answer("Доступ запрещён.", show_alert=True)
+        return
+
+    req_id = callback.data.replace("admin_phone_approve_", "")
+    try:
+        req_uuid = uuid.UUID(req_id)
+    except ValueError:
+        await callback.answer("Некорректный ID.")
+        return
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         req_r = await session.execute(
@@ -390,7 +402,12 @@ async def admin_phone_enter(message: Message, state: FSMContext):
         )
         req = req_r.scalar_one_or_none()
         if not req or req.status != PhoneChangeStatus.PENDING:
-            await message.answer("Запрос не найден или уже обработан.")
+            await callback.answer("Запрос не найден или уже обработан.", show_alert=True)
+            return
+
+        new_phone = req.new_phone
+        if not new_phone:
+            await callback.answer("Новый номер не указан в заявке.", show_alert=True)
             return
 
         # Update phone in pilot/passenger profile
@@ -408,24 +425,19 @@ async def admin_phone_enter(message: Message, state: FSMContext):
             if pp:
                 pp.phone = new_phone[:20]
 
-        # Mark request resolved
         req.status = PhoneChangeStatus.APPROVED
-        req.new_phone = new_phone[:20]
         req.resolved_at = datetime.utcnow()
         await session.commit()
 
-        # Get user's platform_user_id for notification
         user_r = await session.execute(select(User).where(User.id == req.user_id))
         u = user_r.scalar_one_or_none()
 
-    await message.answer(
-        f"✅ Номер обновлён: {new_phone}",
-        reply_markup=get_back_to_menu_kb(),
-    )
+    await callback.message.edit_text(f"✅ Номер изменён на {new_phone}.")
+    await callback.answer()
 
     if u and u.platform_user_id:
         try:
-            await message.bot.send_message(
+            await callback.bot.send_message(
                 u.platform_user_id,
                 texts.PHONE_CHANGE_CONFIRMED.format(new_phone=new_phone),
             )

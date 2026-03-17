@@ -106,7 +106,7 @@ class AdminTemplatesStates(StatesGroup):
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, user=None):
-    from src.services.admin_service import get_city_admin_city
+    from src.services.admin_service import get_city_admin_city_id
 
     if _is_superadmin(message.from_user.id):
         await message.answer(
@@ -114,7 +114,7 @@ async def cmd_admin(message: Message, user=None):
             reply_markup=get_admin_superadmin_kb(),
         )
         return
-    city_id = (user.city_id if user and user.city_id else None) or await get_city_admin_city(message.from_user.id)
+    city_id = (user.city_id if user and user.city_id else None) or await get_city_admin_city_id(message.from_user.id)
     if city_id and await is_city_admin(message.from_user.id, city_id):
         await message.answer(
             "⚙️ <b>Админ города</b>\n\nВыбери раздел:",

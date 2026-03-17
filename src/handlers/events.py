@@ -4,7 +4,7 @@ from datetime import datetime
 
 from loguru import logger
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -94,14 +94,19 @@ def _format_event_card(e) -> str:
 
 def _format_event_share_text(e) -> str:
     """Generate shareable plain text for an event (no HTML tags)."""
-    from src import texts
-    return texts.EVENT_SHARE_TEXT.format(
-        type=TYPE_LABELS.get(e.type.value, e.type.value),
-        title=e.title or TYPE_LABELS.get(e.type.value, e.type.value),
-        date=e.start_at.strftime("%d.%m.%Y в %H:%M"),
-        point_start=e.point_start,
-        description=e.description or "",
-    ).strip()
+    type_label = TYPE_LABELS.get(e.type.value, e.type.value)
+    title = e.title or type_label
+    lines = [
+        f"🏍 {type_label}: {title}",
+        f"📅 {e.start_at.strftime('%d.%m.%Y в %H:%M')}",
+    ]
+    if e.point_start:
+        lines.append(f"📍 Старт: {e.point_start}")
+    if e.point_end:
+        lines.append(f"🏁 Финиш: {e.point_end}")
+    if e.description:
+        lines.append(f"\n{e.description}")
+    return "\n".join(lines)
 
 
 @router.callback_query(F.data == "menu_events")
@@ -640,7 +645,7 @@ async def cb_event_detail(callback: CallbackQuery, user=None):
 # ——— Share ———
 @router.callback_query(F.data.startswith("event_share_"))
 async def cb_event_share(callback: CallbackQuery, user=None):
-    """Generate a shareable plain-text card for the event."""
+    """Send a shareable event card that user can forward to other chats."""
     eid = callback.data.replace("event_share_", "")
     try:
         ev_uuid = uuid.UUID(eid)
@@ -654,9 +659,12 @@ async def cb_event_share(callback: CallbackQuery, user=None):
         return
 
     share_text = _format_event_share_text(ev)
+    # Send as a separate message without extra buttons so user can forward it directly
     await callback.message.answer(
-        f"<b>Готовый текст для репоста:</b>\n\n{share_text}",
-        reply_markup=get_back_to_menu_kb(),
+        f"👇 Перешли это сообщение в нужный чат:\n\n{share_text}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="« К мероприятию", callback_data=f"event_detail_{eid}")],
+        ]),
     )
     await callback.answer()
 

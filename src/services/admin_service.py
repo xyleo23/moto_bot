@@ -272,8 +272,7 @@ async def get_city_admin_city_id(platform_user_id: int) -> UUID | None:
             .where(User.platform_user_id == platform_user_id)
             .limit(1)
         )
-        row = r.scalar_one_or_none()
-        return row[0] if row else None
+        return r.scalar_one_or_none()
 
 
 async def can_admin_events(platform_user_id: int, city_id: UUID | None, event_city_id: UUID) -> bool:
