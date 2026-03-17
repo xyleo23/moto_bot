@@ -26,7 +26,29 @@ from src.keyboards.shared import (
     get_back_to_menu_rows,
     get_contact_button_row,
     get_location_button_row,
+    get_contacts_menu_rows,
+    get_contacts_page_rows,
+    get_motopair_profile_rows,
+    get_events_menu_rows,
+    get_event_list_rows,
+    get_event_detail_rows,
 )
+
+
+def _format_profile_max(profile) -> str:
+    """Format profile card for MAX (no Telegram links)."""
+    if hasattr(profile, "bike_brand"):
+        return (
+            f"🏍 <b>{profile.name}</b>\n"
+            f"Возраст: {profile.age}\n"
+            f"Мотоцикл: {profile.bike_brand} {profile.bike_model}, {profile.engine_cc} см³\n"
+            f"О себе: {profile.about or '—'}"
+        )
+    return (
+        f"👤 <b>{profile.name}</b>\n"
+        f"Возраст: {profile.age}, Рост: {profile.height} см, Вес: {profile.weight} кг\n"
+        f"О себе: {profile.about or '—'}"
+    )
 
 
 async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
@@ -180,25 +202,13 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         )
         return
     if data == "menu_motopair":
-        await adapter.send_message(
-            chat_id,
-            "Мотопара — в MAX пока в разработке. Используй Telegram-версию бота для полного функционала.",
-            get_back_to_menu_rows(),
-        )
+        await handle_motopair_menu(adapter, chat_id, user)
         return
     if data == "menu_contacts":
-        await adapter.send_message(
-            chat_id,
-            "Полезные контакты — в MAX пока в разработке.",
-            get_back_to_menu_rows(),
-        )
+        await handle_contacts_menu(adapter, chat_id, user)
         return
     if data == "menu_events":
-        await adapter.send_message(
-            chat_id,
-            "Мероприятия — в MAX пока в разработке.",
-            get_back_to_menu_rows(),
-        )
+        await handle_events_menu(adapter, chat_id, user)
         return
     if data == "menu_profile":
         await handle_profile(adapter, chat_id, user)
@@ -207,7 +217,243 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         await handle_about(adapter, chat_id)
         return
 
+    # MotoPair callbacks
+    if data in ("motopair_pilots", "motopair_passengers"):
+        role = "pilot" if data == "motopair_pilots" else "passenger"
+        await handle_motopair_list(adapter, chat_id, user, role, offset=0)
+        return
+    if data.startswith("motopair_next_"):
+        parts = data.replace("motopair_next_", "").split("_")
+        role = parts[0] if parts else "pilot"
+        offset = int(parts[1]) if len(parts) > 1 else 0
+        await handle_motopair_list(adapter, chat_id, user, role, offset)
+        return
+    if data.startswith("like_"):
+        parts = data.replace("like_", "").rsplit("_", 1)
+        if len(parts) == 2:
+            await handle_motopair_like(adapter, ev, user, parts[0], parts[1], is_like=True)
+        return
+    if data.startswith("dislike_"):
+        parts = data.replace("dislike_", "").rsplit("_", 1)
+        if len(parts) == 2:
+            await handle_motopair_like(adapter, ev, user, parts[0], parts[1], is_like=False)
+        return
+
+    # Contacts callbacks
+    if data.startswith("contacts_"):
+        if data.startswith("contacts_page_"):
+            p = data.replace("contacts_page_", "").split("_")
+            if len(p) >= 2:
+                await handle_contacts_list(adapter, chat_id, user, p[0], int(p[1]))
+        else:
+            cat = data.replace("contacts_", "")
+            await handle_contacts_list(adapter, chat_id, user, cat, 0)
+        return
+
+    # Events callbacks
+    if data == "event_list" or data.startswith("event_list_"):
+        ev_type = data.replace("event_list_", "") if "_" in data else None
+        await handle_events_list(adapter, chat_id, user, ev_type)
+        return
+    if data.startswith("event_detail_"):
+        eid = data.replace("event_detail_", "")
+        await handle_event_detail(adapter, chat_id, user, eid)
+        return
+    if data.startswith("event_register_"):
+        p = data.replace("event_register_", "").split("_")
+        if len(p) >= 2:
+            await handle_event_register(adapter, chat_id, user, p[0], p[1])
+        return
+
     await adapter.send_message(chat_id, "Неизвестная команда.", get_main_menu_rows())
+
+
+async def handle_motopair_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
+    """Motopair: pilots or passengers choice."""
+    from src.services.subscription import check_subscription_required
+    from src.platforms.base import Button, KeyboardRow
+
+    if await check_subscription_required(user):
+        await adapter.send_message(
+            chat_id,
+            "Для доступа к мотопаре нужна подписка. Оформи в «Мой профиль».",
+            [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_main")]],
+        )
+        return
+    kb = [
+        [Button("Анкеты пилотов", payload="motopair_pilots")],
+        [Button("Анкеты двоек", payload="motopair_passengers")],
+        [Button("« Назад", payload="menu_main")],
+    ]
+    await adapter.send_message(chat_id, "🏍 Мотопара\n\nВыбери категорию:", kb)
+
+
+async def handle_motopair_list(adapter: MaxAdapter, chat_id: str, user, role: str, offset: int = 0) -> None:
+    """Show next profile or empty state."""
+    from src.services.motopair_service import get_next_profile, get_user_for_profile
+    from src import texts
+
+    profile, has_more = await get_next_profile(user.id, role, offset=offset)
+    if not profile:
+        await adapter.send_message(
+            chat_id, texts.MOTOPAIR_NO_PROFILES,
+            [[Button("« В меню", payload="menu_motopair")]],
+        )
+        return
+    text = _format_profile_max(profile)
+    kb = get_motopair_profile_rows(str(profile.id), role, offset, has_more)
+    await adapter.send_message(chat_id, text, kb)
+
+
+async def handle_motopair_like(
+    adapter: MaxAdapter, ev: IncomingCallback, user, profile_id_str: str, role: str, is_like: bool
+) -> None:
+    """Process like/dislike."""
+    from src.services.motopair_service import get_user_for_profile, process_like
+    from src import texts
+
+    try:
+        to_user_id = await get_user_for_profile(uuid.UUID(profile_id_str), role)
+    except (ValueError, TypeError):
+        await adapter.send_message(ev.chat_id, "Ошибка.", get_back_to_menu_rows())
+        return
+    if not to_user_id:
+        await adapter.send_message(ev.chat_id, "Профиль не найден.", get_back_to_menu_rows())
+        return
+    result = await process_like(user.id, to_user_id.id, is_like)
+    if is_like and result.get("matched"):
+        await adapter.send_message(
+            ev.chat_id,
+            "💚 Взаимный лайк! Контакты в Telegram-версии бота.",
+            get_back_to_menu_rows(),
+        )
+    elif is_like:
+        await adapter.send_message(ev.chat_id, "👍 Лайк отправлен!", get_back_to_menu_rows())
+    else:
+        await adapter.send_message(ev.chat_id, "👎 Дизлайк учтён.", get_back_to_menu_rows())
+    # Show next profile
+    await handle_motopair_list(adapter, ev.chat_id, user, role, 0)
+
+
+async def handle_contacts_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
+    """Contacts: category menu."""
+    await adapter.send_message(chat_id, "📇 Полезные контакты\n\nВыбери категорию:", get_contacts_menu_rows())
+
+
+async def handle_contacts_list(
+    adapter: MaxAdapter, chat_id: str, user, category: str, offset: int = 0
+) -> None:
+    """Contacts list by category."""
+    from src.services.useful_contacts_service import get_contacts_by_category, CAT_LABELS
+
+    if not user.city_id:
+        await adapter.send_message(chat_id, "Город не выбран. Нажми /start", get_back_to_menu_rows())
+        return
+    contacts, total, has_more = await get_contacts_by_category(user.city_id, category, offset=offset)
+    label = CAT_LABELS.get(category, category)
+    if not contacts:
+        text = f"{label}\n\nКонтактов пока нет."
+    else:
+        lines = [f"<b>{label}</b>\n"]
+        for c in contacts:
+            line = f"• {c['name']}"
+            if c.get("phone"):
+                line += f" — {c['phone']}"
+            if c.get("link"):
+                line += f"\n  {c['link']}"
+            lines.append(line)
+        text = "\n".join(lines)
+    kb = get_contacts_page_rows(category, offset, has_more)
+    await adapter.send_message(chat_id, text, kb)
+
+
+async def handle_events_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
+    """Events menu."""
+    await adapter.send_message(chat_id, "📅 Мероприятия", get_events_menu_rows())
+
+
+async def handle_events_list(
+    adapter: MaxAdapter, chat_id: str, user, event_type: str | None = None
+) -> None:
+    """Events list."""
+    from src.services.event_service import get_events_list
+    from src.platforms.base import Button
+
+    if not user.city_id:
+        await adapter.send_message(chat_id, "Город не выбран. Нажми /start", get_back_to_menu_rows())
+        return
+    events = await get_events_list(user.city_id, event_type)
+    if not events:
+        await adapter.send_message(
+            chat_id, "Мероприятий пока нет.",
+            get_event_list_rows(),
+        )
+        return
+    lines = ["<b>Список мероприятий</b>\n"]
+    for e in events[:15]:
+        lines.append(
+            f"• {e['title']} — {e['date']}\n"
+            f"  Пилотов: {e['pilots']}, двоек: {e['passengers']}\n"
+            f"  <i>Нажми для деталей: event_detail_{e['id']}</i>"
+        )
+    text = "\n".join(lines)
+    kb = get_event_list_rows()
+    # Add event detail buttons
+    for e in events[:5]:
+        kb.insert(-1, [Button(f"📅 {e['title'][:20]}", payload=f"event_detail_{e['id']}")])
+    await adapter.send_message(chat_id, text[:4000], kb)
+
+
+async def handle_event_detail(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
+    """Event detail and registration."""
+    from src.services.event_service import get_event_by_id
+    from src.services.event_service import TYPE_LABELS
+
+    ev = await get_event_by_id(uuid.UUID(event_id))
+    if not ev:
+        await adapter.send_message(chat_id, "Мероприятие не найдено.", get_back_to_menu_rows())
+        return
+    title = ev.title or TYPE_LABELS.get(ev.type.value, ev.type.value)
+    text = (
+        f"<b>{title}</b>\n"
+        f"📅 {ev.start_at.strftime('%d.%m.%Y %H:%M')}\n"
+        f"📍 {ev.point_start or '—'}\n"
+        f"{ev.description or ''}"
+    )
+    # Check if user already registered
+    from src.models.event import EventRegistration
+    session_factory = get_session_factory()
+    is_reg = False
+    async with session_factory() as session:
+        from sqlalchemy import select
+        r = await session.execute(
+            select(EventRegistration).where(
+                EventRegistration.event_id == ev.id,
+                EventRegistration.user_id == user.id,
+            )
+        )
+        is_reg = r.scalar_one_or_none() is not None
+    kb = get_event_detail_rows(event_id, is_reg)
+    await adapter.send_message(chat_id, text, kb)
+
+
+async def handle_event_register(
+    adapter: MaxAdapter, chat_id: str, user, event_id: str, role: str
+) -> None:
+    """Register for event."""
+    from src.services.event_service import register_for_event
+
+    ok, _ = await register_for_event(uuid.UUID(event_id), user.id, role)
+    if ok:
+        await adapter.send_message(
+            chat_id, "✅ Ты зарегистрирован!",
+            get_back_to_menu_rows(),
+        )
+    else:
+        await adapter.send_message(
+            chat_id, "Ошибка регистрации.",
+            get_back_to_menu_rows(),
+        )
 
 
 async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:

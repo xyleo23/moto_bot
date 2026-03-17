@@ -12,6 +12,7 @@ from src.config import get_settings
 from src.services.subscription import activate_subscription
 from src.models.base import get_session_factory
 from src.models.subscription import Subscription
+from src.models.user import User, Platform
 from sqlalchemy import select
 
 # YooKassa official IP ranges for webhook sources.
@@ -103,76 +104,59 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
 
     pay_type = metadata.get("type")
 
+    async def _notify_user(user_id_uuid: uuid.UUID, msg: str) -> None:
+        """Send notification to user via Telegram bot or MAX adapter."""
+        async with get_session_factory()() as session:
+            r = await session.execute(select(User).where(User.id == user_id_uuid))
+            u = r.scalar_one_or_none()
+        if not u or not u.platform_user_id:
+            return
+        chat_id = str(u.platform_user_id)
+        if u.platform == Platform.MAX:
+            try:
+                from src.platforms.max_adapter import MaxAdapter
+                adapter = MaxAdapter()
+                await adapter.send_message(chat_id, msg)
+            except Exception as e:
+                logger.warning("Cannot notify MAX user %s: %s", chat_id, e)
+        else:
+            bot = getattr(handle_yookassa_webhook, "_bot", None)
+            if bot:
+                try:
+                    await bot.send_message(u.platform_user_id, msg)
+                except Exception as e:
+                    logger.warning("Cannot notify TG user %s: %s", u.platform_user_id, e)
+
     if pay_type == "donate":
         user_id_str = metadata.get("user_id")
         if user_id_str:
             try:
                 user_id = uuid.UUID(user_id_str)
-                bot = getattr(handle_yookassa_webhook, "_bot", None)
-                if bot:
-                    session_factory = get_session_factory()
-                    async with session_factory() as session:
-                        from src.models.user import User
-                        r = await session.execute(select(User).where(User.id == user_id))
-                        u = r.scalar_one_or_none()
-                        if u and u.platform_user_id:
-                            try:
-                                await bot.send_message(
-                                    u.platform_user_id,
-                                    "❤️ Спасибо за поддержку проекта!",
-                                )
-                            except Exception as e:
-                                logger.warning(
-                                    "Cannot thank donor %s: %s", u.platform_user_id, e
-                                )
+                await _notify_user(user_id, "❤️ Спасибо за поддержку проекта!")
             except (ValueError, TypeError) as e:
                 logger.warning("donate webhook: malformed metadata user_id=%r: %s", user_id_str, e)
         return 200, {"status": "ok", "type": "donate"}
 
     if pay_type == "event_creation":
-        # Notify user that payment succeeded — they can proceed in the bot
         user_id_str = metadata.get("user_id")
         if user_id_str:
             try:
-                user_id = uuid.UUID(user_id_str)
-                bot = getattr(handle_yookassa_webhook, "_bot", None)
-                if bot:
-                    async with get_session_factory()() as session:
-                        from src.models.user import User
-                        r = await session.execute(select(User).where(User.id == user_id))
-                        u = r.scalar_one_or_none()
-                        if u and u.platform_user_id:
-                            try:
-                                await bot.send_message(
-                                    u.platform_user_id,
-                                    "✅ Оплата создания мероприятия прошла! Вернись в бот и нажми «Я оплатил — проверить».",
-                                )
-                            except Exception as e:
-                                logger.warning("Cannot notify user %s: %s", u.platform_user_id, e)
+                await _notify_user(
+                    uuid.UUID(user_id_str),
+                    "✅ Оплата создания мероприятия прошла! Вернись в бот и нажми «Я оплатил — проверить».",
+                )
             except (ValueError, TypeError) as e:
                 logger.warning("event_creation webhook: invalid user_id: %s", e)
         return 200, {"status": "ok", "type": "event_creation"}
 
     if pay_type == "raise_profile":
-        # Notify user that raise profile payment succeeded
         user_id_str = metadata.get("user_id")
         if user_id_str:
             try:
-                user_id = uuid.UUID(user_id_str)
-                bot = getattr(handle_yookassa_webhook, "_bot", None)
-                if bot:
-                    async with get_session_factory()() as session:
-                        from src.models.user import User
-                        r = await session.execute(select(User).where(User.id == user_id))
-                        u = r.scalar_one_or_none()
-                        if u and u.platform_user_id:
-                            try:
-                                await bot.send_message(
-                                    u.platform_user_id,
-                                    "✅ Оплата поднятия анкеты прошла! Вернись в бот и нажми «Я оплатил — проверить».",
-                                )
-                            except Exception as e:
-                                logger.warning("Cannot notify user %s: %s", u.platform_user_id, e)
+                await _notify_user(
+                    uuid.UUID(user_id_str),
+                    "✅ Оплата поднятия анкеты прошла! Вернись в бот и нажми «Я оплатил — проверить».",
+                )
             except (ValueError, TypeError) as e:
                 logger.warning("raise_profile webhook: invalid user_id: %s", e)
         return 200, {"status": "ok", "type": "raise_profile"}
@@ -205,22 +189,11 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
         logger.error("YooKassa webhook: activate_subscription failed for %s", user_id)
         return 200, {"status": "activate_failed"}
 
-    # Notify user via bot
-    bot = getattr(handle_yookassa_webhook, "_bot", None)
-    if bot:
-        from src.models.user import User
-        ses = get_session_factory()
-        async with ses() as session:
-            r = await session.execute(select(User).where(User.id == user_id))
-            u = r.scalar_one_or_none()
-            if u and u.platform_user_id:
-                try:
-                    from src.services.notification_templates import get_template
-                    period_label = "1 месяц" if period == "monthly" else "Сезон"
-                    msg = await get_template("template_subscription_activated", period=period_label)
-                    await bot.send_message(u.platform_user_id, msg)
-                except Exception as e:
-                    logger.warning("Cannot notify user %s: %s", u.platform_user_id, e)
+    # Notify user via Telegram or MAX
+    from src.services.notification_templates import get_template
+    period_label = "1 месяц" if period == "monthly" else "Сезон"
+    msg = await get_template("template_subscription_activated", period=period_label)
+    await _notify_user(user_id, msg)
 
     return 200, {"status": "ok"}
 
