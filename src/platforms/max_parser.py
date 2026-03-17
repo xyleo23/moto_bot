@@ -4,6 +4,7 @@ from src.platforms.base import (
     IncomingCallback,
     IncomingContact,
     IncomingLocation,
+    IncomingPhoto,
 )
 
 
@@ -33,7 +34,43 @@ def _get_first_name(obj: dict) -> str | None:
     return from_obj.get("first_name") or from_obj.get("name")
 
 
-def parse_updates(response: dict) -> list[IncomingMessage | IncomingCallback | IncomingContact | IncomingLocation]:
+def _extract_photo_file_id(msg: dict) -> str | None:
+    """Try to extract a photo file_id from a MAX message dict.
+
+    MAX may deliver photos as:
+    - ``message.photo`` (direct dict with ``token`` / ``file_id``)
+    - ``message.attachments[].type == "image"`` with ``payload.token`` or ``payload.file_id``
+    Returns the first found token/file_id string, or ``None``.
+    """
+    # Direct photo field
+    photo = msg.get("photo")
+    if isinstance(photo, dict):
+        fid = photo.get("token") or photo.get("file_id") or photo.get("id")
+        if fid:
+            return str(fid)
+
+    # Attachments list
+    attachments = msg.get("attachments") or []
+    if isinstance(attachments, list):
+        for att in attachments:
+            if not isinstance(att, dict):
+                continue
+            att_type = att.get("type", "")
+            if att_type in ("image", "photo"):
+                payload = att.get("payload") or {}
+                fid = (
+                    payload.get("token")
+                    or payload.get("file_id")
+                    or payload.get("id")
+                    or att.get("token")
+                    or att.get("file_id")
+                )
+                if fid:
+                    return str(fid)
+    return None
+
+
+def parse_updates(response: dict) -> list[IncomingMessage | IncomingCallback | IncomingContact | IncomingLocation | IncomingPhoto]:
     """Parse MAX /updates response. Returns list of parsed events."""
     raw_updates = response.get("updates") or response.get("result") or []
     if isinstance(raw_updates, dict):
@@ -48,7 +85,7 @@ def parse_updates(response: dict) -> list[IncomingMessage | IncomingCallback | I
     return result
 
 
-def parse_update(raw: dict) -> IncomingMessage | IncomingCallback | IncomingContact | IncomingLocation | None:
+def parse_update(raw: dict) -> IncomingMessage | IncomingCallback | IncomingContact | IncomingLocation | IncomingPhoto | None:
     """Parse single raw MAX update. Returns event or None."""
     # If update has nested message/callback_query
     cq = raw.get("callback_query") or raw.get("callback")
@@ -106,6 +143,19 @@ def parse_update(raw: dict) -> IncomingMessage | IncomingCallback | IncomingCont
             user_id=user_id,
             latitude=lat,
             longitude=lon,
+            raw=raw,
+        )
+
+    # Photo — MAX may deliver via attachments[].type == "image" or message.photo
+    photo_file_id = _extract_photo_file_id(msg)
+    if photo_file_id:
+        caption = msg.get("text") or msg.get("caption") or None
+        return IncomingPhoto(
+            platform="max",
+            chat_id=chat_id,
+            user_id=user_id,
+            file_id=photo_file_id,
+            caption=str(caption) if caption else None,
             raw=raw,
         )
 
