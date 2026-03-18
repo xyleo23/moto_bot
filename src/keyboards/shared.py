@@ -93,12 +93,14 @@ def get_event_list_rows() -> list[KeyboardRow]:
     ]
 
 
-def get_event_detail_rows(event_id: str, is_registered: bool) -> list[KeyboardRow]:
+def get_event_detail_rows(event_id: str, is_registered: bool, can_report: bool = True) -> list[KeyboardRow]:
     rows = []
     if not is_registered:
         rows.append([
             Button("Я Пилот", payload=f"event_register_{event_id}_pilot"),
             Button("Я Двойка", payload=f"event_register_{event_id}_passenger"),
         ])
+    if can_report:
+        rows.append([Button("🚩 Пожаловаться", payload=f"max_event_report_{event_id}")])
     rows.append([Button("« К списку", payload="event_list")])
     return rows

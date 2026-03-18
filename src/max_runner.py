@@ -1317,6 +1317,11 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
             await handle_event_register(adapter, chat_id, user, p[0], p[1])
         return
 
+    if data.startswith("max_event_report_"):
+        eid = data.replace("max_event_report_", "")
+        await handle_event_report(adapter, chat_id, user, eid)
+        return
+
     # ── Payment callbacks ─────────────────────────────────────────────────────
     if (
         data.startswith("max_pay_")
@@ -1843,7 +1848,8 @@ async def handle_event_detail(adapter: MaxAdapter, chat_id: str, user, event_id:
             )
         )
         is_reg = r.scalar_one_or_none() is not None
-    kb = get_event_detail_rows(event_id, is_reg)
+    can_report = ev.creator_id != effective_user_id(user)
+    kb = get_event_detail_rows(event_id, is_reg, can_report=can_report)
     await adapter.send_message(chat_id, text, kb)
 
 
@@ -1867,6 +1873,65 @@ async def handle_event_register(
         await adapter.send_message(chat_id, "Ошибка регистрации.", get_back_to_menu_rows())
 
 
+async def handle_event_report(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
+    """Report an event from MAX. Notifies city admins and superadmins via Telegram."""
+    from src.services.event_service import get_event_by_id, TYPE_LABELS
+    from src.services.admin_service import get_city_admins
+    from src.config import get_settings
+    from src import texts
+
+    try:
+        ev_uuid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка.", get_back_to_menu_rows())
+        return
+
+    ev = await get_event_by_id(ev_uuid)
+    if not ev:
+        await adapter.send_message(chat_id, "Мероприятие не найдено.", get_back_to_menu_rows())
+        return
+
+    if ev.creator_id == effective_user_id(user):
+        await adapter.send_message(chat_id, "Нельзя пожаловаться на своё мероприятие.", get_back_to_menu_rows())
+        return
+
+    ev_title = ev.title or TYPE_LABELS.get(ev.type.value, ev.type.value)
+    reporter = f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
+    admin_text = texts.EVENT_REPORT_ADMIN_TEXT.format(
+        reporter=reporter,
+        event_title=ev_title,
+        event_date=ev.start_at.strftime("%d.%m.%Y %H:%M"),
+        event_type=TYPE_LABELS.get(ev.type.value, ev.type.value),
+    )
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=texts.EVENT_REPORT_BTN_ACCEPT, callback_data=f"admin_evreport_accept_{event_id}")],
+        [InlineKeyboardButton(text=texts.EVENT_REPORT_BTN_REJECT, callback_data=f"admin_evreport_reject_{event_id}")],
+    ])
+
+    tg_bot = _get_tg_bot()
+    settings = get_settings()
+
+    if ev.city_id:
+        admins = await get_city_admins(ev.city_id)
+        for _, admin_user in admins:
+            try:
+                if tg_bot:
+                    await tg_bot.send_message(admin_user.platform_user_id, admin_text, reply_markup=admin_kb)
+            except Exception as e:
+                logger.warning("Cannot notify city admin %s: %s", admin_user.platform_user_id, e)
+
+    if tg_bot:
+        for admin_id in settings.superadmin_ids:
+            try:
+                await tg_bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
+            except Exception as e:
+                logger.warning("Cannot notify superadmin %s: %s", admin_id, e)
+
+    await adapter.send_message(chat_id, texts.EVENT_REPORT_SENT, get_back_to_menu_rows())
+
+
 async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
     from src.services.subscription import check_subscription_required
     from src.services.admin_service import get_subscription_settings
@@ -1883,19 +1948,24 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         monthly_payment = await create_payment(
             amount_kopecks=monthly_price,
             description="Подписка на 1 месяц — мото-бот",
-            metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "monthly"},
+            metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "monthly", "platform": "max"},
             return_url="https://max.ru/",
         )
         season_payment = await create_payment(
             amount_kopecks=season_price,
             description="Подписка на сезон — мото-бот",
-            metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "season"},
+            metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "season", "platform": "max"},
             return_url="https://max.ru/",
         )
 
         text = (
             "👤 Мой профиль\n\n"
             "Для доступа к функциям бота нужна подписка.\n\n"
+            "Подписка открывает:\n"
+            "• Анкеты, лайки и контакты при совпадении\n"
+            "• Просмотр и запись на мероприятия\n"
+            "• Прохваты — без ограничений\n"
+            "• Мотопробеги — 2 бесплатно в месяц\n\n"
             f"• 1 месяц — {monthly_price // 100} ₽\n"
             f"• Сезон — {season_price // 100} ₽\n\n"
             "Выбери тариф и оплати по ссылке. После оплаты нажми «Я оплатил — проверить»."
@@ -2076,13 +2146,13 @@ async def _handle_payment_callback(
         monthly_payment = await create_payment(
             amount_kopecks=monthly_price,
             description="Продление подписки на 1 месяц — мото-бот",
-            metadata={"type": "subscription", "user_id": str(user.id), "period": "monthly"},
+            metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "monthly", "platform": "max"},
             return_url="https://max.ru/",
         )
         season_payment = await create_payment(
             amount_kopecks=season_price,
             description="Продление подписки на сезон — мото-бот",
-            metadata={"type": "subscription", "user_id": str(user.id), "period": "season"},
+            metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "season", "platform": "max"},
             return_url="https://max.ru/",
         )
 
@@ -2134,7 +2204,7 @@ async def _handle_payment_callback(
         payment = await create_payment(
             amount_kopecks=price,
             description="Поднятие анкеты — мото-бот",
-            metadata={"type": "raise_profile", "user_id": str(user.id), "role": role},
+            metadata={"type": "raise_profile", "user_id": str(effective_user_id(user)), "role": role, "platform": "max"},
             return_url="https://max.ru/",
         )
         if not payment or not payment.get("confirmation_url"):
@@ -2211,7 +2281,7 @@ async def _handle_payment_callback(
         payment = await create_payment(
             amount_kopecks=amount_kop,
             description="Донат — поддержка бота мото-сообщества",
-            metadata={"type": "donate", "user_id": str(user.id)},
+            metadata={"type": "donate", "user_id": str(effective_user_id(user)), "platform": "max"},
             return_url="https://max.ru/",
         )
         if not payment or not payment.get("confirmation_url"):
@@ -2265,7 +2335,7 @@ async def _handle_payment_callback(
             payment = await create_payment(
                 amount_kopecks=price,
                 description="Создание мероприятия — мото-бот",
-                metadata={"type": "event_creation", "user_id": str(user.id), "event_type": ev_type},
+                metadata={"type": "event_creation", "user_id": str(effective_user_id(user)), "event_type": ev_type, "platform": "max"},
                 return_url="https://max.ru/",
             )
             if not payment or not payment.get("confirmation_url"):

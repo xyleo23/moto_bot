@@ -118,7 +118,7 @@ async def cb_events_menu(callback: CallbackQuery, user=None):
     if user and await check_subscription_required(user):
         text = (
             "Для доступа к мероприятиям нужна активная подписка.\n"
-            "Подписка даёт доступ к просмотру, записи и поиску мотопары на мероприятиях."
+            "Подписка открывает просмотр, запись и поиск мотопары на мероприятиях."
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],

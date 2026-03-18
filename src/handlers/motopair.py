@@ -32,7 +32,7 @@ async def cb_motopair_menu(callback: CallbackQuery, user=None):
     if user and await check_subscription_required(user):
         await callback.message.edit_text(
             "Для доступа к поиску мотопары нужна активная подписка.\n"
-            "Подписка даёт доступ к анкетам и контактам.",
+            "Подписка открывает анкеты, лайки и контакты при совпадении.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Оформить подписку", callback_data="menu_profile")],
                 [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],

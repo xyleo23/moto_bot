@@ -352,7 +352,7 @@ async def kb_motopair(message: Message, state: FSMContext, user=None):
     if user and await check_subscription_required(user):
         await message.answer(
             "Для доступа к поиску мотопары нужна активная подписка.\n"
-            "Подписка даёт доступ к анкетам и контактам.",
+            "Подписка открывает анкеты, лайки, мероприятия и поиск мотопары.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
                 [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
@@ -383,7 +383,7 @@ async def kb_events(message: Message, state: FSMContext, user=None):
     if not (is_sa or is_ca) and user and await check_subscription_required(user):
         await message.answer(
             "Для доступа к мероприятиям нужна активная подписка.\n"
-            "Подписка даёт доступ к просмотру, записи и поиску мотопары на мероприятиях.",
+            "Подписка открывает просмотр, запись и поиск мотопары на мероприятиях.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
                 [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],

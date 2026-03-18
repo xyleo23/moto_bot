@@ -104,11 +104,30 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
 
     pay_type = metadata.get("type")
 
-    async def _notify_user(user_id_uuid: uuid.UUID, msg: str) -> None:
-        """Send notification to user via Telegram bot or MAX adapter."""
+    async def _notify_user(user_id_uuid: uuid.UUID, msg: str, source_platform: str | None = None) -> None:
+        """Send notification to user via Telegram bot or MAX adapter.
+
+        When source_platform='max', prefers to notify via the MAX account:
+        either the user themselves (if they're a MAX user) or a linked MAX account.
+        Falls back to the canonical user's platform if no MAX account is found.
+        """
         async with get_session_factory()() as session:
-            r = await session.execute(select(User).where(User.id == user_id_uuid))
-            u = r.scalar_one_or_none()
+            # If payment originated from MAX, try to find the MAX account to notify
+            if source_platform == "max":
+                r = await session.execute(
+                    select(User).where(
+                        User.platform == Platform.MAX,
+                        (User.id == user_id_uuid) | (User.linked_user_id == user_id_uuid),
+                    )
+                )
+                u = r.scalars().first()
+            else:
+                u = None
+
+            if u is None:
+                r = await session.execute(select(User).where(User.id == user_id_uuid))
+                u = r.scalar_one_or_none()
+
         if not u or not u.platform_user_id:
             return
         chat_id = str(u.platform_user_id)
@@ -127,12 +146,14 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
                 except Exception as e:
                     logger.warning("Cannot notify TG user %s: %s", u.platform_user_id, e)
 
+    src_platform = metadata.get("platform")
+
     if pay_type == "donate":
         user_id_str = metadata.get("user_id")
         if user_id_str:
             try:
                 user_id = uuid.UUID(user_id_str)
-                await _notify_user(user_id, "❤️ Спасибо за поддержку проекта!")
+                await _notify_user(user_id, "❤️ Спасибо за поддержку проекта!", src_platform)
             except (ValueError, TypeError) as e:
                 logger.warning("donate webhook: malformed metadata user_id=%r: %s", user_id_str, e)
         return 200, {"status": "ok", "type": "donate"}
@@ -144,6 +165,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
                 await _notify_user(
                     uuid.UUID(user_id_str),
                     "✅ Оплата создания мероприятия прошла! Вернись в бот и нажми «Я оплатил — проверить».",
+                    src_platform,
                 )
             except (ValueError, TypeError) as e:
                 logger.warning("event_creation webhook: invalid user_id: %s", e)
@@ -156,6 +178,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
                 await _notify_user(
                     uuid.UUID(user_id_str),
                     "✅ Оплата поднятия анкеты прошла! Вернись в бот и нажми «Я оплатил — проверить».",
+                    src_platform,
                 )
             except (ValueError, TypeError) as e:
                 logger.warning("raise_profile webhook: invalid user_id: %s", e)
@@ -193,7 +216,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
     from src.services.notification_templates import get_template
     period_label = "1 месяц" if period == "monthly" else "Сезон"
     msg = await get_template("template_subscription_activated", period=period_label)
-    await _notify_user(user_id, msg)
+    await _notify_user(user_id, msg, src_platform)
 
     return 200, {"status": "ok"}
 
