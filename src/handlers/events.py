@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from src.keyboards.menu import get_back_to_menu_kb
+from src.models.user import effective_user_id
 from src.utils.callback_short import get_pair_callback
 from src.keyboards.events import (
     get_events_menu_kb,
@@ -206,15 +207,16 @@ async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext, user=None
     await state.update_data(event_type=ev_type)
 
     settings_db = await get_subscription_settings()
+    eff_id = effective_user_id(user)
     needs_payment, price = await event_creation_payment_required(
-        user.id, user.platform_user_id, user.city_id, ev_type, settings_db
+        eff_id, user.platform_user_id, user.city_id, ev_type, settings_db
     )
 
     if needs_payment and price and price > 0:
         payment = await create_payment(
             amount_kopecks=price,
             description="Создание мероприятия",
-            metadata={"type": "event_creation", "user_id": str(user.id), "event_type": ev_type},
+            metadata={"type": "event_creation", "user_id": str(eff_id), "event_type": ev_type},
         )
         if payment and payment.get("confirmation_url"):
             await state.set_state(EventCreateStates.awaiting_payment)
@@ -497,7 +499,7 @@ async def cb_evcreate_desc_skip(callback: CallbackQuery, state: FSMContext, user
 
     ev = await create_event(
         city_id=user.city_id,
-        creator_id=user.id,
+        creator_id=effective_user_id(user),
         event_type=data["event_type"],
         title=data.get("title"),
         start_at=start_at,
@@ -539,7 +541,7 @@ async def evcreate_description(message: Message, state: FSMContext, user=None):
 
     ev = await create_event(
         city_id=user.city_id,
-        creator_id=user.id,
+        creator_id=effective_user_id(user),
         event_type=data["event_type"],
         title=data.get("title"),
         start_at=start_at,
@@ -630,9 +632,10 @@ async def cb_event_detail(callback: CallbackQuery, user=None):
         await callback.answer()
         return
 
-    reg = await get_user_registration(ev_uuid, user.id) if user else None
+    eff_uid = effective_user_id(user) if user else None
+    reg = await get_user_registration(ev_uuid, eff_uid) if eff_uid else None
     user_role = reg.role if reg else None
-    can_report = bool(user) and ev.creator_id != user.id
+    can_report = bool(user) and ev.creator_id != eff_uid
     kb = get_event_card_kb(eid, bool(reg), user_role, can_report)
     try:
         await callback.message.edit_text(_format_event_card(ev), reply_markup=kb)
@@ -693,7 +696,7 @@ async def cb_event_report(callback: CallbackQuery, user=None):
         await callback.answer("Мероприятие не найдено.", show_alert=True)
         return
 
-    if ev.creator_id == user.id:
+    if ev.creator_id == effective_user_id(user):
         await callback.answer("Нельзя пожаловаться на своё мероприятие.", show_alert=True)
         return
 
@@ -765,7 +768,7 @@ async def cb_event_register(callback: CallbackQuery, user=None):
         await callback.answer()
         return
     eid, role = uuid.UUID(parts[0]), parts[1]
-    ok, err = await register_for_event(eid, user.id, role)
+    ok, err = await register_for_event(eid, effective_user_id(user), role)
     if ok:
         await callback.message.edit_text(
             "Записал! Хочешь искать пару (двойку/пилота)?",
@@ -792,12 +795,13 @@ async def cb_event_seeking(callback: CallbackQuery, user=None):
 async def cb_event_seek_yes(callback: CallbackQuery, user=None):
     parts = callback.data.replace("event_seek_yes_", "").split("_")
     eid, target_role = uuid.UUID(parts[0]), parts[1]
-    reg = await get_user_registration(eid, user.id)
+    eff_uid = effective_user_id(user)
+    reg = await get_user_registration(eid, eff_uid)
     if not reg:
         await callback.answer()
         return
-    await set_seeking_pair(eid, user.id, True)
-    seekers = await get_seeking_users(eid, target_role, exclude_user_id=user.id)
+    await set_seeking_pair(eid, eff_uid, True)
+    seekers = await get_seeking_users(eid, target_role, exclude_user_id=eff_uid)
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     if not seekers:
@@ -826,7 +830,7 @@ async def cb_event_seek_yes(callback: CallbackQuery, user=None):
 @router.callback_query(F.data.startswith("event_seek_no_"))
 async def cb_event_seek_no(callback: CallbackQuery, user=None):
     eid = callback.data.replace("event_seek_no_", "")
-    await set_seeking_pair(uuid.UUID(eid), user.id, False)
+    await set_seeking_pair(uuid.UUID(eid), effective_user_id(user), False)
     ev = await get_event_by_id(uuid.UUID(eid))
     await callback.message.edit_text(
         _format_event_card(ev),
@@ -844,7 +848,7 @@ async def cb_event_pair_request(callback: CallbackQuery, user=None, bot=None):
         await callback.answer("Заявка устарела.", show_alert=True)
         return
     eid, to_user_id = pair
-    ok, msg = await send_pair_request(eid, user.id, to_user_id)
+    ok, msg = await send_pair_request(eid, effective_user_id(user), to_user_id)
     if not ok:
         await callback.answer(msg, show_alert=True)
         return
@@ -858,13 +862,13 @@ async def cb_event_pair_request(callback: CallbackQuery, user=None, bot=None):
         if u:
             to_platform_id = u.platform_user_id
     if bot and to_platform_id:
-        from_text = await get_profile_display(user.id)
+        from_text = await get_profile_display(effective_user_id(user))
         ev = await get_event_by_id(eid)
         try:
             await bot.send_message(
                 to_platform_id,
                 f"💌 Заявка на пару!\n\n{from_text} хочет поехать с тобой на мероприятие «{ev.title or 'Мероприятие'}».",
-                reply_markup=get_pair_request_kb(str(eid), str(user.id)),
+                reply_markup=get_pair_request_kb(str(eid), str(effective_user_id(user))),
             )
         except Exception as e:
             logger.warning(f"Cannot send pair request notification to {to_platform_id}: {e}")
@@ -881,7 +885,7 @@ async def cb_event_pair_accept(callback: CallbackQuery, user=None, bot=None):
         await callback.answer("Заявка устарела.", show_alert=True)
         return
     eid, from_user_id = pair
-    ok = await accept_pair_request(eid, from_user_id, user.id)
+    ok = await accept_pair_request(eid, from_user_id, effective_user_id(user))
     if not ok:
         await callback.answer()
         return
@@ -896,7 +900,7 @@ async def cb_event_pair_accept(callback: CallbackQuery, user=None, bot=None):
         if u:
             from_platform_id = u.platform_user_id
     if bot and from_platform_id:
-        to_text = await get_profile_display(user.id)
+        to_text = await get_profile_display(effective_user_id(user))
         try:
             await bot.send_message(
                 from_platform_id,
@@ -919,7 +923,7 @@ async def cb_event_pair_reject(callback: CallbackQuery, user=None):
         await callback.answer()
         return
     eid, from_user_id = pair
-    await reject_pair_request(eid, from_user_id, user.id)
+    await reject_pair_request(eid, from_user_id, effective_user_id(user))
     await callback.message.edit_text("Заявка отклонена.")
     await callback.answer()
 
@@ -927,7 +931,7 @@ async def cb_event_pair_reject(callback: CallbackQuery, user=None):
 # ——— My events ———
 @router.callback_query(F.data == "event_my")
 async def cb_event_my(callback: CallbackQuery, user=None):
-    events = await get_creator_events(user.id)
+    events = await get_creator_events(effective_user_id(user))
     if not events:
         await callback.message.edit_text(
             "Ты ещё не создавал мероприятий.",
@@ -945,7 +949,7 @@ async def cb_event_my(callback: CallbackQuery, user=None):
 async def cb_event_my_detail(callback: CallbackQuery, user=None):
     eid = callback.data.replace("event_my_detail_", "")
     ev = await get_event_by_id(uuid.UUID(eid))
-    if not ev or ev.creator_id != user.id:
+    if not ev or ev.creator_id != effective_user_id(user):
         await callback.answer("Не найдено.", show_alert=True)
         return
     await callback.message.edit_text(
@@ -961,7 +965,7 @@ async def cb_event_cancel(callback: CallbackQuery, user=None, bot=None):
 
     eid = callback.data.replace("event_cancel_", "")
     ev_uuid = uuid.UUID(eid)
-    ok, notify_ids = await cancel_event(ev_uuid, user.id)
+    ok, notify_ids = await cancel_event(ev_uuid, effective_user_id(user))
     if not ok:
         await callback.answer("Ошибка.", show_alert=True)
         return
@@ -1009,7 +1013,7 @@ async def cb_event_edit_start(callback: CallbackQuery, state: FSMContext, user=N
     except ValueError:
         await callback.answer("Ошибка.")
         return
-    if not ev or ev.creator_id != user.id:
+    if not ev or ev.creator_id != effective_user_id(user):
         await callback.answer("Нет доступа.", show_alert=True)
         return
 
@@ -1070,7 +1074,7 @@ async def _apply_event_edit(message: Message, state: FSMContext, user, **kwargs)
         await message.answer("Ошибка ID мероприятия.", reply_markup=get_back_to_menu_kb())
         return
 
-    ok = await update_event(eid, user.id, **kwargs)
+    ok = await update_event(eid, effective_user_id(user), **kwargs)
     if not ok:
         await message.answer("Ошибка сохранения.", reply_markup=get_back_to_menu_kb())
         return

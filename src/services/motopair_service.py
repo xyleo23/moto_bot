@@ -8,7 +8,7 @@ from src.models.base import get_session_factory
 from src.models.profile_pilot import ProfilePilot
 from src.models.profile_passenger import ProfilePassenger
 from src.models.like import Like, LikeBlacklist
-from src.models.user import User
+from src.models.user import User, effective_user_id as _eff_id
 
 
 def _like_pair_lock_key(a: int, b: int) -> int:
@@ -242,6 +242,7 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
             "matched": matched,
             "blacklisted": blacklisted,
             "target_platform_user_id": target_user.platform_user_id if target_user else None,
+            "target_platform": target_user.platform if target_user else None,
             "target_user_id": to_user_id,
             "from_user_id": from_user_id,
         }

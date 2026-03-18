@@ -265,6 +265,24 @@ async def _send_sos_alert(
             reply_markup=broadcast_kb,
         )
 
+    # Cross-platform: also broadcast to MAX users in the same city
+    from src.services.sos_service import get_city_max_user_ids
+    from src.services.broadcast import get_max_adapter, broadcast_max_background
+    from src.platforms.base import Button, ButtonType
+    max_adapter = get_max_adapter()
+    if max_adapter:
+        max_user_ids = await get_city_max_user_ids(user.city_id)
+        if max_user_ids:
+            max_kb_rows = []
+            if phone:
+                max_kb_rows.append([Button(text="📞 Позвонить", type=ButtonType.URL, url=f"tel:{phone}")])
+            broadcast_max_background(
+                max_adapter,
+                max_user_ids,
+                broadcast_text,
+                kb_rows=max_kb_rows if max_kb_rows else None,
+            )
+
     cooldown_mins = settings.sos_cooldown_minutes
     # Reply with confirmation + timer + all-clear button
     kb = InlineKeyboardMarkup(inline_keyboard=[

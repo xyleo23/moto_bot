@@ -2,7 +2,7 @@
 import uuid
 import enum
 from datetime import datetime
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Enum, BigInteger
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, Enum, BigInteger, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import Base, generate_uuid
@@ -41,6 +41,26 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    __table_args__ = (
-        {"sqlite_autoincrement": False}
+    # Cross-platform account linking: when a user registers on MAX with the same
+    # phone as an existing Telegram user (or vice versa), their linked_user_id
+    # is set to the canonical (first-registered) user's id.  All profile,
+    # subscription and like data is stored under the canonical user's id.
+    linked_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
+
+    __table_args__ = (
+        Index("ix_users_linked_user_id", "linked_user_id"),
+        {"sqlite_autoincrement": False},
+    )
+
+
+def effective_user_id(user: "User") -> uuid.UUID:
+    """Return the canonical UUID used for all data lookups.
+
+    When a user is linked to another account (cross-platform), returns the
+    linked (primary) user's id so profile/subscription/like data is shared.
+    """
+    return user.linked_user_id if user.linked_user_id else user.id

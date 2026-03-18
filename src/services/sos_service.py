@@ -126,3 +126,20 @@ async def get_city_telegram_user_ids(city_id: UUID) -> list[int]:
             )
         )
         return [r[0] for r in result.fetchall()]
+
+
+async def get_city_max_user_ids(city_id: UUID) -> list[int]:
+    """Get MAX messenger user IDs for cross-platform SOS broadcast."""
+    from src.models.user import User, Platform
+    from sqlalchemy import select
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(User.platform_user_id).where(
+                User.city_id == city_id,
+                User.platform == Platform.MAX,
+                User.is_blocked.is_(False),
+            )
+        )
+        return [r[0] for r in result.fetchall()]

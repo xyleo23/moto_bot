@@ -4,7 +4,7 @@ from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.base import get_session_factory
-from src.models.user import User, Platform, UserRole
+from src.models.user import User, Platform, UserRole, effective_user_id
 from src.models.city import City
 from src.models.profile_pilot import ProfilePilot
 from src.models.profile_passenger import ProfilePassenger
@@ -70,36 +70,42 @@ async def is_superadmin(platform_user_id: int) -> bool:
 
 
 async def has_profile(user: User) -> bool:
-    """Check if user has completed profile (pilot or passenger)."""
+    """Check if user has completed profile (pilot or passenger).
+
+    Uses the effective (canonical) user ID so cross-platform linked accounts
+    share the same profile lookup.
+    """
+    uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         if user.role == UserRole.PILOT:
             result = await session.execute(
-                select(ProfilePilot).where(ProfilePilot.user_id == user.id)
+                select(ProfilePilot).where(ProfilePilot.user_id == uid)
             )
             return result.scalar_one_or_none() is not None
         else:
             result = await session.execute(
-                select(ProfilePassenger).where(ProfilePassenger.user_id == user.id)
+                select(ProfilePassenger).where(ProfilePassenger.user_id == uid)
             )
             return result.scalar_one_or_none() is not None
 
 
 async def get_user_profile_display(user: User) -> str:
     """Get short profile string for SOS: name, username, phone."""
+    uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         uname = user.platform_username or ""
         name = user.platform_first_name or "Пользователь"
         phone = ""
         if user.role == UserRole.PILOT:
-            result = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == user.id))
+            result = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == uid))
             p = result.scalar_one_or_none()
             if p:
                 name = p.name
                 phone = p.phone
         else:
-            result = await session.execute(select(ProfilePassenger).where(ProfilePassenger.user_id == user.id))
+            result = await session.execute(select(ProfilePassenger).where(ProfilePassenger.user_id == uid))
             p = result.scalar_one_or_none()
             if p:
                 name = p.name

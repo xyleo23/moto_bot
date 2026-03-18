@@ -20,13 +20,27 @@ from src.platforms.base import (
     IncomingPhoto,
     KeyboardRow,
 )
+
+# Module-level Telegram bot reference for cross-platform SOS broadcasts.
+# Injected at startup via set_tg_bot() when platform=both or platform=telegram.
+_tg_bot = None
+
+
+def set_tg_bot(bot) -> None:
+    """Inject the Telegram bot instance for cross-platform SOS broadcasts."""
+    global _tg_bot
+    _tg_bot = bot
+
+
+def _get_tg_bot():
+    return _tg_bot
 from src.services.user import get_or_create_user, has_profile
 from src.services import max_registration_state as reg_state
 from src.services.registration_service import (
     finish_pilot_registration,
     finish_passenger_registration,
 )
-from src.models.user import User, UserRole, Platform
+from src.models.user import User, UserRole, Platform, effective_user_id
 from src.models.base import get_session_factory
 from sqlalchemy import select
 from src.keyboards.shared import (
@@ -252,6 +266,13 @@ async def _handle_fsm_message(
     """Route incoming text to the correct FSM step handler."""
     state = fsm["state"]
     data = fsm["data"]
+
+    # ── SOS comment step ──────────────────────────────────────────────────────
+    if state == "sos:comment":
+        user = await get_or_create_user(platform="max", platform_user_id=user_id)
+        if user:
+            await _handle_sos_send(adapter, chat_id, user, comment=text.strip() if text else None)
+        return
 
     # ── PILOT steps ──────────────────────────────────────────────────────────
     if state == "pilot:name":
@@ -1216,10 +1237,7 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         return
 
     if data == "menu_sos":
-        await adapter.request_location(
-            chat_id,
-            "Отправь свою геолокацию для SOS или напиши комментарий.",
-        )
+        await _handle_sos_menu(adapter, chat_id, user)
         return
     if data == "menu_motopair":
         await handle_motopair_menu(adapter, chat_id, user)
@@ -1235,6 +1253,20 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         return
     if data == "menu_about":
         await handle_about(adapter, chat_id)
+        return
+
+    # ── SOS callbacks ─────────────────────────────────────────────────────────
+    if data in ("sos_accident", "sos_broken", "sos_ran_out", "sos_other"):
+        await _handle_sos_type_selected(adapter, chat_id, ev.user_id, data)
+        return
+    if data == "sos_skip_comment":
+        await _handle_sos_send(adapter, chat_id, user, comment=None)
+        return
+    if data == "sos_check_ready":
+        await _handle_sos_check_ready(adapter, chat_id, ev.user_id)
+        return
+    if data == "sos_all_clear":
+        await _handle_sos_all_clear(adapter, chat_id, user)
         return
 
     # ── MotoPair callbacks ────────────────────────────────────────────────────
@@ -1318,12 +1350,235 @@ async def handle_contact(adapter: MaxAdapter, ev: IncomingContact) -> None:
 
 
 async def handle_location(adapter: MaxAdapter, ev: IncomingLocation) -> None:
-    """Handle location (e.g. SOS)."""
+    """Handle location — used for SOS flow."""
+    user = await get_or_create_user(platform="max", platform_user_id=ev.user_id)
+    if not user or user.is_blocked:
+        return
+
+    fsm = await reg_state.get_state(ev.user_id)
+    if fsm and fsm.get("state") == "sos:location":
+        # Save location data and transition to comment step
+        data = fsm.get("data", {})
+        data["lat"] = ev.latitude
+        data["lon"] = ev.longitude
+        await reg_state.set_state(ev.user_id, "sos:comment", data)
+        skip_kb = [[Button(texts.BTN_SKIP, payload="sos_skip_comment")]]
+        await adapter.send_message(
+            ev.chat_id,
+            "📍 Локация получена!\n\nДобавь комментарий или нажми «Пропустить»:",
+            skip_kb,
+        )
+    else:
+        await adapter.send_message(
+            ev.chat_id,
+            f"Геолокация получена ({ev.latitude:.5f}, {ev.longitude:.5f}).",
+            get_back_to_menu_rows(),
+        )
+
+
+# ── SOS handlers for MAX ─────────────────────────────────────────────────────
+
+def _sos_type_kb() -> list[KeyboardRow]:
+    return [
+        [Button("ДТП", payload="sos_accident"), Button("Сломался", payload="sos_broken")],
+        [Button("Обсох", payload="sos_ran_out"), Button("Другое", payload="sos_other")],
+        [Button("« Назад", payload="menu_main")],
+    ]
+
+
+async def _handle_sos_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
+    """Show SOS type selection and set FSM state."""
+    if not user.city_id:
+        await adapter.send_message(chat_id, "Город не выбран. Нажми /start", get_back_to_menu_rows())
+        return
+
+    from src.services.sos_service import check_sos_cooldown
+    remaining = await check_sos_cooldown(user.id)
+    if remaining > 0:
+        mins, secs = remaining // 60, remaining % 60
+        kb = [[Button(texts.SOS_CHECK_READY, payload="sos_check_ready")], [Button("« Назад", payload="menu_main")]]
+        await adapter.send_message(
+            chat_id,
+            texts.SOS_READY_WAIT.format(mins=mins, secs=secs),
+            kb,
+        )
+        return
+
+    await reg_state.set_state(user.platform_user_id, "sos:choose_type", {})
+    await adapter.send_message(chat_id, texts.SOS_CHOOSE_TYPE, _sos_type_kb())
+
+
+async def _handle_sos_type_selected(
+    adapter: MaxAdapter, chat_id: str, user_id: int, sos_type: str
+) -> None:
+    """User selected SOS type — ask for location."""
+    fsm = await reg_state.get_state(user_id)
+    data = fsm.get("data", {}) if fsm else {}
+    data["sos_type"] = sos_type
+    await reg_state.set_state(user_id, "sos:location", data)
+    kb = [[get_location_button_row()[0]], [Button("❌ Отменить", payload="max_reg_cancel")]]
     await adapter.send_message(
-        ev.chat_id,
-        f"Геолокация получена: {ev.latitude:.5f}, {ev.longitude:.5f}. SOS в MAX — в разработке.",
-        get_back_to_menu_rows(),
+        chat_id,
+        texts.SOS_SEND_LOCATION,
+        kb,
     )
+
+
+async def _handle_sos_send(
+    adapter: MaxAdapter, chat_id: str, user, comment: str | None
+) -> None:
+    """Create and broadcast SOS alert from MAX."""
+    from src.services.sos_service import (
+        create_sos_alert,
+        get_city_telegram_user_ids,
+        get_city_max_user_ids,
+    )
+    from src.services.broadcast import broadcast_max_background, get_max_adapter
+    from src.services.user import get_user_profile_display
+    from src.config import get_settings
+
+    fsm = await reg_state.get_state(user.platform_user_id)
+    data = fsm.get("data", {}) if fsm else {}
+    await reg_state.clear_state(user.platform_user_id)
+
+    required = ("sos_type", "lat", "lon")
+    if not all(k in data for k in required):
+        await adapter.send_message(
+            chat_id,
+            "Данные SOS устарели. Начни заново — нажми кнопку 🆘 SOS.",
+            get_back_to_menu_rows(),
+        )
+        return
+
+    if not user.city_id:
+        await adapter.send_message(chat_id, texts.SOS_NO_CITY, get_back_to_menu_rows())
+        return
+
+    ok, remaining = await create_sos_alert(
+        user_id=user.id,
+        city_id=user.city_id,
+        sos_type=data["sos_type"],
+        lat=data["lat"],
+        lon=data["lon"],
+        comment=comment,
+    )
+    if not ok:
+        mins, secs = remaining // 60, remaining % 60
+        kb = [[Button(texts.SOS_CHECK_READY, payload="sos_check_ready")], [Button("« Назад", payload="menu_main")]]
+        await adapter.send_message(chat_id, texts.SOS_READY_WAIT.format(mins=mins, secs=secs), kb)
+        return
+
+    type_labels = {
+        "sos_accident": "ДТП",
+        "sos_broken": "Сломался",
+        "sos_ran_out": "Обсох",
+        "sos_other": "Другое",
+    }
+    settings = get_settings()
+    profile = await get_user_profile_display(user)
+
+    broadcast_text = texts.SOS_BROADCAST_TYPE.format(
+        type_label=type_labels.get(data["sos_type"], "Другое"),
+        profile=profile,
+    )
+    if comment:
+        broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=comment)
+    broadcast_text += texts.SOS_BROADCAST_MAP.format(lon=data["lon"], lat=data["lat"])
+
+    # Build keyboard for MAX recipients
+    from src.models.profile_pilot import ProfilePilot
+    from src.models.profile_passenger import ProfilePassenger
+    from src.models.base import get_session_factory as _gsf
+    from sqlalchemy import select as _sel
+    phone = None
+    _sf = _gsf()
+    async with _sf() as _sess:
+        if user.role.value == "pilot":
+            r = await _sess.execute(_sel(ProfilePilot.phone).where(ProfilePilot.user_id == user.id))
+        else:
+            r = await _sess.execute(_sel(ProfilePassenger.phone).where(ProfilePassenger.user_id == user.id))
+        phone = r.scalar_one_or_none()
+
+    max_kb = []
+    if phone:
+        max_kb.append([Button(text=texts.SOS_BTN_CALL, type=ButtonType.URL, url=f"tel:{phone}")])
+
+    # Broadcast to MAX users in the city
+    max_user_ids = await get_city_max_user_ids(user.city_id)
+    if max_user_ids:
+        broadcast_max_background(
+            adapter, max_user_ids, broadcast_text,
+            exclude_id=user.platform_user_id,
+            kb_rows=max_kb if max_kb else None,
+        )
+
+    # Cross-platform: also broadcast to Telegram users in the city
+    from src.services.broadcast import broadcast_background
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    tg_user_ids = await get_city_telegram_user_ids(user.city_id)
+    if tg_user_ids:
+        # Build Telegram keyboard with phone and "write in Telegram" button
+        # Note: MAX user doesn't have a Telegram profile link, so only phone button
+        tg_kb_rows = []
+        if phone:
+            tg_kb_rows.append([InlineKeyboardButton(text=texts.SOS_BTN_CALL, url=f"tel:{phone}")])
+        tg_kb = InlineKeyboardMarkup(inline_keyboard=tg_kb_rows) if tg_kb_rows else None
+        tg_bot_instance = _get_tg_bot()
+        if tg_bot_instance:
+            broadcast_background(tg_bot_instance, tg_user_ids, broadcast_text, reply_markup=tg_kb)
+
+    cooldown_mins = settings.sos_cooldown_minutes
+    kb = [
+        [Button(texts.SOS_CHECK_READY, payload="sos_check_ready")],
+        [Button(texts.SOS_ALL_CLEAR_BTN, payload="sos_all_clear")],
+        [Button("« Назад в меню", payload="menu_main")],
+    ]
+    await adapter.send_message(chat_id, texts.SOS_SENT.format(cooldown=cooldown_mins), kb)
+
+
+async def _handle_sos_check_ready(adapter: MaxAdapter, chat_id: str, user_id: int) -> None:
+    """Show current cooldown status."""
+    from src.services.sos_service import check_sos_cooldown
+
+    user = await get_or_create_user(platform="max", platform_user_id=user_id)
+    if not user:
+        return
+    remaining = await check_sos_cooldown(user.id)
+    if remaining <= 0:
+        kb = [[Button("🚨 Отправить SOS", payload="menu_sos")], [Button("« Главное меню", payload="menu_main")]]
+        await adapter.send_message(chat_id, texts.SOS_READY_NOW, kb)
+    else:
+        mins, secs = remaining // 60, remaining % 60
+        kb = [[Button(texts.SOS_CHECK_READY, payload="sos_check_ready")], [Button("« Назад", payload="menu_main")]]
+        await adapter.send_message(chat_id, texts.SOS_READY_WAIT.format(mins=mins, secs=secs), kb)
+
+
+async def _handle_sos_all_clear(adapter: MaxAdapter, chat_id: str, user) -> None:
+    """Broadcast 'all clear' from MAX user."""
+    from src.services.sos_service import get_city_telegram_user_ids, get_city_max_user_ids
+    from src.services.broadcast import broadcast_max_background, broadcast_background
+    from src.services.user import get_user_profile_display
+
+    if not user or not user.city_id:
+        await adapter.send_message(chat_id, texts.SOS_NO_CITY, get_back_to_menu_rows())
+        return
+
+    name = user.platform_first_name or user.platform_username or "Участник"
+    clear_text = texts.SOS_ALL_CLEAR_BROADCAST.format(name=name)
+
+    # Broadcast to MAX users
+    max_user_ids = await get_city_max_user_ids(user.city_id)
+    if max_user_ids:
+        broadcast_max_background(adapter, max_user_ids, clear_text, exclude_id=user.platform_user_id)
+
+    # Cross-platform: broadcast to Telegram users
+    tg_user_ids = await get_city_telegram_user_ids(user.city_id)
+    if tg_user_ids:
+        tg_bot_instance = _get_tg_bot()
+        if tg_bot_instance:
+            broadcast_background(tg_bot_instance, tg_user_ids, clear_text)
+
+    await adapter.send_message(chat_id, "✅ Рады, что всё хорошо! Отбой разослан.", get_back_to_menu_rows())
 
 
 # ── Feature handlers (unchanged from original) ────────────────────────────────
@@ -1351,7 +1606,7 @@ async def handle_motopair_list(
 ) -> None:
     from src.services.motopair_service import get_next_profile
 
-    profile, has_more = await get_next_profile(user.id, role, offset=offset)
+    profile, has_more = await get_next_profile(effective_user_id(user), role, offset=offset)
     if not profile:
         await adapter.send_message(
             chat_id, texts.MOTOPAIR_NO_PROFILES,
@@ -1376,14 +1631,100 @@ async def handle_motopair_like(
     if not to_user_id:
         await adapter.send_message(ev.chat_id, "Профиль не найден.", get_back_to_menu_rows())
         return
-    result = await process_like(user.id, to_user_id.id, is_like)
+    eff_from = effective_user_id(user)
+    target_user = to_user_id  # variable renamed for clarity below
+    result = await process_like(eff_from, target_user.id, is_like)
+
     if is_like and result.get("matched"):
-        await adapter.send_message(
-            ev.chat_id,
-            "💚 Взаимный лайк! Контакты в Telegram-версии бота.",
-            get_back_to_menu_rows(),
+        from src.services.motopair_service import get_profile_info_text
+        from src.services.notification_templates import get_template
+        from src.services.activity_log_service import log_event
+        from src.models.activity_log import ActivityEventType
+
+        await log_event(
+            ActivityEventType.MUTUAL_LIKE,
+            user_id=eff_from,
+            data={"target_user_id": str(target_user.id), "from_user_id": str(eff_from)},
         )
+
+        # Show target's contact info to current (MAX) user
+        from_text, _ = await get_profile_info_text(target_user.id)
+        match_kb = []
+        if target_user.platform_username:
+            match_kb.append([Button(
+                "💬 Написать",
+                type=ButtonType.URL,
+                url=f"https://t.me/{target_user.platform_username}",
+            )])
+        msg_self = await get_template("template_mutual_like_self", profile=from_text)
+        await adapter.send_message(ev.chat_id, msg_self, match_kb if match_kb else get_back_to_menu_rows())
+
+        # Notify the target user on their platform
+        to_text, _ = await get_profile_info_text(eff_from)
+        if result.get("target_platform_user_id"):
+            target_platform = result.get("target_platform")
+            msg_target = await get_template("template_mutual_like_target", profile=to_text)
+            if target_platform and target_platform.value == "max":
+                # Notify on MAX
+                max_match_kb = []
+                if user.platform_username:
+                    max_match_kb.append([Button(
+                        "💬 Написать",
+                        type=ButtonType.URL,
+                        url=f"https://t.me/{user.platform_username}",
+                    )])
+                try:
+                    await adapter.send_message(
+                        str(result["target_platform_user_id"]), msg_target,
+                        max_match_kb if max_match_kb else None
+                    )
+                except Exception as e:
+                    logger.warning("MAX: cannot notify matched user %s: %s", result["target_platform_user_id"], e)
+            else:
+                # Notify on Telegram
+                tg_bot_instance = _get_tg_bot()
+                if tg_bot_instance:
+                    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                    tg_match_kb = []
+                    if user.platform_username:
+                        tg_match_kb.append([InlineKeyboardButton(
+                            text="💬 Написать в MAX?",
+                            url=f"https://t.me/{user.platform_username}",
+                        )])
+                    try:
+                        await tg_bot_instance.send_message(
+                            result["target_platform_user_id"],
+                            msg_target,
+                            reply_markup=InlineKeyboardMarkup(inline_keyboard=tg_match_kb) if tg_match_kb else None,
+                        )
+                    except Exception as e:
+                        logger.warning("TG: cannot notify matched user %s: %s", result["target_platform_user_id"], e)
+
     elif is_like:
+        # Notify the liked user (like received)
+        from src.services.motopair_service import get_profile_info_text
+        from src.services.notification_templates import get_template
+        from_text, _ = await get_profile_info_text(eff_from)
+        if result.get("target_platform_user_id"):
+            target_platform = result.get("target_platform")
+            notify_text = await get_template("template_like_received", profile=from_text)
+            if target_platform and target_platform.value == "max":
+                try:
+                    await adapter.send_message(
+                        str(result["target_platform_user_id"]), notify_text
+                    )
+                except Exception as e:
+                    logger.warning("MAX: cannot notify like user %s: %s", result["target_platform_user_id"], e)
+            else:
+                tg_bot_instance = _get_tg_bot()
+                if tg_bot_instance:
+                    try:
+                        await tg_bot_instance.send_message(
+                            result["target_platform_user_id"], notify_text
+                        )
+                    except Exception as e:
+                        logger.warning("TG: cannot notify like user %s: %s", result["target_platform_user_id"], e)
+
         await adapter.send_message(ev.chat_id, "👍 Лайк отправлен!", get_back_to_menu_rows())
     else:
         await adapter.send_message(ev.chat_id, "👎 Дизлайк учтён.", get_back_to_menu_rows())
@@ -1498,7 +1839,7 @@ async def handle_event_detail(adapter: MaxAdapter, chat_id: str, user, event_id:
         r = await session.execute(
             select(EventRegistration).where(
                 EventRegistration.event_id == ev.id,
-                EventRegistration.user_id == user.id,
+                EventRegistration.user_id == effective_user_id(user),
             )
         )
         is_reg = r.scalar_one_or_none() is not None
@@ -1519,7 +1860,7 @@ async def handle_event_register(
             get_back_to_menu_rows(),
         )
         return
-    ok, _ = await register_for_event(uuid.UUID(event_id), user.id, role)
+    ok, _ = await register_for_event(uuid.UUID(event_id), effective_user_id(user), role)
     if ok:
         await adapter.send_message(chat_id, "✅ Ты зарегистрирован!", get_back_to_menu_rows())
     else:
@@ -1542,13 +1883,13 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         monthly_payment = await create_payment(
             amount_kopecks=monthly_price,
             description="Подписка на 1 месяц — мото-бот",
-            metadata={"type": "subscription", "user_id": str(user.id), "period": "monthly"},
+            metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "monthly"},
             return_url="https://max.ru/",
         )
         season_payment = await create_payment(
             amount_kopecks=season_price,
             description="Подписка на сезон — мото-бот",
-            metadata={"type": "subscription", "user_id": str(user.id), "period": "season"},
+            metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "season"},
             return_url="https://max.ru/",
         )
 

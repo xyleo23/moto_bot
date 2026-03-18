@@ -50,8 +50,13 @@ def setup_logging():
     )
 
 
-async def run_telegram():
-    """Run Telegram bot with aiogram."""
+async def run_telegram(shared_bot=None):
+    """Run Telegram bot with aiogram.
+
+    If ``shared_bot`` is provided (when running ``both`` platforms), we reuse
+    the pre-created Bot instance so it can be injected into the MAX runner for
+    cross-platform SOS broadcasts.
+    """
     from aiogram import Bot, Dispatcher
     from aiogram.fsm.storage.redis import RedisStorage
     from aiogram.client.default import DefaultBotProperties
@@ -93,10 +98,14 @@ async def run_telegram():
         storage = MemoryStorage()
         _redis = None
 
-    bot = Bot(
+    bot = shared_bot or Bot(
         token=settings.telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+
+    # Inject the Telegram bot into MAX runner for cross-platform SOS broadcasts.
+    from src.max_runner import set_tg_bot
+    set_tg_bot(bot)
 
     # Сразу снимаем webhook — иначе polling не получит обновления
     for attempt in range(3):
@@ -221,8 +230,12 @@ async def run_telegram():
             await _redis.close()
 
 
-async def run_max():
-    """Run MAX bot (long polling)."""
+async def run_max(shared_adapter=None):
+    """Run MAX bot (long polling).
+
+    If ``shared_adapter`` is provided (when running ``both`` platforms), we
+    reuse the pre-created adapter so it is already registered in broadcast.py.
+    """
     from redis.asyncio import Redis
     from src.platforms.max_adapter import MaxAdapter
     from src.max_runner import process_max_update
@@ -235,12 +248,18 @@ async def run_max():
         await redis.ping()
         from src.services import max_registration_state
         max_registration_state.set_redis_client(redis)
+        from src.services.sos_service import set_redis_client
+        set_redis_client(redis)
     except Exception as e:
         logger.warning("Redis unavailable for MAX reg state (%s), using in-memory fallback", e)
     if not settings.max_bot_token:
         raise ValueError("MAX_BOT_TOKEN is required for MAX platform")
 
-    adapter = MaxAdapter()
+    adapter = shared_adapter or MaxAdapter()
+
+    # Register MAX adapter for cross-platform SOS broadcasts from Telegram handler.
+    from src.services.broadcast import set_max_adapter
+    set_max_adapter(adapter)
 
     # Connection diagnostics
     try:
@@ -307,7 +326,31 @@ def main():
             init_db()
             await ensure_cities()
             await ensure_subscription_settings()
-            await asyncio.gather(run_telegram(), run_max())
+
+            # Pre-create shared instances so each runner can inject them into the
+            # other platform's services for cross-platform SOS and like notifications.
+            from aiogram import Bot
+            from aiogram.client.default import DefaultBotProperties
+            from aiogram.enums import ParseMode
+            from src.platforms.max_adapter import MaxAdapter
+
+            _settings = get_settings()
+            tg_bot = Bot(
+                token=_settings.telegram_bot_token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            )
+            max_adapter = MaxAdapter()
+
+            # Register cross-platform references before starting the loops.
+            from src.max_runner import set_tg_bot
+            set_tg_bot(tg_bot)
+            from src.services.broadcast import set_max_adapter
+            set_max_adapter(max_adapter)
+
+            await asyncio.gather(
+                run_telegram(shared_bot=tg_bot),
+                run_max(shared_adapter=max_adapter),
+            )
         asyncio.run(run_both())
     else:
         raise ValueError(f"Unknown platform: {platform}")

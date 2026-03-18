@@ -2,8 +2,14 @@
 
 Extracts DB-commit logic from src/handlers/registration.py so that
 MAX (and any future platform) can reuse it without touching Telegram handlers.
+
+Cross-platform account linking: when a user on one platform registers with a
+phone number that already exists in a profile on another platform, their
+user record is linked (linked_user_id) to the canonical user, and all
+profile/subscription/like data is shared.
 """
 from datetime import datetime
+from uuid import UUID
 
 from loguru import logger
 from sqlalchemy import select
@@ -27,6 +33,37 @@ def _parse_driving_since(value) -> "date | None":  # noqa: F821 (avoid circular 
             return datetime.strptime(value, "%Y-%m-%d").date()
         except ValueError:
             pass
+    return None
+
+
+async def _find_canonical_user_by_phone(
+    session, phone: str, exclude_platform: Platform
+) -> "UUID | None":
+    """Find the canonical user ID that owns a profile with the given phone on another platform."""
+    # Search pilot profiles
+    r = await session.execute(
+        select(ProfilePilot.user_id).where(ProfilePilot.phone == phone)
+    )
+    uid = r.scalar_one_or_none()
+    if uid:
+        # Verify the owning user is on a different platform
+        ur = await session.execute(select(User).where(User.id == uid))
+        owner = ur.scalar_one_or_none()
+        if owner and owner.platform != exclude_platform:
+            # Follow any existing link to root canonical user
+            return owner.linked_user_id if owner.linked_user_id else owner.id
+
+    # Search passenger profiles
+    r = await session.execute(
+        select(ProfilePassenger.user_id).where(ProfilePassenger.phone == phone)
+    )
+    uid = r.scalar_one_or_none()
+    if uid:
+        ur = await session.execute(select(User).where(User.id == uid))
+        owner = ur.scalar_one_or_none()
+        if owner and owner.platform != exclude_platform:
+            return owner.linked_user_id if owner.linked_user_id else owner.id
+
     return None
 
 
@@ -86,8 +123,23 @@ async def finish_pilot_registration(
             )
             return "user_not_found"
 
+        # Cross-platform linking: check if another platform's user already has
+        # a profile with the same phone.  If so, link this user to the canonical
+        # account so data is shared between platforms.
+        canonical_uid = await _find_canonical_user_by_phone(session, phone, u.platform)
+        if canonical_uid and u.linked_user_id != canonical_uid:
+            u.linked_user_id = canonical_uid
+            logger.info(
+                "finish_pilot_registration: linked user %s → canonical %s (phone match)",
+                u.id, canonical_uid,
+            )
+
+        # Store profile under the canonical user's id so both platforms see the
+        # same profile data.
+        profile_owner_id = u.linked_user_id if u.linked_user_id else u.id
+
         existing = await session.execute(
-            select(ProfilePilot).where(ProfilePilot.user_id == u.id)
+            select(ProfilePilot).where(ProfilePilot.user_id == profile_owner_id)
         )
         profile = existing.scalar_one_or_none()
 
@@ -111,7 +163,7 @@ async def finish_pilot_registration(
             for k, v in kwargs.items():
                 setattr(profile, k, v)
         else:
-            profile = ProfilePilot(user_id=u.id, **kwargs)
+            profile = ProfilePilot(user_id=profile_owner_id, **kwargs)
             session.add(profile)
 
         try:
@@ -181,8 +233,20 @@ async def finish_passenger_registration(
 
         u.role = UserRole.PASSENGER
 
+        # Cross-platform linking: check if another platform's user already has
+        # a profile with the same phone.
+        canonical_uid = await _find_canonical_user_by_phone(session, phone_str, u.platform)
+        if canonical_uid and u.linked_user_id != canonical_uid:
+            u.linked_user_id = canonical_uid
+            logger.info(
+                "finish_passenger_registration: linked user %s → canonical %s (phone match)",
+                u.id, canonical_uid,
+            )
+
+        profile_owner_id = u.linked_user_id if u.linked_user_id else u.id
+
         existing = await session.execute(
-            select(ProfilePassenger).where(ProfilePassenger.user_id == u.id)
+            select(ProfilePassenger).where(ProfilePassenger.user_id == profile_owner_id)
         )
         profile = existing.scalar_one_or_none()
 
@@ -204,7 +268,7 @@ async def finish_passenger_registration(
             for k, v in kwargs.items():
                 setattr(profile, k, v)
         else:
-            profile = ProfilePassenger(user_id=u.id, **kwargs)
+            profile = ProfilePassenger(user_id=profile_owner_id, **kwargs)
             session.add(profile)
 
         try:

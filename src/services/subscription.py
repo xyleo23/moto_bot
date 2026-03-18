@@ -5,11 +5,16 @@ from sqlalchemy import select
 
 from src.models.base import get_session_factory
 from src.models.subscription import Subscription, SubscriptionSettings, SubscriptionType
-from src.models.user import User
+from src.models.user import User, effective_user_id
 
 
 async def check_subscription_required(user: User) -> bool:
-    """True if subscription is required and user doesn't have active one."""
+    """True if subscription is required and user doesn't have active one.
+
+    Uses the effective (canonical) user ID so a subscription purchased on
+    Telegram is also valid when the same person uses MAX.
+    """
+    uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await session.execute(select(SubscriptionSettings).limit(1))
@@ -20,7 +25,7 @@ async def check_subscription_required(user: User) -> bool:
         result = await session.execute(
             select(Subscription)
             .where(
-                Subscription.user_id == user.id,
+                Subscription.user_id == uid,
                 Subscription.is_active.is_(True),
                 Subscription.expires_at >= date.today(),
             )

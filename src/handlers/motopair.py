@@ -14,6 +14,7 @@ from src.keyboards.motopair import (
     get_match_kb,
     get_filter_kb,
 )
+from src.models.user import effective_user_id
 from src import texts
 
 router = Router()
@@ -198,8 +199,9 @@ async def cb_motopair_list(callback: CallbackQuery, user=None):
     from src.services.motopair_service import get_user_for_profile
 
     role, offset = _parse_motopair_cb(callback.data)
-    filters = await get_filter(user.id, role)
-    profile, has_more = await get_next_profile(user.id, role, offset=offset, filters=filters)
+    eff_id = effective_user_id(user)
+    filters = await get_filter(eff_id, role)
+    profile, has_more = await get_next_profile(eff_id, role, offset=offset, filters=filters)
 
     if not profile:
         # Improved empty state with "raise profile" CTA
@@ -548,18 +550,19 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
         await callback.answer("Анкета не найдена.", show_alert=True)
         return
 
-    result = await process_like(user.id, target_user.id, is_like=True)
+    eff_from = effective_user_id(user)
+    result = await process_like(eff_from, target_user.id, is_like=True)
 
     if result["matched"]:
         from src.services.activity_log_service import log_event
         from src.models.activity_log import ActivityEventType
         await log_event(
             ActivityEventType.MUTUAL_LIKE,
-            user_id=user.id,
-            data={"target_user_id": str(target_user.id), "from_user_id": str(user.id)},
+            user_id=eff_from,
+            data={"target_user_id": str(target_user.id), "from_user_id": str(eff_from)},
         )
         from_text, _ = await get_profile_info_text(target_user.id)
-        to_text, _ = await get_profile_info_text(user.id)
+        to_text, _ = await get_profile_info_text(eff_from)
 
         if bot and result["target_platform_user_id"]:
             try:
@@ -589,7 +592,7 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
         )
     else:
         if bot and result["target_platform_user_id"]:
-            from_text, from_photo = await get_profile_info_text(user.id)
+            from_text, from_photo = await get_profile_info_text(eff_from)
             try:
                 from src.services.notification_templates import get_template
                 notify_text = await get_template("template_like_received", profile=from_text)
@@ -646,7 +649,7 @@ async def cb_dislike(callback: CallbackQuery, user=None):
         await callback.answer("Анкета не найдена.", show_alert=True)
         return
 
-    result = await process_like(user.id, target_user.id, is_like=False)
+    result = await process_like(effective_user_id(user), target_user.id, is_like=False)
     text = "👎 Анкета скрыта." if result["blacklisted"] else "👎 Пропущено."
     await callback.message.edit_text(text, reply_markup=get_back_to_menu_kb())
     await callback.answer()
@@ -679,7 +682,7 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
         await callback.answer("Пользователь не найден.", show_alert=True)
         return
 
-    result = await process_like(user.id, from_user_uuid, is_like=True)
+    result = await process_like(effective_user_id(user), from_user_uuid, is_like=True)
     from_text, _ = await get_profile_info_text(from_user_uuid)
 
     match_kb_target = get_match_kb(user.platform_username, user.platform_user_id)
