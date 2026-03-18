@@ -284,7 +284,7 @@ async def _handle_fsm_message(
         logger.info("MAX reg: user_id=%s state=pilot:phone", user_id)
         await adapter.send_message(
             chat_id,
-            progress_prefix(2, PILOT_TOTAL_STEPS) + texts.REG_ASK_PHONE,
+            progress_prefix(2, PILOT_TOTAL_STEPS) + texts.REG_ASK_PHONE_MAX,
             [get_contact_button_row(), _cancel_kb()[0]],
         )
         return
@@ -1118,7 +1118,7 @@ async def _resend_current_step(
     """Re-send the prompt for the current FSM step (used when /start is called mid-flow)."""
     step_map = {
         "pilot:name": (1, PILOT_TOTAL_STEPS, texts.REG_ASK_NAME, _cancel_kb()),
-        "pilot:phone": (2, PILOT_TOTAL_STEPS, texts.REG_ASK_PHONE, [get_contact_button_row(), _cancel_kb()[0]]),
+        "pilot:phone": (2, PILOT_TOTAL_STEPS, texts.REG_ASK_PHONE_MAX, [get_contact_button_row(), _cancel_kb()[0]]),
         "pilot:age": (3, PILOT_TOTAL_STEPS, texts.REG_ASK_AGE, _cancel_kb()),
         "pilot:gender": (4, PILOT_TOTAL_STEPS, texts.REG_ASK_GENDER, _pilot_gender_kb()),
         "pilot:bike_brand": (5, PILOT_TOTAL_STEPS, texts.REG_ASK_BIKE_BRAND, _cancel_kb()),

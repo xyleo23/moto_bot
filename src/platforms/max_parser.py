@@ -150,28 +150,41 @@ def parse_update(raw: dict):
             continue
         if att.get("type") == "contact":
             import logging as _logging
-            _logging.getLogger("max_parser").debug(
-                "MAX contact attachment raw: %r", att
-            )
+            import re as _re
+            _log = _logging.getLogger("max_parser")
+            # Log full structure at WARNING so it's always visible in prod logs
+            _log.warning("MAX contact attachment FULL: %r", att)
+            _log.warning("MAX contact raw message body: %r", body)
+
             payload = att.get("payload") or {}
-            # Try multiple locations: nested payload, top-level attachment, VCF
+            # Try every possible location MAX might put the phone
             phone = (
                 payload.get("phone_number")
                 or payload.get("phone")
+                or payload.get("phones")  # array → take first below
                 or att.get("phone_number")
                 or att.get("phone")
                 or ""
             )
+            # Handle array of phones
+            if isinstance(phone, list):
+                phone = phone[0] if phone else ""
+
+            # VCF fallback (TEL field)
             if not phone:
-                import re as _re
-                vcf = payload.get("vcf") or att.get("vcf") or ""
+                vcf = (
+                    payload.get("vcf_info")
+                    or payload.get("vcf")
+                    or att.get("vcf_info")
+                    or att.get("vcf")
+                    or ""
+                )
                 if vcf:
                     m = _re.search(r"TEL[^:]*:([+\d\s\-().]+)", str(vcf))
                     if m:
                         phone = _re.sub(r"[\s\-().]", "", m.group(1))
-            _logging.getLogger("max_parser").debug(
-                "MAX contact parsed phone=%r from att=%r", phone, att
-            )
+
+            _log.warning("MAX contact parsed phone=%r", phone)
             return IncomingContact(
                 platform="max",
                 chat_id=chat_id,
