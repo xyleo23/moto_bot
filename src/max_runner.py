@@ -628,7 +628,7 @@ async def _handle_fsm_message(
         return
 
     # Unknown state — clear and show menu
-    logger.warning("MAX reg: unknown state=%s for user_id=%s — clearing", state, user_id)
+    logger.warning(f"MAX reg: unknown state={state} for user_id={user_id} — clearing")
     await reg_state.clear_state(user_id)
     await adapter.send_message(chat_id, "Что-то пошло не так. Начни заново.", get_main_menu_rows())
 
@@ -678,7 +678,7 @@ async def _handle_fsm_contact(
         ask_text = texts.REG_ASK_AGE
 
     await reg_state.set_state(user_id, next_state, data)
-    logger.info("MAX reg: user_id=%s state=%s", user_id, next_state)
+    logger.info(f"MAX reg: user_id={user_id} state={next_state}")
     await adapter.send_message(
         chat_id,
         progress_prefix(step, total) + ask_text,
@@ -949,7 +949,7 @@ async def _do_finish_pilot(
         await adapter.send_message(chat_id, texts.REG_ERROR_USER_NOT_FOUND, get_main_menu_rows())
         return
     if err:
-        logger.warning("MAX reg: pilot finish error=%s user_id=%s", err, user_id)
+        logger.warning(f"MAX reg: pilot finish error={err} user_id={user_id}")
         await adapter.send_message(
             chat_id,
             texts.REG_ERROR_SAVE,
@@ -970,7 +970,7 @@ async def _do_finish_passenger(
         await adapter.send_message(chat_id, texts.REG_ERROR_USER_NOT_FOUND, get_main_menu_rows())
         return
     if err:
-        logger.warning("MAX reg: passenger finish error=%s user_id=%s", err, user_id)
+        logger.warning(f"MAX reg: passenger finish error={err} user_id={user_id}")
         await adapter.send_message(
             chat_id,
             texts.REG_ERROR_SAVE,

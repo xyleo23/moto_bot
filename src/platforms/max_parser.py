@@ -152,9 +152,7 @@ def parse_update(raw: dict):
             import logging as _logging
             import re as _re
             _log = _logging.getLogger("max_parser")
-            # Log full structure at WARNING so it's always visible in prod logs
-            _log.warning("MAX contact attachment FULL: %r", att)
-            _log.warning("MAX contact raw message body: %r", body)
+            _log.debug("MAX contact attachment: %r", att)
 
             payload = att.get("payload") or {}
             # Try every possible location MAX might put the phone
@@ -184,7 +182,7 @@ def parse_update(raw: dict):
                     if m:
                         phone = _re.sub(r"[\s\-().]", "", m.group(1))
 
-            _log.warning("MAX contact parsed phone=%r", phone)
+            _log.debug("MAX contact parsed phone=%r", phone)
             return IncomingContact(
                 platform="max",
                 chat_id=chat_id,
