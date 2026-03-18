@@ -149,6 +149,10 @@ def parse_update(raw: dict):
         if not isinstance(att, dict):
             continue
         if att.get("type") == "contact":
+            import logging as _logging
+            _logging.getLogger("max_parser").debug(
+                "MAX contact attachment raw: %r", att
+            )
             payload = att.get("payload") or {}
             # Try multiple locations: nested payload, top-level attachment, VCF
             phone = (
@@ -165,6 +169,9 @@ def parse_update(raw: dict):
                     m = _re.search(r"TEL[^:]*:([+\d\s\-().]+)", str(vcf))
                     if m:
                         phone = _re.sub(r"[\s\-().]", "", m.group(1))
+            _logging.getLogger("max_parser").debug(
+                "MAX contact parsed phone=%r from att=%r", phone, att
+            )
             return IncomingContact(
                 platform="max",
                 chat_id=chat_id,

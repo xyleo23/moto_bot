@@ -440,7 +440,7 @@ async def _handle_fsm_message(
         logger.info("MAX reg: user_id=%s state=passenger:phone", user_id)
         await adapter.send_message(
             chat_id,
-            progress_prefix(2, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_PHONE,
+            progress_prefix(2, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_PHONE_MAX,
             [get_contact_button_row(), _cancel_kb()[0]],
         )
         return
@@ -1129,7 +1129,7 @@ async def _resend_current_step(
         "pilot:photo": (10, PILOT_TOTAL_STEPS, texts.REG_ASK_PHOTO, _pilot_photo_kb()),
         "pilot:about": (11, PILOT_TOTAL_STEPS, texts.REG_ASK_ABOUT, _pilot_about_kb()),
         "passenger:name": (1, PASSENGER_TOTAL_STEPS, texts.REG_ASK_NAME, _cancel_kb()),
-        "passenger:phone": (2, PASSENGER_TOTAL_STEPS, texts.REG_ASK_PHONE, [get_contact_button_row(), _cancel_kb()[0]]),
+        "passenger:phone": (2, PASSENGER_TOTAL_STEPS, texts.REG_ASK_PHONE_MAX, [get_contact_button_row(), _cancel_kb()[0]]),
         "passenger:age": (3, PASSENGER_TOTAL_STEPS, texts.REG_ASK_AGE, _cancel_kb()),
         "passenger:gender": (4, PASSENGER_TOTAL_STEPS, texts.REG_ASK_GENDER, _pax_gender_kb()),
         "passenger:weight": (5, PASSENGER_TOTAL_STEPS, texts.REG_ASK_WEIGHT, _cancel_kb()),
