@@ -229,7 +229,8 @@ async def cb_motopair_list(callback: CallbackQuery, user=None):
                     caption=text,
                     reply_markup=kb,
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning("cb_motopair_profile: answer_photo failed, fallback to edit_text: %s", e)
                 await callback.message.edit_text(text, reply_markup=kb)
         else:
             await callback.message.edit_text(text, reply_markup=kb)

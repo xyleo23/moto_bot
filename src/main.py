@@ -276,8 +276,13 @@ async def run_max(shared_adapter=None):
     # Register bot commands (shows slash-menu in MAX app)
     try:
         await adapter.set_my_commands([
-            {"name": "/start",  "description": "🏠 Главное меню"},
-            {"name": "/cancel", "description": "❌ Отменить текущее действие"},
+            {"name": "start", "description": "🏠 Главное меню"},
+            {"name": "cancel", "description": "❌ Отменить"},
+            {"name": "sos", "description": "🚨 SOS"},
+            {"name": "motopair", "description": "🏍 Мотопара"},
+            {"name": "events", "description": "📅 Мероприятия"},
+            {"name": "profile", "description": "👤 Мой профиль"},
+            {"name": "about", "description": "ℹ️ О нас"},
         ])
         logger.info("MAX bot commands registered")
     except Exception as e:

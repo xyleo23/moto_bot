@@ -415,11 +415,12 @@ async def _handle_fsm_message(
         data["about"] = about
         await reg_state.set_state(user_id, "pilot:preview", data)
         logger.info("MAX reg: user_id=%s state=pilot:preview", user_id)
-        await adapter.send_message(
-            chat_id,
-            _build_pilot_preview(data),
-            _pilot_preview_kb(),
-        )
+        preview_text = _build_pilot_preview(data)
+        photo_tok = data.get("photo_file_id")
+        if photo_tok:
+            await adapter.send_photo(chat_id, photo_tok, preview_text, _pilot_preview_kb())
+        else:
+            await adapter.send_message(chat_id, preview_text, _pilot_preview_kb())
         return
 
     if state == "pilot:preview":
@@ -544,11 +545,12 @@ async def _handle_fsm_message(
         data["about"] = about
         await reg_state.set_state(user_id, "passenger:preview", data)
         logger.info("MAX reg: user_id=%s state=passenger:preview", user_id)
-        await adapter.send_message(
-            chat_id,
-            _build_passenger_preview(data),
-            _pax_preview_kb(),
-        )
+        preview_text = _build_passenger_preview(data)
+        photo_tok = data.get("photo_file_id")
+        if photo_tok:
+            await adapter.send_photo(chat_id, photo_tok, preview_text, _pax_preview_kb())
+        else:
+            await adapter.send_message(chat_id, preview_text, _pax_preview_kb())
         return
 
     if state == "passenger:preview":
@@ -1047,6 +1049,24 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         await _handle_fsm_message(adapter, ev.chat_id, ev.user_id, text, fsm)
         return
 
+    # Commands from slash menu (sos, motopair, events, profile, about)
+    cmd = text.lower().lstrip("/")
+    if cmd == "sos":
+        await _handle_sos_menu(adapter, ev.chat_id, user)
+        return
+    if cmd == "motopair":
+        await handle_motopair_menu(adapter, ev.chat_id, user)
+        return
+    if cmd == "events":
+        await handle_events_menu(adapter, ev.chat_id, user)
+        return
+    if cmd == "profile":
+        await handle_profile(adapter, ev.chat_id, user)
+        return
+    if cmd == "about":
+        await handle_about(adapter, ev.chat_id)
+        return
+
     # Default
     await adapter.send_message(ev.chat_id, "Используй меню или /start", get_main_menu_rows())
 
@@ -1143,7 +1163,11 @@ async def _resend_current_step(
         is_pilot = state.startswith("pilot")
         preview_text = _build_pilot_preview(data) if is_pilot else _build_passenger_preview(data)
         kb = _pilot_preview_kb() if is_pilot else _pax_preview_kb()
-        await adapter.send_message(chat_id, preview_text, kb)
+        photo_tok = data.get("photo_file_id")
+        if photo_tok:
+            await adapter.send_photo(chat_id, photo_tok, preview_text, kb)
+        else:
+            await adapter.send_message(chat_id, preview_text, kb)
         return
 
     if state in step_map:
@@ -1827,7 +1851,12 @@ async def handle_event_detail(adapter: MaxAdapter, chat_id: str, user, event_id:
     from src.services.event_service import get_event_by_id, TYPE_LABELS
     from src.models.event import EventRegistration
 
-    ev = await get_event_by_id(uuid.UUID(event_id))
+    try:
+        ev_uuid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка: некорректный ID мероприятия.", get_back_to_menu_rows())
+        return
+    ev = await get_event_by_id(ev_uuid)
     if not ev:
         await adapter.send_message(chat_id, "Мероприятие не найдено.", get_back_to_menu_rows())
         return
@@ -1866,7 +1895,12 @@ async def handle_event_register(
             get_back_to_menu_rows(),
         )
         return
-    ok, _ = await register_for_event(uuid.UUID(event_id), effective_user_id(user), role)
+    try:
+        ev_uuid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка: некорректный ID мероприятия.", get_back_to_menu_rows())
+        return
+    ok, _ = await register_for_event(ev_uuid, effective_user_id(user), role)
     if ok:
         await adapter.send_message(chat_id, "✅ Ты зарегистрирован!", get_back_to_menu_rows())
     else:
@@ -1992,7 +2026,8 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
 
         try:
             profile_text = await get_profile_text(user)
-        except Exception:
+        except Exception as e:
+            logger.warning("handle_profile: get_profile_text failed for user_id=%s: %s", effective_user_id(user), e)
             profile_text = "👤 Мой профиль\n\nПодписка активна."
 
         sub_settings2 = await _get_sub_settings()

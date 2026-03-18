@@ -227,28 +227,44 @@ def set_webhook_bot(bot):
 
 
 async def run_webhook_server(bot=None):
-    """Run aiohttp server for YooKassa webhooks."""
+    """Run aiohttp server for /health and YooKassa webhooks.
+
+    Health endpoint is always exposed. Webhook routes are added only when YooKassa is configured.
+    """
     from aiohttp import web
 
     settings = get_settings()
-    if not settings.yookassa_shop_id or not settings.yookassa_secret_key:
-        logger.info("YooKassa not configured, webhook server skipped")
-        return
-
     if bot:
         set_webhook_bot(bot)
 
-    async def handler(request):
-        status, body = await handle_yookassa_webhook(request)
-        return web.json_response(body, status=status)
-
     app = web.Application()
-    app.router.add_post("/webhook/yookassa", handler)
-    app.router.add_get("/webhook/yookassa", lambda r: web.Response(text="OK", status=200))
+
+    async def health(request):
+        """Health check for monitoring. Probes DB."""
+        try:
+            async with get_session_factory()() as session:
+                await session.execute(select(1))  # DB ping
+        except Exception as e:
+            logger.warning("Health check DB failed: %s", e)
+            return web.json_response({"status": "degraded", "db": "error"}, status=503)
+        return web.json_response({"status": "ok"}, status=200)
+
+    app.router.add_get("/health", health)
+
+    if settings.yookassa_shop_id and settings.yookassa_secret_key:
+        async def handler(request):
+            status, body = await handle_yookassa_webhook(request)
+            return web.json_response(body, status=status)
+
+        app.router.add_post("/webhook/yookassa", handler)
+        app.router.add_get("/webhook/yookassa", lambda r: web.Response(text="OK", status=200))
+        logger.info("YooKassa webhook routes registered")
+    else:
+        logger.info("YooKassa not configured, webhook routes skipped")
 
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", settings.webhook_port)
     await site.start()
-    logger.info(f"Webhook server listening on port {settings.webhook_port}")
+    logger.info("HTTP server listening on port %s (GET /health)", settings.webhook_port)
     await asyncio.Event().wait()

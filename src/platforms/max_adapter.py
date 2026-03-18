@@ -3,6 +3,7 @@ import contextvars
 from typing import Any
 
 import aiohttp
+from loguru import logger
 
 # When True, send_message uses chat_id param instead of user_id (for dialogs).
 _max_use_chat_id_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
@@ -14,10 +15,15 @@ def set_max_use_chat_id(value: bool) -> None:
     _max_use_chat_id_var.set(value)
 
 
-def _get_msg_params(target: str) -> dict[str, str]:
+def _get_msg_params(target: str) -> dict[str, int | str]:
+    """MAX API expects integer for user_id/chat_id when numeric."""
+    try:
+        val = int(target)
+    except (ValueError, TypeError):
+        val = target
     if _max_use_chat_id_var.get():
-        return {"chat_id": target}
-    return {"user_id": target}
+        return {"chat_id": val}
+    return {"user_id": val}
 
 
 from src.platforms.base import (
@@ -104,6 +110,8 @@ class MaxAdapter(PlatformAdapter):
         async with session.request(method, url, **kwargs) as resp:
             if resp.status >= 400:
                 text = await resp.text()
+                from loguru import logger
+                logger.warning("MAX API error %s: %s", resp.status, text[:500])
                 raise RuntimeError(f"MAX API error {resp.status}: {text}")
             if resp.status == 204:
                 return {}
@@ -143,10 +151,31 @@ class MaxAdapter(PlatformAdapter):
         caption: str | None = None,
         keyboard: list[KeyboardRow] | None = None,
     ):
-        # MAX may need different API for photo - check docs
-        # Fallback: send as message with caption
-        text = caption or ""
-        return await self.send_message(chat_id, text or "[Фото]", keyboard)
+        """Send photo. photo_file_id is MAX attachment token (reused from received message)."""
+        attachments: list[dict] = []
+        if photo_file_id:
+            attachments.append({
+                "type": "image",
+                "payload": {"token": photo_file_id},
+            })
+        max_kb = _build_max_keyboard(keyboard) if keyboard else None
+        if max_kb:
+            attachments.append({
+                "type": "inline_keyboard",
+                "payload": {"buttons": max_kb},
+            })
+        body: dict = {"text": caption or ""}
+        if attachments:
+            body["attachments"] = attachments
+        if caption:
+            body["format"] = "html"
+        params = _get_msg_params(chat_id)
+        return await self._request(
+            "POST",
+            "/messages",
+            params=params,
+            json_data=body,
+        )
 
     async def send_photo_bytes(
         self,
@@ -216,8 +245,8 @@ class MaxAdapter(PlatformAdapter):
                 params={"callback_id": callback_id},
                 json_data=body,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("MAX answer_callback_with_edit failed: %s", e)
 
     async def request_contact(self, chat_id: str, text: str):
         keyboard = [[Button("Отправить мой номер", type=ButtonType.REQUEST_CONTACT)]]
@@ -241,8 +270,8 @@ class MaxAdapter(PlatformAdapter):
                 params={"callback_id": callback_id},
                 json_data=body,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("MAX answer_callback failed: %s", e)
 
     async def get_file_url(self, file_id: str) -> str:
         # MAX file download - may need GET /files/{fileId}
