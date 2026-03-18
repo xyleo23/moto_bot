@@ -19,17 +19,19 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "users",
-        sa.Column(
-            "linked_user_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("users.id", ondelete="SET NULL"),
-            nullable=True,
-            index=True,
-        ),
-    )
-    op.create_index("ix_users_linked_user_id", "users", ["linked_user_id"])
+    bind = op.get_bind()
+    cols = [c["name"] for c in sa.inspect(bind).get_columns("users")]
+    if "linked_user_id" not in cols:
+        op.add_column(
+            "users",
+            sa.Column(
+                "linked_user_id",
+                postgresql.UUID(as_uuid=True),
+                sa.ForeignKey("users.id", ondelete="SET NULL"),
+                nullable=True,
+            ),
+        )
+    op.create_index("ix_users_linked_user_id", "users", ["linked_user_id"], if_not_exists=True)
 
 
 def downgrade() -> None:
