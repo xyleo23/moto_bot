@@ -13,7 +13,7 @@ from src.services.subscription import activate_subscription
 from src.models.base import get_session_factory
 from src.models.subscription import Subscription
 from src.models.user import User, Platform
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 # YooKassa official IP ranges for webhook sources.
 # Requests from outside these ranges are rejected.
@@ -226,6 +226,19 @@ def set_webhook_bot(bot):
     handle_yookassa_webhook._bot = bot
 
 
+async def handle_health(request) -> "web.Response":
+    """Health check for monitoring. Probes DB. Usable in aiohttp routes."""
+    from aiohttp import web
+
+    try:
+        async with get_session_factory()() as session:
+            await session.execute(text("SELECT 1"))  # DB ping
+    except Exception as e:
+        logger.warning("Health check DB failed: %s", e)
+        return web.json_response({"status": "degraded", "db": "error"}, status=503)
+    return web.json_response({"status": "ok"}, status=200)
+
+
 async def run_webhook_server(bot=None):
     """Run aiohttp server for /health and YooKassa webhooks.
 
@@ -238,18 +251,7 @@ async def run_webhook_server(bot=None):
         set_webhook_bot(bot)
 
     app = web.Application()
-
-    async def health(request):
-        """Health check for monitoring. Probes DB."""
-        try:
-            async with get_session_factory()() as session:
-                await session.execute(select(1))  # DB ping
-        except Exception as e:
-            logger.warning("Health check DB failed: %s", e)
-            return web.json_response({"status": "degraded", "db": "error"}, status=503)
-        return web.json_response({"status": "ok"}, status=200)
-
-    app.router.add_get("/health", health)
+    app.router.add_get("/health", handle_health)
 
     if settings.yookassa_shop_id and settings.yookassa_secret_key:
         async def handler(request):

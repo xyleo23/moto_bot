@@ -15,6 +15,15 @@ async def test_motopair_raise_profile():
         pytest.skip(f"DB not available: {e}")
 
 
+@pytest.mark.asyncio
+async def test_get_events_list_empty_when_no_city():
+    """get_events_list returns [] when city_id is None."""
+    from src.services.event_service import get_events_list
+
+    result = await get_events_list(None)
+    assert result == []
+
+
 def test_format_profile_max():
     """Test _format_profile_max helper."""
     from src.max_runner import _format_profile_max

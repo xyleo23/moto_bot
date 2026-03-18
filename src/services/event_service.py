@@ -22,14 +22,40 @@ TYPE_LABELS = {
 RIDE_LABELS = {"column": "Колонна", "free": "Свободная"}
 
 
-async def get_events_list(city_id: UUID | None, event_type: str | None = None):
-    """Get list of upcoming events with pilot/passenger counts."""
+async def get_events_list(
+    city_id: UUID | None, event_type: str | None = None
+) -> list[dict[str, str | int]]:
+    """Get list of upcoming events with pilot/passenger counts.
+
+    Uses correlated subqueries to avoid N+1 queries.
+    Returns list of dicts with id, title, type, date, point_start, pilots, passengers.
+    """
     if not city_id:
         return []
+    pilots_sq = (
+        select(func.count())
+        .select_from(EventRegistration)
+        .where(
+            EventRegistration.event_id == Event.id,
+            EventRegistration.role == "pilot",
+        )
+        .scalar_subquery()
+        .correlate(Event)
+    )
+    passengers_sq = (
+        select(func.count())
+        .select_from(EventRegistration)
+        .where(
+            EventRegistration.event_id == Event.id,
+            EventRegistration.role == "passenger",
+        )
+        .scalar_subquery()
+        .correlate(Event)
+    )
     session_factory = get_session_factory()
     async with session_factory() as session:
         stmt = (
-            select(Event)
+            select(Event, pilots_sq.label("pilots"), passengers_sq.label("passengers"))
             .where(
                 Event.city_id == city_id,
                 Event.is_cancelled.is_(False),
@@ -42,22 +68,13 @@ async def get_events_list(city_id: UUID | None, event_type: str | None = None):
         if event_type and event_type in ("large", "motorcade", "run"):
             stmt = stmt.where(Event.type == event_type)
         result = await session.execute(stmt)
-        events = result.scalars().all()
+        rows = result.all()
 
         out = []
-        for e in events:
-            pilots = await session.scalar(
-                select(func.count()).select_from(EventRegistration).where(
-                    EventRegistration.event_id == e.id,
-                    EventRegistration.role == "pilot",
-                )
-            ) or 0
-            passengers = await session.scalar(
-                select(func.count()).select_from(EventRegistration).where(
-                    EventRegistration.event_id == e.id,
-                    EventRegistration.role == "passenger",
-                )
-            ) or 0
+        for row in rows:
+            e, pilots, passengers = row
+            pilots = pilots or 0
+            passengers = passengers or 0
             out.append({
                 "id": str(e.id),
                 "title": e.title or TYPE_LABELS.get(e.type.value, e.type.value),

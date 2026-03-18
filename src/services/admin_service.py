@@ -1,7 +1,9 @@
 """Admin service."""
+import time
 from uuid import UUID
 from datetime import date, timedelta
 
+from loguru import logger
 from sqlalchemy import select, func, or_, and_, String
 
 from src.models.base import get_session_factory
@@ -292,7 +294,24 @@ async def can_create_event_free(platform_user_id: int, city_id: UUID | None) -> 
     return False
 
 
+# In-memory cache for get_subscription_settings (TTL 60 seconds).
+_subscription_settings_cache: tuple[SubscriptionSettings | None, float] | None = None
+_SUBSCRIPTION_CACHE_TTL = 60
+
+
+def _invalidate_subscription_settings_cache() -> None:
+    """Clear cache after admin updates settings."""
+    global _subscription_settings_cache
+    _subscription_settings_cache = None
+
+
 async def get_subscription_settings() -> SubscriptionSettings | None:
+    global _subscription_settings_cache
+    now = time.monotonic()
+    if _subscription_settings_cache is not None:
+        cached, ts = _subscription_settings_cache
+        if now - ts < _SUBSCRIPTION_CACHE_TTL:
+            return cached
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.execute(select(SubscriptionSettings).limit(1))
@@ -302,6 +321,7 @@ async def get_subscription_settings() -> SubscriptionSettings | None:
             session.add(s)
             await session.commit()
             await session.refresh(s)
+        _subscription_settings_cache = (s, now)
         return s
 
 
@@ -340,6 +360,7 @@ async def update_subscription_settings(
         if raise_profile_price_kopecks is not None:
             s.raise_profile_price_kopecks = raise_profile_price_kopecks
         await session.commit()
+        _invalidate_subscription_settings_cache()
         return True
 
 

@@ -17,9 +17,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command, StateFilter
 
 from src.models.user import UserRole
-from src.models.profile_pilot import ProfilePilot, DrivingStyle, Gender
-from src.models.profile_passenger import ProfilePassenger, PreferredStyle
-from src.models.base import get_session_factory
 from src.keyboards.menu import get_main_menu_kb, get_persistent_kb
 from src.config import get_settings
 from src.utils.progress import progress_prefix
@@ -457,88 +454,28 @@ async def _finish_pilot_registration(
     message: Message, state: FSMContext, user, *, platform_user_id: int | None = None
 ):
     """Finish pilot registration. platform_user_id обязателен при вызове из callback (message.from_user = бот)."""
+    from src.services.registration_service import finish_pilot_registration as _finish_pilot
+    from src.models.user import Platform
+    from src.keyboards.menu import get_main_menu_kb_for_user
+    from src.services.user import get_or_create_user as _get_user
+
     data = await state.get_data()
     await state.clear()
     pid = platform_user_id or (message.from_user.id if message.from_user else None)
     logger.info("_finish_pilot_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys()))
 
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        from sqlalchemy import select
-        from src.models.user import User, Platform
+    if not pid:
+        await message.answer(texts.REG_ERROR_SAVE)
+        return
 
-        result = await session.execute(
-            select(User).where(
-                User.platform_user_id == pid,
-                User.platform == Platform.TELEGRAM,
-            )
-        )
-        u = result.scalar_one_or_none()
-        if not u:
-            logger.warning("_finish_pilot_registration: User not found for platform_user_id=%s", pid)
-            await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
-            return
+    err = await _finish_pilot(Platform.TELEGRAM, pid, data)
+    if err == "user_not_found":
+        await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
+        return
+    if err:
+        await message.answer(texts.REG_ERROR_SAVE)
+        return
 
-        gender_map = {"male": Gender.MALE, "female": Gender.FEMALE, "other": Gender.OTHER}
-        style_map = {
-            "calm": DrivingStyle.CALM,
-            "aggressive": DrivingStyle.AGGRESSIVE,
-            "mixed": DrivingStyle.MIXED,
-        }
-
-        ds = data.get("driving_since")
-        if isinstance(ds, str):
-            from datetime import datetime as dt_cls
-            ds = dt_cls.strptime(ds, "%Y-%m-%d").date()
-
-        phone = str(data.get("phone") or "")[:20]
-        if not phone or len(phone) < 5:
-            logger.warning("pilot registration: invalid phone %r", data.get("phone"))
-            await message.answer(texts.REG_ERROR_SAVE)
-            return
-        max_about = get_settings().about_text_max_length
-        about_clean = (data.get("about") or "")[:max_about] or None
-
-        existing = await session.execute(
-            select(ProfilePilot).where(ProfilePilot.user_id == u.id)
-        )
-        profile = existing.scalar_one_or_none()
-        if profile:
-            profile.name = data["name"]
-            profile.phone = phone
-            profile.age = data["age"]
-            profile.gender = gender_map.get(str(data["gender"]), Gender.OTHER)
-            profile.bike_brand = data["bike_brand"]
-            profile.bike_model = data["bike_model"]
-            profile.engine_cc = data["engine_cc"]
-            profile.driving_since = ds
-            profile.driving_style = style_map.get(
-                str(data.get("driving_style", "mixed")), DrivingStyle.MIXED
-            )
-            profile.photo_file_id = data.get("photo_file_id")
-            profile.about = about_clean
-        else:
-            profile = ProfilePilot(
-                user_id=u.id,
-                name=data["name"],
-                phone=phone,
-                age=data["age"],
-                gender=gender_map.get(str(data["gender"]), Gender.OTHER),
-                bike_brand=data["bike_brand"],
-                bike_model=data["bike_model"],
-                engine_cc=data["engine_cc"],
-                driving_since=ds,
-                driving_style=style_map.get(
-                    str(data.get("driving_style", "mixed")), DrivingStyle.MIXED
-                ),
-                photo_file_id=data.get("photo_file_id"),
-                about=about_clean,
-            )
-            session.add(profile)
-        await session.commit()
-
-    from src.keyboards.menu import get_main_menu_kb_for_user
-    from src.services.user import get_or_create_user as _get_user
     _u = await _get_user(platform="telegram", platform_user_id=pid)
     await message.answer("✅", reply_markup=get_persistent_kb())
     await message.answer(
@@ -820,114 +757,31 @@ async def _finish_passenger_registration(
     message: Message, state: FSMContext, user, *, platform_user_id: int | None = None
 ):
     """Finish passenger registration. platform_user_id обязателен при вызове из callback (message.from_user = бот)."""
+    from src.services.registration_service import finish_passenger_registration as _finish_pax
+    from src.models.user import Platform
+    from src.keyboards.menu import get_main_menu_kb_for_user
+    from src.services.user import get_or_create_user as _get_user
+
     data = await state.get_data()
     await state.clear()
     pid = platform_user_id or (message.from_user.id if message.from_user else None)
     logger.info("_finish_passenger_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys()))
 
     if not pid:
-        logger.warning("_finish_passenger_registration: no platform_user_id")
         await message.answer(texts.REG_ERROR_SAVE)
         return
 
-    # Validate required fields
-    required = ("name", "phone", "age", "gender", "weight", "height", "preferred_style")
-    missing = [k for k in required if not data.get(k)]
-    if missing:
-        logger.warning("passenger registration: missing required fields %s", missing)
+    err = await _finish_pax(Platform.TELEGRAM, pid, data)
+    if err == "user_not_found":
+        await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
+        return
+    if err:
         await message.answer(texts.REG_ERROR_SAVE)
         return
 
-    from sqlalchemy import select
-    from src.models.user import User, Platform
-    from src.models.profile_passenger import Gender as PaxGender
-
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        result = await session.execute(
-            select(User).where(
-                User.platform_user_id == pid,
-                User.platform == Platform.TELEGRAM,
-            )
-        )
-        u = result.scalar_one_or_none()
-        if not u:
-            logger.warning("_finish_passenger_registration: User not found for platform_user_id=%s", pid)
-            await message.answer(texts.REG_ERROR_USER_NOT_FOUND)
-            return
-
-        # Ensure role is PASSENGER (in case cb_role_select didn't persist)
-        u.role = UserRole.PASSENGER
-
-        gender_map = {
-            "male": PaxGender.MALE,
-            "female": PaxGender.FEMALE,
-            "other": PaxGender.OTHER,
-        }
-        style_map = {
-            "calm": PreferredStyle.CALM,
-            "dynamic": PreferredStyle.DYNAMIC,
-            "mixed": PreferredStyle.MIXED,
-        }
-
-        max_about = get_settings().about_text_max_length
-        about_clean = (data.get("about") or "")[:max_about] or None
-
-        # Upsert: update existing or create new
-        existing = await session.execute(
-            select(ProfilePassenger).where(ProfilePassenger.user_id == u.id)
-        )
-        profile = existing.scalar_one_or_none()
-        phone_str = str(data.get("phone") or "").strip()[:20]
-        if not phone_str or len(phone_str) < 5:
-            logger.warning("passenger registration: invalid phone %r", data.get("phone"))
-            await message.answer(texts.REG_ERROR_SAVE)
-            return
-
-        if profile:
-            profile.name = str(data["name"]).strip()[:100]
-            profile.phone = phone_str
-            profile.age = int(data["age"])
-            profile.gender = gender_map.get(str(data.get("gender", "other")), PaxGender.OTHER)
-            profile.weight = int(data["weight"])
-            profile.height = int(data["height"])
-            profile.preferred_style = style_map.get(
-                str(data.get("preferred_style", "mixed")), PreferredStyle.MIXED
-            )
-            profile.photo_file_id = data.get("photo_file_id")
-            profile.about = about_clean
-        else:
-            profile = ProfilePassenger(
-                user_id=u.id,
-                name=str(data["name"]).strip()[:100],
-                phone=phone_str,
-                age=int(data["age"]),
-                gender=gender_map.get(str(data.get("gender", "other")), PaxGender.OTHER),
-                weight=int(data["weight"]),
-                height=int(data["height"]),
-                preferred_style=style_map.get(
-                    str(data.get("preferred_style", "mixed")), PreferredStyle.MIXED
-                ),
-                photo_file_id=data.get("photo_file_id"),
-                about=about_clean,
-            )
-            session.add(profile)
-        try:
-            await session.commit()
-        except Exception as e:
-            await session.rollback()
-            logger.exception("Passenger commit failed: %s", e)
-            raise
-
-    try:
-        from src.keyboards.menu import get_main_menu_kb_for_user
-        from src.services.user import get_or_create_user as _get_user
-        _u = await _get_user(platform="telegram", platform_user_id=pid)
-        await message.answer("✅", reply_markup=get_persistent_kb())
-        await message.answer(
-            texts.REG_DONE,
-            reply_markup=await get_main_menu_kb_for_user(pid, _u),
-        )
-    except Exception as e:
-        logger.exception("Passenger REG_DONE send failed: %s", e)
-        raise
+    _u = await _get_user(platform="telegram", platform_user_id=pid)
+    await message.answer("✅", reply_markup=get_persistent_kb())
+    await message.answer(
+        texts.REG_DONE,
+        reply_markup=await get_main_menu_kb_for_user(pid, _u),
+    )

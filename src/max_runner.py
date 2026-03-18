@@ -269,9 +269,23 @@ async def _handle_fsm_message(
 
     # ── SOS comment step ──────────────────────────────────────────────────────
     if state == "sos:comment":
+        if text and text.strip().lower() in ("пропустить", "skip", "-", ""):
+            comment = None
+        else:
+            comment = text.strip() if text else None
         user = await get_or_create_user(platform="max", platform_user_id=user_id)
         if user:
-            await _handle_sos_send(adapter, chat_id, user, comment=text.strip() if text else None)
+            try:
+                await _handle_sos_send(adapter, chat_id, user, comment=comment)
+            except Exception as e:
+                logger.exception("MAX SOS send error: %s", e)
+                await adapter.send_message(
+                    chat_id,
+                    "Ошибка при отправке SOS. Попробуй заново или напиши в поддержку.",
+                    get_back_to_menu_rows(),
+                )
+        else:
+            await adapter.send_message(chat_id, "Ошибка. Нажми /start и пройди регистрацию.", get_back_to_menu_rows())
         return
 
     # ── PILOT steps ──────────────────────────────────────────────────────────
@@ -734,6 +748,21 @@ async def _handle_fsm_callback(
     if not state:
         return False
 
+    # ── SOS skip comment ─────────────────────────────────────────────────────
+    if cb_data == "sos_skip_comment" and state == "sos:comment":
+        user = await get_or_create_user(platform="max", platform_user_id=user_id)
+        if user:
+            try:
+                await _handle_sos_send(adapter, chat_id, user, comment=None)
+            except Exception as e:
+                logger.exception("MAX SOS send error (skip): %s", e)
+                await adapter.send_message(
+                    chat_id,
+                    "Ошибка при отправке SOS. Попробуй заново.",
+                    get_back_to_menu_rows(),
+                )
+        return True
+
     # ── Pilot gender ─────────────────────────────────────────────────────────
     if cb_data.startswith("max_reg_gender_") and state == "pilot:gender":
         gender = cb_data.replace("max_reg_gender_", "")
@@ -1180,7 +1209,8 @@ async def _resend_current_step(
 async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
     """Handle callback button press."""
     # Acknowledge the button press immediately (removes loading state in MAX UI)
-    cb_id = (ev.raw.get("callback") or {}).get("callback_id") or ""
+    cb = ev.raw.get("callback") or {}
+    cb_id = str(cb.get("callback_id") or cb.get("callbackId") or "")
     if cb_id:
         await adapter.answer_callback(cb_id)
 
@@ -1391,7 +1421,10 @@ async def handle_location(adapter: MaxAdapter, ev: IncomingLocation) -> None:
         data["lat"] = ev.latitude
         data["lon"] = ev.longitude
         await reg_state.set_state(ev.user_id, "sos:comment", data)
-        skip_kb = [[Button(texts.BTN_SKIP, payload="sos_skip_comment")]]
+        skip_kb = [
+            [Button(texts.BTN_SKIP, payload="sos_skip_comment")],
+            [Button("❌ Отменить", payload="max_reg_cancel")],
+        ]
         await adapter.send_message(
             ev.chat_id,
             "📍 Локация получена!\n\nДобавь комментарий или нажми «Пропустить»:",

@@ -1,6 +1,53 @@
 """Webhook handler tests (unit, mocked)."""
+import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from src.webhooks import handle_health
+
+
+def _read_json(resp):
+    """Read JSON from aiohttp web.Response."""
+    body = getattr(resp, "_body", None) or getattr(resp, "body", None)
+    if body is not None:
+        return json.loads(body.decode("utf-8") if isinstance(body, bytes) else body)
+    return json.loads(resp.text) if hasattr(resp, "text") else {}
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_ok():
+    """Health returns 200 when DB is reachable."""
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock()
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+    inner = MagicMock(return_value=mock_cm)
+    mock_factory = MagicMock(return_value=inner)
+
+    with patch("src.webhooks.get_session_factory", mock_factory):
+        req = AsyncMock()
+        resp = await handle_health(req)
+        assert resp.status == 200
+        body = _read_json(resp)
+        assert body.get("status") == "ok"
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_degraded():
+    """Health returns 503 when DB fails."""
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(side_effect=Exception("DB unreachable"))
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+    inner = MagicMock(return_value=mock_cm)
+    mock_factory = MagicMock(return_value=inner)
+
+    with patch("src.webhooks.get_session_factory", mock_factory):
+        req = AsyncMock()
+        resp = await handle_health(req)
+        assert resp.status == 503
+        body = _read_json(resp)
+        assert body.get("status") == "degraded"
 
 
 @pytest.mark.asyncio
