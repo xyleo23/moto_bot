@@ -538,6 +538,74 @@ async def _handle_fsm_message(
         )
         return
 
+    # ── Event create FSM steps ────────────────────────────────────────────────
+    if state == "event_create:title":
+        title = text.strip() if text else None
+        if title and title.lower() in ("пропустить", "skip", "-"):
+            ev_type = data.get("event_type", "")
+            if ev_type == "large":
+                await adapter.send_message(chat_id, "Для масштабного мероприятия название обязательно. Введи название:", _cancel_kb())
+                return
+            title = None
+        data["title"] = title
+        await reg_state.set_state(user_id, "event_create:date", data)
+        await adapter.send_message(chat_id, "Дата начала (ДД.ММ.ГГГГ):", _cancel_kb())
+        return
+
+    if state == "event_create:date":
+        dt = _parse_date(text)
+        if not dt:
+            await adapter.send_message(chat_id, "Формат: ДД.ММ.ГГГГ (например 15.06.2025)", _cancel_kb())
+            return
+        data["start_date"] = dt.strftime("%d.%m.%Y")
+        await reg_state.set_state(user_id, "event_create:time", data)
+        await adapter.send_message(chat_id, "Время начала (ЧЧ:ММ):", _cancel_kb())
+        return
+
+    if state == "event_create:time":
+        import re as _re
+        if not _re.match(r"^\d{1,2}:\d{2}$", text.strip()):
+            await adapter.send_message(chat_id, "Формат: ЧЧ:ММ (например 10:00)", _cancel_kb())
+            return
+        data["start_time"] = text.strip()
+        await reg_state.set_state(user_id, "event_create:point_start", data)
+        await adapter.send_message(chat_id, "Точка старта — введи адрес:", _cancel_kb())
+        return
+
+    if state == "event_create:point_start":
+        if not text:
+            await adapter.send_message(chat_id, "Введи адрес старта:", _cancel_kb())
+            return
+        data["point_start"] = text.strip()[:500]
+        await reg_state.set_state(user_id, "event_create:point_end", data)
+        await adapter.send_message(
+            chat_id,
+            "Точка финиша — введи адрес или «Пропустить»:",
+            [[Button("Пропустить", payload="max_evcreate_skip_end")], _cancel_kb()[0]],
+        )
+        return
+
+    if state == "event_create:point_end":
+        val = text.strip() if text else None
+        if val and val.lower() in ("пропустить", "skip", "-"):
+            val = None
+        data["point_end"] = val[:500] if val else None
+        await reg_state.set_state(user_id, "event_create:description", data)
+        await adapter.send_message(
+            chat_id,
+            "Описание мероприятия (или «Пропустить»):",
+            [[Button("Пропустить", payload="max_evcreate_skip_desc")], _cancel_kb()[0]],
+        )
+        return
+
+    if state == "event_create:description":
+        val = text.strip() if text else None
+        if val and val.lower() in ("пропустить", "skip", "-"):
+            val = None
+        data["description"] = val[:1000] if val else None
+        await _do_create_event(adapter, chat_id, user_id, data)
+        return
+
     # Unknown state — clear and show menu
     logger.warning("MAX reg: unknown state=%s for user_id=%s — clearing", state, user_id)
     await reg_state.clear_state(user_id)
@@ -775,7 +843,80 @@ async def _handle_fsm_callback(
         )
         return True
 
+    # ── Event create skip buttons ─────────────────────────────────────────────
+    if cb_data == "max_evcreate_skip_end" and state == "event_create:point_end":
+        data["point_end"] = None
+        await reg_state.set_state(user_id, "event_create:description", data)
+        await adapter.send_message(
+            chat_id,
+            "Описание мероприятия (или «Пропустить»):",
+            [[Button("Пропустить", payload="max_evcreate_skip_desc")], _cancel_kb()[0]],
+        )
+        return True
+
+    if cb_data == "max_evcreate_skip_desc" and state == "event_create:description":
+        data["description"] = None
+        await _do_create_event(adapter, chat_id, user_id, data)
+        return True
+
     return False
+
+
+async def _do_create_event(
+    adapter: MaxAdapter, chat_id: str, user_id: int, data: dict
+) -> None:
+    """Commit event to DB after all FSM steps collected."""
+    from src.services.event_service import create_event
+    from src.models.base import get_session_factory
+    from src.models.user import User, Platform
+    from sqlalchemy import select
+
+    await reg_state.clear_state(user_id)
+
+    # Resolve city_id for this user
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(User).where(User.platform_user_id == user_id, User.platform == Platform.MAX)
+        )
+        u = r.scalar_one_or_none()
+
+    if not u or not u.city_id:
+        await adapter.send_message(chat_id, "Город не выбран. Нажми /start", get_back_to_menu_rows())
+        return
+
+    # Parse datetime
+    try:
+        from datetime import datetime as _dt
+        start_at = _dt.strptime(
+            f"{data['start_date']} {data['start_time']}", "%d.%m.%Y %H:%M"
+        )
+    except (KeyError, ValueError):
+        await adapter.send_message(chat_id, "Ошибка даты/времени. Создание отменено.", get_back_to_menu_rows())
+        return
+
+    ev = await create_event(
+        city_id=u.city_id,
+        creator_id=u.id,
+        event_type=data.get("event_type", "run"),
+        title=data.get("title"),
+        start_at=start_at,
+        point_start=data.get("point_start", ""),
+        point_end=data.get("point_end"),
+        ride_type=None,
+        avg_speed=None,
+        description=data.get("description"),
+    )
+    if ev:
+        from src.services.event_service import TYPE_LABELS
+        title = ev.title or TYPE_LABELS.get(ev.type.value, ev.type.value)
+        await adapter.send_message(
+            chat_id,
+            f"✅ Мероприятие создано!\n\n<b>{title}</b>\n📅 {ev.start_at.strftime('%d.%m.%Y %H:%M')}\n📍 {ev.point_start or '—'}",
+            get_back_to_menu_rows(),
+        )
+    else:
+        await adapter.send_message(chat_id, "Ошибка при создании мероприятия.", get_back_to_menu_rows())
 
 
 async def _do_finish_pilot(
@@ -1144,6 +1285,18 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
             await handle_event_register(adapter, chat_id, user, p[0], p[1])
         return
 
+    # ── Payment callbacks ─────────────────────────────────────────────────────
+    if (
+        data.startswith("max_pay_")
+        or data.startswith("max_profile_")
+        or data.startswith("max_donate")
+        or data.startswith("max_evcreate_")
+        or data == "max_event_create"
+    ):
+        consumed = await _handle_payment_callback(adapter, chat_id, user, data)
+        if consumed:
+            return
+
     await adapter.send_message(chat_id, "Неизвестная команда.", get_main_menu_rows())
 
 
@@ -1280,7 +1433,15 @@ async def handle_events_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
             ],
         )
         return
-    await adapter.send_message(chat_id, "📅 Мероприятия", get_events_menu_rows())
+    # Build events menu with create button
+    kb = list(get_events_menu_rows())
+    # Insert "Create event" before the last "Back" row
+    create_row = [Button("➕ Создать мероприятие", payload="max_event_create")]
+    if kb and kb[-1]:
+        kb.insert(-1, create_row)
+    else:
+        kb.append(create_row)
+    await adapter.send_message(chat_id, "📅 Мероприятия", kb)
 
 
 async def handle_events_list(
@@ -1369,29 +1530,70 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
     from src.services.subscription import check_subscription_required
     from src.services.admin_service import get_subscription_settings
     from src.services.payment import create_payment
+    from src.models.subscription import Subscription
+
+    sub_settings = await get_subscription_settings()
+    monthly_price = (sub_settings.monthly_price_kopecks if sub_settings and sub_settings.monthly_price_kopecks else 29900)
+    season_price = (sub_settings.season_price_kopecks if sub_settings and sub_settings.season_price_kopecks else 79900)
 
     sub_required = await check_subscription_required(user)
     if sub_required:
-        settings = await get_subscription_settings()
-        text = (
-            "Подписка нужна для доступа. Оформи через ссылку:\n"
-            "Стоимость: месяц — {} ₽, сезон — {} ₽\n\n"
-            "После оплаты нажми /start."
-        ).format(
-            (settings.monthly_price_kopecks or 29900) / 100,
-            (settings.season_price_kopecks or 79900) / 100,
-        )
-        payment = await create_payment(
-            amount_kopecks=settings.monthly_price_kopecks or 29900,
+        # Offer both monthly and season subscription options
+        monthly_payment = await create_payment(
+            amount_kopecks=monthly_price,
             description="Подписка на 1 месяц — мото-бот",
             metadata={"type": "subscription", "user_id": str(user.id), "period": "monthly"},
             return_url="https://max.ru/",
         )
-        if payment and payment.get("confirmation_url"):
-            text += f"\n\n💳 Оплатить: {payment['confirmation_url']}"
-        await adapter.send_message(chat_id, text, get_back_to_menu_rows())
+        season_payment = await create_payment(
+            amount_kopecks=season_price,
+            description="Подписка на сезон — мото-бот",
+            metadata={"type": "subscription", "user_id": str(user.id), "period": "season"},
+            return_url="https://max.ru/",
+        )
+
+        text = (
+            "👤 Мой профиль\n\n"
+            "Для доступа к функциям бота нужна подписка.\n\n"
+            f"• 1 месяц — {monthly_price // 100} ₽\n"
+            f"• Сезон — {season_price // 100} ₽\n\n"
+            "Выбери тариф и оплати по ссылке. После оплаты нажми «Я оплатил — проверить»."
+        )
+        kb = []
+        if monthly_payment and monthly_payment.get("confirmation_url"):
+            kb.append([Button(f"💳 1 месяц — {monthly_price // 100} ₽", type=ButtonType.URL, url=monthly_payment["confirmation_url"])])
+            # Store monthly payment_id in FSM for check
+            await reg_state.set_state(
+                user.platform_user_id,
+                "pay:subscription",
+                {"payment_id": monthly_payment["id"], "period": "monthly"},
+            )
+        if season_payment and season_payment.get("confirmation_url"):
+            kb.append([Button(f"💳 Сезон — {season_price // 100} ₽", type=ButtonType.URL, url=season_payment["confirmation_url"])])
+        if kb:
+            kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
+        kb.append([Button("« Назад", payload="menu_main")])
+        await adapter.send_message(chat_id, text, kb)
     else:
-        await adapter.send_message(chat_id, "Мой профиль. Подписка активна.", get_back_to_menu_rows())
+        # Subscription active — show profile menu
+        from src.services.profile_service import get_profile_text
+        from src.services.admin_service import get_subscription_settings as _get_sub_settings
+
+        try:
+            profile_text = await get_profile_text(user)
+        except Exception:
+            profile_text = "👤 Мой профиль\n\nПодписка активна."
+
+        sub_settings2 = await _get_sub_settings()
+        raise_enabled = sub_settings2 and sub_settings2.raise_profile_enabled if sub_settings2 else False
+        raise_price = (sub_settings2.raise_profile_price_kopecks if sub_settings2 and sub_settings2.raise_profile_price_kopecks else 0)
+
+        kb = [[Button("🔄 Продлить подписку", payload="max_profile_renew_sub")]]
+        if raise_enabled:
+            label = f"⬆️ Поднять анкету — {raise_price // 100} ₽" if raise_price > 0 else "⬆️ Поднять анкету (бесплатно)"
+            kb.append([Button(label, payload="max_profile_raise")])
+        kb.append([Button("« Назад", payload="menu_main")])
+        await adapter.send_message(chat_id, profile_text, kb)
 
 
 async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
@@ -1402,4 +1604,380 @@ async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
     text = (text_db or default).strip()
     s = get_settings()
     text += f"\n\n📧 {s.support_email}\n👤 @{s.support_username}"
-    await adapter.send_message(chat_id, text, get_back_to_menu_rows())
+    kb = [
+        [Button("❤️ Поддержать проект", payload="max_donate")],
+        [Button("« Назад", payload="menu_main")],
+    ]
+    await adapter.send_message(chat_id, text, kb)
+
+
+# ── MAX payment FSM helpers ────────────────────────────────────────────────────
+
+_PAY_KEY_PREFIX = "max_pay:"
+_PAY_TTL = 3600
+
+
+async def _pay_set(user_id: int, data: dict) -> None:
+    """Store payment pending state for MAX user (reuses reg_state Redis/memory)."""
+    key = f"{_PAY_KEY_PREFIX}{user_id}"
+    import json
+    payload = json.dumps(data, ensure_ascii=False)
+    from src.services import max_registration_state as _rs
+    if _rs._redis_client is not None:
+        try:
+            await _rs._redis_client.set(key, payload, ex=_PAY_TTL)
+            return
+        except Exception as exc:
+            logger.warning("max_pay set Redis error: %s", exc)
+    _rs._memory_store[f"pay_{user_id}"] = data
+
+
+async def _pay_get(user_id: int) -> dict | None:
+    """Get payment pending state for MAX user."""
+    import json
+    from src.services import max_registration_state as _rs
+    key = f"{_PAY_KEY_PREFIX}{user_id}"
+    if _rs._redis_client is not None:
+        try:
+            val = await _rs._redis_client.get(key)
+            if val:
+                return json.loads(val)
+            return None
+        except Exception as exc:
+            logger.warning("max_pay get Redis error: %s", exc)
+    return _rs._memory_store.get(f"pay_{user_id}")
+
+
+async def _pay_clear(user_id: int) -> None:
+    """Clear payment pending state for MAX user."""
+    from src.services import max_registration_state as _rs
+    key = f"{_PAY_KEY_PREFIX}{user_id}"
+    if _rs._redis_client is not None:
+        try:
+            await _rs._redis_client.delete(key)
+            return
+        except Exception as exc:
+            logger.warning("max_pay clear Redis error: %s", exc)
+    _rs._memory_store.pop(f"pay_{user_id}", None)
+
+
+# ── MAX payment callback handlers ─────────────────────────────────────────────
+
+async def _handle_payment_callback(
+    adapter: MaxAdapter, chat_id: str, user, data: str
+) -> bool:
+    """Handle all max_pay_* callbacks. Returns True if consumed."""
+
+    # ── Subscription check ────────────────────────────────────────────────────
+    if data == "max_pay_sub_check":
+        pay_data = await _pay_get(user.platform_user_id)
+        if not pay_data or pay_data.get("type") not in ("subscription", None) and "payment_id" not in pay_data:
+            # Try to check via FSM state (set in handle_profile)
+            fsm = await reg_state.get_state(user.platform_user_id)
+            if fsm and fsm.get("state") == "pay:subscription":
+                pay_data = fsm.get("data", {})
+            else:
+                await adapter.send_message(
+                    chat_id,
+                    "Платёж не найден. Вернись в профиль и начни оплату заново.",
+                    get_back_to_menu_rows(),
+                )
+                return True
+
+        payment_id = pay_data.get("payment_id")
+        period = pay_data.get("period", "monthly")
+        if not payment_id:
+            await adapter.send_message(chat_id, "Платёж не найден.", get_back_to_menu_rows())
+            return True
+
+        from src.services.payment import check_payment_status
+        status = await check_payment_status(payment_id)
+        if status == "succeeded":
+            from src.services.subscription import activate_subscription
+            ok = await activate_subscription(user.id, period, payment_id)
+            await reg_state.clear_state(user.platform_user_id)
+            await _pay_clear(user.platform_user_id)
+            if ok:
+                period_label = "1 месяц" if period == "monthly" else "Сезон"
+                await adapter.send_message(
+                    chat_id,
+                    f"✅ Подписка активирована на {period_label}! Добро пожаловать.",
+                    get_main_menu_rows(),
+                )
+            else:
+                await adapter.send_message(
+                    chat_id,
+                    "Оплата прошла, но подписка не активировалась. Обратись в поддержку.",
+                    get_back_to_menu_rows(),
+                )
+        elif status == "canceled":
+            await reg_state.clear_state(user.platform_user_id)
+            await _pay_clear(user.platform_user_id)
+            await adapter.send_message(chat_id, "❌ Платёж отменён.", get_back_to_menu_rows())
+        else:
+            await adapter.send_message(
+                chat_id,
+                "Платёж ещё не обработан. Подожди несколько секунд и нажми «Я оплатил — проверить» снова.",
+                [[Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")],
+                 [Button("« Назад", payload="menu_main")]],
+            )
+        return True
+
+    # ── Renew subscription ────────────────────────────────────────────────────
+    if data == "max_profile_renew_sub":
+        from src.services.admin_service import get_subscription_settings
+        from src.services.payment import create_payment
+
+        sub_settings = await get_subscription_settings()
+        monthly_price = (sub_settings.monthly_price_kopecks if sub_settings and sub_settings.monthly_price_kopecks else 29900)
+        season_price = (sub_settings.season_price_kopecks if sub_settings and sub_settings.season_price_kopecks else 79900)
+
+        monthly_payment = await create_payment(
+            amount_kopecks=monthly_price,
+            description="Продление подписки на 1 месяц — мото-бот",
+            metadata={"type": "subscription", "user_id": str(user.id), "period": "monthly"},
+            return_url="https://max.ru/",
+        )
+        season_payment = await create_payment(
+            amount_kopecks=season_price,
+            description="Продление подписки на сезон — мото-бот",
+            metadata={"type": "subscription", "user_id": str(user.id), "period": "season"},
+            return_url="https://max.ru/",
+        )
+
+        text = (
+            "Продление подписки:\n\n"
+            f"• 1 месяц — {monthly_price // 100} ₽\n"
+            f"• Сезон — {season_price // 100} ₽\n\n"
+            "Оплати по ссылке и нажми «Я оплатил — проверить»."
+        )
+        kb = []
+        if monthly_payment and monthly_payment.get("confirmation_url"):
+            kb.append([Button(f"💳 1 месяц — {monthly_price // 100} ₽", type=ButtonType.URL, url=monthly_payment["confirmation_url"])])
+            await reg_state.set_state(
+                user.platform_user_id,
+                "pay:subscription",
+                {"payment_id": monthly_payment["id"], "period": "monthly"},
+            )
+        if season_payment and season_payment.get("confirmation_url"):
+            kb.append([Button(f"💳 Сезон — {season_price // 100} ₽", type=ButtonType.URL, url=season_payment["confirmation_url"])])
+        if kb:
+            kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
+        kb.append([Button("« Назад", payload="menu_profile")])
+        await adapter.send_message(chat_id, text, kb)
+        return True
+
+    # ── Profile raise ─────────────────────────────────────────────────────────
+    if data == "max_profile_raise":
+        from src.services.admin_service import get_subscription_settings
+        from src.services.payment import create_payment
+        from src.models.user import UserRole
+
+        sub_settings = await get_subscription_settings()
+        if not sub_settings or not sub_settings.raise_profile_enabled:
+            await adapter.send_message(chat_id, "Поднятие анкеты сейчас недоступно.", get_back_to_menu_rows())
+            return True
+
+        price = sub_settings.raise_profile_price_kopecks or 0
+        role = "pilot" if user.role == UserRole.PILOT else "passenger"
+
+        if price <= 0:
+            from src.services.motopair_service import raise_profile
+            ok = await raise_profile(user.id, role)
+            if ok:
+                await adapter.send_message(chat_id, "✅ Анкета поднята! Тебя будут видеть выше в поиске.", get_back_to_menu_rows())
+            else:
+                await adapter.send_message(chat_id, "Ошибка при поднятии анкеты.", get_back_to_menu_rows())
+            return True
+
+        payment = await create_payment(
+            amount_kopecks=price,
+            description="Поднятие анкеты — мото-бот",
+            metadata={"type": "raise_profile", "user_id": str(user.id), "role": role},
+            return_url="https://max.ru/",
+        )
+        if not payment or not payment.get("confirmation_url"):
+            await adapter.send_message(chat_id, "Платёжный сервис временно недоступен. Попробуй позже.", get_back_to_menu_rows())
+            return True
+
+        await _pay_set(user.platform_user_id, {
+            "type": "raise_profile",
+            "payment_id": payment["id"],
+            "role": role,
+        })
+        kb = [
+            [Button(f"💳 Оплатить — {price // 100} ₽", type=ButtonType.URL, url=payment["confirmation_url"])],
+            [Button("✅ Я оплатил — проверить", payload="max_pay_raise_check")],
+            [Button("« Назад", payload="menu_profile")],
+        ]
+        await adapter.send_message(
+            chat_id,
+            f"⬆️ Поднятие анкеты — <b>{price // 100} ₽</b>\n\nОплати и нажми «Я оплатил — проверить».",
+            kb,
+        )
+        return True
+
+    # ── Profile raise check ───────────────────────────────────────────────────
+    if data == "max_pay_raise_check":
+        pay_data = await _pay_get(user.platform_user_id)
+        if not pay_data or pay_data.get("type") != "raise_profile":
+            await adapter.send_message(chat_id, "Платёж не найден. Начни поднятие анкеты заново.", get_back_to_menu_rows())
+            return True
+
+        from src.services.payment import check_payment_status
+        from src.services.motopair_service import raise_profile
+
+        payment_id = pay_data.get("payment_id")
+        role = pay_data.get("role", "pilot")
+        status = await check_payment_status(payment_id)
+
+        if status == "succeeded":
+            await _pay_clear(user.platform_user_id)
+            ok = await raise_profile(user.id, role)
+            if ok:
+                await adapter.send_message(chat_id, "✅ Оплата прошла! Анкета поднята — тебя увидят первым.", get_back_to_menu_rows())
+            else:
+                await adapter.send_message(chat_id, "Оплата прошла, но поднять анкету не удалось. Обратись в поддержку.", get_back_to_menu_rows())
+        elif status == "canceled":
+            await _pay_clear(user.platform_user_id)
+            await adapter.send_message(chat_id, "❌ Платёж отменён.", get_back_to_menu_rows())
+        else:
+            await adapter.send_message(
+                chat_id,
+                "Платёж ещё не обработан. Подожди и попробуй снова.",
+                [[Button("✅ Я оплатил — проверить", payload="max_pay_raise_check")],
+                 [Button("« Назад", payload="menu_profile")]],
+            )
+        return True
+
+    # ── Donate ────────────────────────────────────────────────────────────────
+    if data == "max_donate":
+        DONATE_AMOUNTS = [(10000, "100 ₽"), (30000, "300 ₽"), (50000, "500 ₽"), (100000, "1000 ₽")]
+        kb = [[Button(label, payload=f"max_donate_amount_{kop}")] for kop, label in DONATE_AMOUNTS]
+        kb.append([Button("« Назад", payload="menu_about")])
+        await adapter.send_message(chat_id, "❤️ Поддержать проект — выбери сумму:", kb)
+        return True
+
+    if data.startswith("max_donate_amount_"):
+        amount_str = data.replace("max_donate_amount_", "")
+        try:
+            amount_kop = int(amount_str)
+        except ValueError:
+            await adapter.send_message(chat_id, "Ошибка суммы.", get_back_to_menu_rows())
+            return True
+
+        from src.services.payment import create_payment
+        payment = await create_payment(
+            amount_kopecks=amount_kop,
+            description="Донат — поддержка бота мото-сообщества",
+            metadata={"type": "donate", "user_id": str(user.id)},
+            return_url="https://max.ru/",
+        )
+        if not payment or not payment.get("confirmation_url"):
+            await adapter.send_message(chat_id, "Не удалось создать платёж. Попробуй позже.", get_back_to_menu_rows())
+            return True
+
+        kb = [
+            [Button(f"💳 Оплатить — {amount_kop // 100} ₽", type=ButtonType.URL, url=payment["confirmation_url"])],
+            [Button("« Назад", payload="menu_about")],
+        ]
+        await adapter.send_message(chat_id, "Спасибо за поддержку! Перейди по ссылке для оплаты:", kb)
+        return True
+
+    # ── Event create (MAX) ────────────────────────────────────────────────────
+    if data == "max_event_create":
+        from src.services.subscription import check_subscription_required
+        if await check_subscription_required(user):
+            await adapter.send_message(
+                chat_id,
+                "Для создания мероприятий нужна подписка. Оформи в «Мой профиль».",
+                [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_events")]],
+            )
+            return True
+        if not user.city_id:
+            await adapter.send_message(chat_id, "Сначала выбери город в /start.", get_back_to_menu_rows())
+            return True
+        kb = [
+            [Button("Масштабное", payload="max_evcreate_type_large")],
+            [Button("Мотопробег", payload="max_evcreate_type_motorcade")],
+            [Button("Прохват", payload="max_evcreate_type_run")],
+            [Button("« Отмена", payload="menu_events")],
+        ]
+        await adapter.send_message(chat_id, "Тип мероприятия:", kb)
+        return True
+
+    if data.startswith("max_evcreate_type_"):
+        ev_type = data.replace("max_evcreate_type_", "")
+        if ev_type not in ("large", "motorcade", "run"):
+            return True
+
+        from src.services.admin_service import get_subscription_settings
+        from src.services.payment import create_payment
+        from src.services.event_service import event_creation_payment_required
+
+        sub_settings = await get_subscription_settings()
+        needs_payment, price = await event_creation_payment_required(
+            user.id, user.platform_user_id, user.city_id, ev_type, sub_settings
+        )
+
+        if needs_payment and price and price > 0:
+            payment = await create_payment(
+                amount_kopecks=price,
+                description="Создание мероприятия — мото-бот",
+                metadata={"type": "event_creation", "user_id": str(user.id), "event_type": ev_type},
+                return_url="https://max.ru/",
+            )
+            if not payment or not payment.get("confirmation_url"):
+                await adapter.send_message(chat_id, "Платёжный сервис временно недоступен.", get_back_to_menu_rows())
+                return True
+
+            await _pay_set(user.platform_user_id, {
+                "type": "event_creation",
+                "payment_id": payment["id"],
+                "event_type": ev_type,
+            })
+            kb = [
+                [Button(f"💳 Оплатить — {price // 100} ₽", type=ButtonType.URL, url=payment["confirmation_url"])],
+                [Button("✅ Я оплатил — проверить", payload="max_pay_event_check")],
+                [Button("« Отмена", payload="menu_events")],
+            ]
+            await adapter.send_message(
+                chat_id,
+                f"💳 Создание мероприятия платное: <b>{price // 100} ₽</b>\n\nОплати и нажми «Я оплатил — проверить».",
+                kb,
+            )
+            return True
+
+        # No payment needed — start FSM for event creation
+        await reg_state.set_state(user.platform_user_id, "event_create:title", {"event_type": ev_type})
+        await adapter.send_message(chat_id, "Введи название мероприятия (или «Пропустить»):", _cancel_kb())
+        return True
+
+    if data == "max_pay_event_check":
+        pay_data = await _pay_get(user.platform_user_id)
+        if not pay_data or pay_data.get("type") != "event_creation":
+            await adapter.send_message(chat_id, "Платёж не найден. Начни создание мероприятия заново.", get_back_to_menu_rows())
+            return True
+
+        from src.services.payment import check_payment_status
+        payment_id = pay_data.get("payment_id")
+        ev_type = pay_data.get("event_type", "run")
+        status = await check_payment_status(payment_id)
+
+        if status == "succeeded":
+            await _pay_clear(user.platform_user_id)
+            await reg_state.set_state(user.platform_user_id, "event_create:title", {"event_type": ev_type})
+            await adapter.send_message(chat_id, "✅ Оплата прошла! Введи название мероприятия (или «Пропустить»):", _cancel_kb())
+        elif status == "canceled":
+            await _pay_clear(user.platform_user_id)
+            await adapter.send_message(chat_id, "❌ Платёж отменён.", get_back_to_menu_rows())
+        else:
+            await adapter.send_message(
+                chat_id,
+                "Платёж ещё не обработан. Подожди и попробуй снова.",
+                [[Button("✅ Я оплатил — проверить", payload="max_pay_event_check")],
+                 [Button("« Отмена", payload="menu_events")]],
+            )
+        return True
+
+    return False
