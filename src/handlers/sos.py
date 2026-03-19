@@ -189,7 +189,7 @@ async def _send_sos_alert(
             list(data.keys()),
         )
         await message.answer(
-            "Данные устарели. Начни SOS заново — нажми /sos или кнопку 🆘 SOS.",
+            "Данные устарели. Начни SOS заново — нажми /sos или кнопку 🚨 SOS.",
             reply_markup=get_back_to_menu_kb(),
         )
         return

@@ -50,20 +50,20 @@ async def get_main_menu_kb_for_user(platform_user_id: int | None, user) -> Inlin
 def get_persistent_kb() -> ReplyKeyboardMarkup:
     """
     Persistent bottom keyboard always visible.
-    Quick access to key sections without needing to open menus.
+    SOS отдельной строкой — не теснить три кнопки в один ряд на узких экранах.
     """
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="🚨 SOS")],
             [
-                KeyboardButton(text="🆘 SOS"),
                 KeyboardButton(text="🏍 Мотопара"),
                 KeyboardButton(text="📅 Мероприятия"),
             ],
             [
                 KeyboardButton(text="📞 Контакты"),
                 KeyboardButton(text="👤 Профиль"),
-                KeyboardButton(text="ℹ️ О нас"),
             ],
+            [KeyboardButton(text="ℹ️ О нас")],
         ],
         resize_keyboard=True,
         is_persistent=True,

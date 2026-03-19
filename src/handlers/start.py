@@ -327,7 +327,7 @@ async def cb_role_select(callback: CallbackQuery, state: FSMContext, user=None):
 
 # ── Persistent keyboard button handlers ──────────────────────────────────────
 
-@router.message(F.text == "🆘 SOS")
+@router.message(F.text == "🚨 SOS")
 async def kb_sos(message: Message, state: FSMContext, user=None):
     """Handle SOS quick button from persistent keyboard."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton

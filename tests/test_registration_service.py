@@ -50,6 +50,13 @@ def _mock_user(uid: uuid.UUID | None = None, role=None):
     return u
 
 
+def _scalar_none_result():
+    """SQLAlchemy result mock: scalar_one_or_none() → None (no phone match on other platform)."""
+    m = MagicMock()
+    m.scalar_one_or_none.return_value = None
+    return m
+
+
 # ── finish_pilot_registration ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -97,7 +104,16 @@ async def test_pilot_returns_none_on_success():
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(side_effect=[user_result, existing_profile_result])
+    mock_session.add = MagicMock()
+    # User → phone lookup (pilot+passenger, no cross-platform match) → ProfilePilot row
+    mock_session.execute = AsyncMock(
+        side_effect=[
+            user_result,
+            _scalar_none_result(),
+            _scalar_none_result(),
+            existing_profile_result,
+        ]
+    )
     mock_session.commit = AsyncMock()
 
     mock_factory = MagicMock(return_value=mock_session)
@@ -125,7 +141,14 @@ async def test_pilot_updates_existing_profile():
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(side_effect=[user_result, profile_result])
+    mock_session.execute = AsyncMock(
+        side_effect=[
+            user_result,
+            _scalar_none_result(),
+            _scalar_none_result(),
+            profile_result,
+        ]
+    )
     mock_session.commit = AsyncMock()
 
     mock_factory = MagicMock(return_value=mock_session)
@@ -153,7 +176,15 @@ async def test_pilot_returns_db_error_on_commit_failure():
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(side_effect=[user_result, no_profile_result])
+    mock_session.add = MagicMock()
+    mock_session.execute = AsyncMock(
+        side_effect=[
+            user_result,
+            _scalar_none_result(),
+            _scalar_none_result(),
+            no_profile_result,
+        ]
+    )
     mock_session.commit = AsyncMock(side_effect=Exception("DB down"))
     mock_session.rollback = AsyncMock()
 
@@ -221,7 +252,15 @@ async def test_passenger_returns_none_on_success():
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(side_effect=[user_result, no_profile_result])
+    mock_session.add = MagicMock()
+    mock_session.execute = AsyncMock(
+        side_effect=[
+            user_result,
+            _scalar_none_result(),
+            _scalar_none_result(),
+            no_profile_result,
+        ]
+    )
     mock_session.commit = AsyncMock()
 
     mock_factory = MagicMock(return_value=mock_session)
@@ -250,7 +289,15 @@ async def test_passenger_sets_role_to_passenger():
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(side_effect=[user_result, no_profile_result])
+    mock_session.add = MagicMock()
+    mock_session.execute = AsyncMock(
+        side_effect=[
+            user_result,
+            _scalar_none_result(),
+            _scalar_none_result(),
+            no_profile_result,
+        ]
+    )
     mock_session.commit = AsyncMock()
 
     mock_factory = MagicMock(return_value=mock_session)
@@ -274,7 +321,15 @@ async def test_passenger_db_error_returns_db_error():
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(side_effect=[user_result, no_profile_result])
+    mock_session.add = MagicMock()
+    mock_session.execute = AsyncMock(
+        side_effect=[
+            user_result,
+            _scalar_none_result(),
+            _scalar_none_result(),
+            no_profile_result,
+        ]
+    )
     mock_session.commit = AsyncMock(side_effect=Exception("DB error"))
     mock_session.rollback = AsyncMock()
 

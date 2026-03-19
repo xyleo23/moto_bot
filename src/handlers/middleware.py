@@ -11,7 +11,6 @@ from src.config import get_settings
 # Callback data prefixes and text triggers that bypass the block check.
 # SOS must be accessible at ALL times — even for blocked users.
 # Legal (privacy, delete_data) — для соблюдения ФЗ-152/GDPR заблокированный может удалить данные.
-_LEGAL_CALLBACK_PREFIXES = ("menu_documents", "doc_", "confirm_delete_data", "doc_cancel_delete")
 _SOS_CALLBACK_PREFIXES = (
     "menu_sos",
     "sos_accident",
@@ -21,7 +20,7 @@ _SOS_CALLBACK_PREFIXES = (
     "sos_skip_comment",
     "sos_all_clear_",
 )
-_SOS_TEXT_TRIGGERS = ("🆘 SOS",)
+_SOS_TEXT_TRIGGERS = ("🚨 SOS",)
 
 # Юридические команды и callbacks — доступны даже заблокированным (ФЗ-152, GDPR)
 _LEGAL_PREFIXES = ("menu_documents", "doc_privacy", "doc_consent", "doc_agreement", "doc_delete", "doc_support", "doc_cancel_delete", "confirm_delete_data")

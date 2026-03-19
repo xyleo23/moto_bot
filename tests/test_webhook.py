@@ -52,13 +52,14 @@ async def test_health_endpoint_degraded():
 
 @pytest.mark.asyncio
 async def test_webhook_rejects_invalid_json():
-    """Webhook should return 400 for invalid JSON."""
+    """Webhook returns 400 for malformed body when the request is from YooKassa IP."""
     from src.webhooks import handle_yookassa_webhook
 
     request = AsyncMock()
     request.read = AsyncMock(return_value=b"not json")
     request.headers = {}
-    request.remote = ""
+    # Without trusted IP/signature the handler rejects before JSON parse (401).
+    request.remote = "185.71.76.1"  # YooKassa range — same as test_webhook_ignores_non_succeeded
 
     status, body = await handle_yookassa_webhook(request)
     assert status == 400

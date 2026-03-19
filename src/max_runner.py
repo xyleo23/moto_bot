@@ -1520,7 +1520,7 @@ async def _handle_sos_send(
     if not all(k in data for k in required):
         await adapter.send_message(
             chat_id,
-            "Данные SOS устарели. Начни заново — нажми кнопку 🆘 SOS.",
+            "Данные SOS устарели. Начни заново — нажми кнопку 🚨 SOS.",
             get_back_to_menu_rows(),
         )
         return
@@ -1880,17 +1880,25 @@ async def handle_events_list(
     if not events:
         await adapter.send_message(chat_id, "Мероприятий пока нет.", get_event_list_rows())
         return
+    from src.utils.text_format import truncate_smart, event_button_label
+
     lines = ["<b>Список мероприятий</b>\n"]
     for e in events[:15]:
+        title_line = truncate_smart(str(e.get("title") or ""), 80)
         lines.append(
-            f"• {e['title']} — {e['date']}\n"
+            f"• {title_line} — {e['date']}\n"
             f"  Пилотов: {e['pilots']}, двоек: {e['passengers']}"
         )
     text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3997] + "…"
     kb = get_event_list_rows()
     for e in events[:5]:
-        kb.insert(-1, [Button(f"📅 {e['title'][:20]}", payload=f"event_detail_{e['id']}")])
-    await adapter.send_message(chat_id, text[:4000], kb)
+        kb.insert(
+            -1,
+            [Button(event_button_label(str(e.get("title") or "")), payload=f"event_detail_{e['id']}")],
+        )
+    await adapter.send_message(chat_id, text, kb)
 
 
 async def handle_event_detail(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
@@ -1906,13 +1914,29 @@ async def handle_event_detail(adapter: MaxAdapter, chat_id: str, user, event_id:
     if not ev:
         await adapter.send_message(chat_id, "Мероприятие не найдено.", get_back_to_menu_rows())
         return
+    from html import escape
+    from src.utils.text_format import truncate_smart
+
     title = ev.title or TYPE_LABELS.get(ev.type.value, ev.type.value)
-    text = (
-        f"<b>{title}</b>\n"
-        f"📅 {ev.start_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"📍 {ev.point_start or '—'}\n"
-        f"{ev.description or ''}"
-    )
+    title_esc = escape(str(title))
+    point_esc = escape(str(ev.point_start or "—"))
+    dt_s = ev.start_at.strftime("%d.%m.%Y %H:%M")
+    header = f"<b>{title_esc}</b>\n📅 {dt_s}\n📍 {point_esc}\n"
+    desc_raw = (ev.description or "").strip()
+    max_body = 3500
+    if desc_raw:
+        desc_esc = escape(desc_raw)
+        room = max_body - len(header)
+        if room < 1:
+            text = header[:max_body]
+        elif len(desc_esc) > room:
+            text = header + truncate_smart(desc_esc, room)
+        else:
+            text = header + desc_esc
+    else:
+        text = header.rstrip()
+    if len(text) > max_body:
+        text = text[: max_body - 1] + "…"
     session_factory = get_session_factory()
     is_reg = False
     async with session_factory() as session:

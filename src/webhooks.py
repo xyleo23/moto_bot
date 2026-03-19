@@ -70,6 +70,8 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
     settings = get_settings()
 
     # ── Signature / IP verification ──────────────────────────────────────────
+    # remote_ip is the TCP peer. Behind nginx, this is often the proxy — then rely on
+    # X-Content-Signature (HMAC) or terminate TLS at the app so request.remote is YooKassa.
     body = await request.read()
     signature = request.headers.get("X-Content-Signature", "")
     remote_ip = request.remote or ""
