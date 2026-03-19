@@ -3,13 +3,14 @@ from src.platforms.base import Button, ButtonType, KeyboardRow
 
 
 def get_main_menu_rows() -> list[KeyboardRow]:
+    """MAX: use message-buttons so taps send text to the bot (always available under last bot message)."""
     return [
-        [Button("🚨 SOS", payload="menu_sos")],
-        [Button("🏍 Мотопара", payload="menu_motopair")],
-        [Button("📇 Полезные контакты", payload="menu_contacts")],
-        [Button("📅 Мероприятия", payload="menu_events")],
-        [Button("👤 Мой профиль", payload="menu_profile")],
-        [Button("ℹ️ О нас", payload="menu_about")],
+        [Button("🚨 SOS", type=ButtonType.MESSAGE)],
+        [Button("🏍 Мотопара", type=ButtonType.MESSAGE)],
+        [Button("📇 Полезные контакты", type=ButtonType.MESSAGE)],
+        [Button("📅 Мероприятия", type=ButtonType.MESSAGE)],
+        [Button("👤 Мой профиль", type=ButtonType.MESSAGE)],
+        [Button("ℹ️ О нас", type=ButtonType.MESSAGE)],
     ]
 
 

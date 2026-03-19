@@ -280,6 +280,7 @@ async def run_max(shared_adapter=None):
             {"name": "cancel", "description": "❌ Отменить"},
             {"name": "sos", "description": "🚨 SOS"},
             {"name": "motopair", "description": "🏍 Мотопара"},
+            {"name": "contacts", "description": "📇 Полезные контакты"},
             {"name": "events", "description": "📅 Мероприятия"},
             {"name": "profile", "description": "👤 Мой профиль"},
             {"name": "about", "description": "ℹ️ О нас"},

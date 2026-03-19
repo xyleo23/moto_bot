@@ -64,6 +64,12 @@ def _build_max_keyboard(rows: list[KeyboardRow]) -> list | None:
                     "type": "request_geo_location",
                     "text": btn.text,
                 })
+            elif btn.type == ButtonType.MESSAGE:
+                # MAX: same field as label; client sends this text to the bot as a message
+                max_buttons.append({
+                    "type": "message",
+                    "text": btn.text,
+                })
         if max_buttons:
             max_rows.append(max_buttons)
     return max_rows if max_rows else None

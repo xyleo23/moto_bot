@@ -70,6 +70,16 @@ RUSSIAN_MONTHS = {
     "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
 }
 
+# MAX message-type inline buttons: label is sent as chat text — map to command keys
+MAX_MENU_MESSAGE_TO_CMD: dict[str, str] = {
+    "🚨 SOS": "sos",
+    "🏍 Мотопара": "motopair",
+    "📇 Полезные контакты": "contacts",
+    "📅 Мероприятия": "events",
+    "👤 Мой профиль": "profile",
+    "ℹ️ О нас": "about",
+}
+
 
 def _parse_russian_date(text: str):
     text = (text or "").strip()
@@ -1078,13 +1088,16 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         await _handle_fsm_message(adapter, ev.chat_id, ev.user_id, text, fsm)
         return
 
-    # Commands from slash menu (sos, motopair, events, profile, about)
-    cmd = text.lower().lstrip("/")
+    # Slash commands + same labels from MAX message-type menu buttons
+    cmd = MAX_MENU_MESSAGE_TO_CMD.get(text, text.lower().lstrip("/"))
     if cmd == "sos":
         await _handle_sos_menu(adapter, ev.chat_id, user)
         return
     if cmd == "motopair":
         await handle_motopair_menu(adapter, ev.chat_id, user)
+        return
+    if cmd == "contacts":
+        await handle_contacts_menu(adapter, ev.chat_id, user)
         return
     if cmd == "events":
         await handle_events_menu(adapter, ev.chat_id, user)

@@ -7,6 +7,7 @@ from typing import Any
 
 class ButtonType(str, Enum):
     CALLBACK = "callback"
+    MESSAGE = "message"  # MAX: sends button text as user message (pseudo reply-keyboard)
     URL = "url"
     REQUEST_CONTACT = "request_contact"
     REQUEST_LOCATION = "request_geo_location"
