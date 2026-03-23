@@ -644,16 +644,20 @@ async def cb_admin_city_toggle(callback: CallbackQuery):
         await callback.answer("Ошибка.", show_alert=True)
     text, kb = await _admin_cities_list_text_kb()
     await callback.message.edit_text(text, reply_markup=kb)
-    await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin_city_"))
+@router.callback_query(
+    F.data.startswith("admin_city_")
+    & (F.data != "admin_city_admins")
+    & ~F.data.startswith("admin_city_edit_")
+    & ~F.data.startswith("admin_city_toggle_"),
+)
 async def cb_admin_city_detail(callback: CallbackQuery):
     """Single city: Edit name, Activate/Deactivate."""
     if not _is_superadmin(callback.from_user.id):
         await callback.answer("Доступ запрещён.")
         return
-    cid = callback.data.replace("admin_city_", "")
+    cid = callback.data.replace("admin_city_", "", 1)
     cities = await get_all_cities()
     city = next((c for c in cities if str(c.id) == cid), None)
     if not city:
@@ -687,21 +691,6 @@ async def cb_admin_cities_add(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin_city_edit_"))
-async def cb_admin_city_edit(callback: CallbackQuery, state: FSMContext):
-    if not _is_superadmin(callback.from_user.id):
-        await callback.answer("Доступ запрещён.")
-        return
-    cid = callback.data.replace("admin_city_edit_", "")
-    await state.set_state(AdminCitiesStates.name)
-    await state.update_data(admin_cities_action="edit", admin_cities_id=cid)
-    await callback.message.edit_text(
-        "Введи новое название города:",
-        reply_markup=get_admin_back_kb("admin_cities"),
-    )
-    await callback.answer()
-
-
 @router.message(AdminCitiesStates.name, F.text)
 async def admin_cities_name_input(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -726,26 +715,6 @@ async def admin_cities_name_input(message: Message, state: FSMContext):
             await message.answer(f"❌ {err}", reply_markup=get_admin_back_kb("admin_cities"))
     else:
         await message.answer("Ошибка.", reply_markup=get_admin_back_kb("admin_cities"))
-
-
-@router.callback_query(F.data.startswith("admin_city_toggle_"))
-async def cb_admin_city_toggle(callback: CallbackQuery):
-    if not _is_superadmin(callback.from_user.id):
-        await callback.answer("Доступ запрещён.")
-        return
-    cid = callback.data.replace("admin_city_toggle_", "")
-    cities = await get_all_cities()
-    city = next((c for c in cities if str(c.id) == cid), None)
-    if not city:
-        await callback.answer("Город не найден.")
-        return
-    ok, _ = await update_city(uuid.UUID(cid), is_active=not city.is_active)
-    if ok:
-        await callback.answer(f"{'Активирован' if not city.is_active else 'Деактивирован'}")
-    else:
-        await callback.answer("Ошибка.", show_alert=True)
-    text, kb = await _admin_cities_list_text_kb()
-    await callback.message.edit_text(text, reply_markup=kb)
 
 
 # ——— City admins ———
@@ -891,16 +860,20 @@ async def cb_admin_events(callback: CallbackQuery, user=None):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin_ev_"))
+@router.callback_query(
+    F.data.startswith("admin_ev_")
+    & ~F.data.startswith("admin_ev_rec_")
+    & ~F.data.startswith("admin_ev_official_")
+    & ~F.data.startswith("admin_ev_cancel_")
+    & ~F.data.startswith("admin_evreport_"),
+)
 async def cb_admin_event_detail(callback: CallbackQuery, user=None):
     is_sa = _is_superadmin(callback.from_user.id)
     is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
     if not is_sa and not is_ca:
         await callback.answer("Доступ запрещён.")
         return
-    eid = callback.data.replace("admin_ev_", "")
-    if eid in ("rec", "cancel"):
-        return
+    eid = callback.data.replace("admin_ev_", "", 1)
     try:
         ev_uuid = uuid.UUID(eid)
     except ValueError:
@@ -1399,13 +1372,12 @@ async def cb_admin_broadcast_segment(callback: CallbackQuery, state: FSMContext)
     await state.update_data(admin_bc_segment=seg)
     await state.set_state(AdminBroadcastStates.message)
     await callback.message.edit_text(
-        "Введи текст рассылки.\n\n"
-        "<b>Поддерживается HTML-разметка:</b>\n"
-        "• <code>&lt;b&gt;жирный&lt;/b&gt;</code>\n"
-        "• <code>&lt;i&gt;курсив&lt;/i&gt;</code>\n"
-        "• <code>&lt;a href='...'&gt;ссылка&lt;/a&gt;</code>\n"
-        "• <code>&lt;code&gt;моноширинный&lt;/code&gt;</code>",
-        parse_mode="HTML",
+        "Введи текст рассылки одним сообщением.\n\n"
+        "Достаточно обычного текста — он уйдёт всем как написал.\n\n"
+        "Нужно оформление (жирный, ссылка) — смотри справку по HTML в Telegram "
+        "(как у @BotFather, режим HTML): теги b, i, a, code.\n\n"
+        "Символы «меньше/больше» в обычном тексте без тегов ломают HTML — тогда пиши без них "
+        "или оформляй только простым текстом.",
     )
     await callback.answer()
 

@@ -1,5 +1,6 @@
 """SOS block — emergency alerts with timer and all-clear."""
 import asyncio
+from html import escape
 
 from loguru import logger
 from aiogram import Router, F
@@ -17,6 +18,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from src.keyboards.menu import get_back_to_menu_kb
 from src import texts
+from src.models.user import effective_user_id
 
 router = Router()
 
@@ -136,15 +138,16 @@ async def _get_user_phone(user) -> str | None:
     from src.models.user import UserRole
     from sqlalchemy import select
 
+    uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         if user.role == UserRole.PILOT:
             r = await session.execute(
-                select(ProfilePilot.phone).where(ProfilePilot.user_id == user.id)
+                select(ProfilePilot.phone).where(ProfilePilot.user_id == uid)
             )
         else:
             r = await session.execute(
-                select(ProfilePassenger.phone).where(ProfilePassenger.user_id == user.id)
+                select(ProfilePassenger.phone).where(ProfilePassenger.user_id == uid)
             )
         return r.scalar_one_or_none()
 
@@ -198,9 +201,10 @@ async def _send_sos_alert(
         await message.answer(texts.SOS_NO_CITY)
         return
 
+    eff_uid = effective_user_id(user)
     try:
         ok, remaining = await create_sos_alert(
-            user_id=user.id,
+            user_id=eff_uid,
             city_id=user.city_id,
             sos_type=data["sos_type"],
             lat=data["lat"],
@@ -236,7 +240,7 @@ async def _send_sos_alert(
         profile=profile,
     )
     if comment:
-        broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=comment)
+        broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=escape(comment))
     broadcast_text += texts.SOS_BROADCAST_MAP.format(
         lon=data["lon"], lat=data["lat"]
     )
@@ -314,7 +318,7 @@ async def cb_sos_check_ready(callback: CallbackQuery, state: FSMContext, user=No
             await callback.answer("Ошибка.")
             return
 
-        remaining = await check_sos_cooldown(user.id)
+        remaining = await check_sos_cooldown(effective_user_id(user))
         if remaining <= 0:
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🚨 Отправить новый SOS", callback_data="menu_sos")],

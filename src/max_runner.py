@@ -3,6 +3,7 @@ import re
 import uuid
 import asyncio
 from datetime import datetime
+from html import escape
 from typing import Any
 
 from loguru import logger
@@ -1468,7 +1469,7 @@ async def _handle_sos_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
         return
 
     from src.services.sos_service import check_sos_cooldown
-    remaining = await check_sos_cooldown(user.id)
+    remaining = await check_sos_cooldown(effective_user_id(user))
     if remaining > 0:
         mins, secs = remaining // 60, remaining % 60
         kb = [[Button(texts.SOS_CHECK_READY, payload="sos_check_ready")], [Button("« Назад", payload="menu_main")]]
@@ -1529,8 +1530,9 @@ async def _handle_sos_send(
         await adapter.send_message(chat_id, texts.SOS_NO_CITY, get_back_to_menu_rows())
         return
 
+    eff_uid = effective_user_id(user)
     ok, remaining = await create_sos_alert(
-        user_id=user.id,
+        user_id=eff_uid,
         city_id=user.city_id,
         sos_type=data["sos_type"],
         lat=data["lat"],
@@ -1557,7 +1559,7 @@ async def _handle_sos_send(
         profile=profile,
     )
     if comment:
-        broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=comment)
+        broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=escape(comment))
     broadcast_text += texts.SOS_BROADCAST_MAP.format(lon=data["lon"], lat=data["lat"])
 
     # Build keyboard for MAX recipients
@@ -1569,9 +1571,9 @@ async def _handle_sos_send(
     _sf = _gsf()
     async with _sf() as _sess:
         if user.role.value == "pilot":
-            r = await _sess.execute(_sel(ProfilePilot.phone).where(ProfilePilot.user_id == user.id))
+            r = await _sess.execute(_sel(ProfilePilot.phone).where(ProfilePilot.user_id == eff_uid))
         else:
-            r = await _sess.execute(_sel(ProfilePassenger.phone).where(ProfilePassenger.user_id == user.id))
+            r = await _sess.execute(_sel(ProfilePassenger.phone).where(ProfilePassenger.user_id == eff_uid))
         phone = r.scalar_one_or_none()
 
     max_kb = []
@@ -1618,7 +1620,7 @@ async def _handle_sos_check_ready(adapter: MaxAdapter, chat_id: str, user_id: in
     user = await get_or_create_user(platform="max", platform_user_id=user_id)
     if not user:
         return
-    remaining = await check_sos_cooldown(user.id)
+    remaining = await check_sos_cooldown(effective_user_id(user))
     if remaining <= 0:
         kb = [[Button("🚨 Отправить SOS", payload="menu_sos")], [Button("« Главное меню", payload="menu_main")]]
         await adapter.send_message(chat_id, texts.SOS_READY_NOW, kb)
@@ -2318,7 +2320,7 @@ async def _handle_payment_callback(
 
         if price <= 0:
             from src.services.motopair_service import raise_profile
-            ok = await raise_profile(user.id, role)
+            ok = await raise_profile(effective_user_id(user), role)
             if ok:
                 await adapter.send_message(chat_id, "✅ Анкета поднята! Тебя будут видеть выше в поиске.", get_back_to_menu_rows())
             else:
@@ -2368,7 +2370,7 @@ async def _handle_payment_callback(
 
         if status == "succeeded":
             await _pay_clear(user.platform_user_id)
-            ok = await raise_profile(user.id, role)
+            ok = await raise_profile(effective_user_id(user), role)
             if ok:
                 await adapter.send_message(chat_id, "✅ Оплата прошла! Анкета поднята — тебя увидят первым.", get_back_to_menu_rows())
             else:

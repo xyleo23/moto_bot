@@ -10,6 +10,7 @@ from aiogram.filters import StateFilter
 
 from src.keyboards.menu import get_back_to_menu_kb
 from src import texts
+from src.models.user import effective_user_id
 
 router = Router()
 
@@ -156,7 +157,7 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
 
     # Free raise only when price is explicitly zero
     if price <= 0:
-        ok = await raise_profile(user.id, role)
+        ok = await raise_profile(effective_user_id(user), role)
         if ok:
             await callback.message.edit_text(
                 "✅ Анкета поднята! Тебя будут видеть выше в поиске.",
@@ -175,7 +176,7 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
     payment = await create_payment(
         amount_kopecks=price,
         description="Поднятие анкеты",
-        metadata={"type": "raise_profile", "user_id": str(user.id), "role": role},
+        metadata={"type": "raise_profile", "user_id": str(effective_user_id(user)), "role": role},
         return_url=s.telegram_return_url or "https://t.me",
     )
     if payment and payment.get("confirmation_url"):
@@ -223,7 +224,7 @@ async def cb_raise_check_payment(callback: CallbackQuery, state: FSMContext, use
     status = await check_payment_status(payment_id)
     if status == "succeeded":
         await state.clear()
-        ok = await raise_profile(user.id, role)
+        ok = await raise_profile(effective_user_id(user), role)
         if ok:
             await callback.message.edit_text(
                 "✅ Оплата прошла! Анкета поднята — тебя увидят первым.",
