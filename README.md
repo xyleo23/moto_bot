@@ -50,6 +50,10 @@ PLATFORM=telegram python -m src.main
 
 Два суперадмина задаются в `.env`: `SUPERADMIN_IDS=123456789,987654321`
 
+## Цены (подписка, мероприятия)
+
+Источник цен: БД (`subscription_settings`) — приоритет, `.env` — fallback. См. [docs/PRICES_SOURCE.md](docs/PRICES_SOURCE.md).
+
 ## Деплой на VPS
 
 См. [deploy/README.md](deploy/README.md) — Docker Compose или systemd.

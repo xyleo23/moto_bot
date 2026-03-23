@@ -32,7 +32,8 @@ def _parse_driving_since(value) -> "date | None":  # noqa: F821 (avoid circular 
         try:
             return datetime.strptime(value, "%Y-%m-%d").date()
         except ValueError:
-            pass
+            # Fallback for other date formats
+            return None
     return None
 
 
