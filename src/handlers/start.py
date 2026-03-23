@@ -135,8 +135,10 @@ async def cmd_motopair(message: Message, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.subscription import check_subscription_required
     if user and await check_subscription_required(user):
+        from src.services.subscription_messages import subscription_required_message
+
         await message.answer(
-            "Для доступа к поиску мотопары нужна активная подписка.",
+            await subscription_required_message("motopair_menu"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
                 [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
@@ -159,8 +161,10 @@ async def cmd_events(message: Message, state: FSMContext, user=None):
     is_sa = message.from_user.id in get_settings().superadmin_ids
     is_ca = user and user.city_id and await is_city_admin(message.from_user.id, user.city_id)
     if not (is_sa or is_ca) and user and await check_subscription_required(user):
+        from src.services.subscription_messages import subscription_required_message
+
         await message.answer(
-            "Для доступа к мероприятиям нужна активная подписка.",
+            await subscription_required_message("events_menu"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
                 [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
@@ -350,9 +354,10 @@ async def kb_motopair(message: Message, state: FSMContext, user=None):
     from src.services.subscription import check_subscription_required
 
     if user and await check_subscription_required(user):
+        from src.services.subscription_messages import subscription_required_message
+
         await message.answer(
-            "Для доступа к поиску мотопары нужна активная подписка.\n"
-            "Подписка открывает анкеты, лайки, мероприятия и поиск мотопары.",
+            await subscription_required_message("motopair_menu"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
                 [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
@@ -381,9 +386,10 @@ async def kb_events(message: Message, state: FSMContext, user=None):
 
     # Subscription check for regular users (admins bypass)
     if not (is_sa or is_ca) and user and await check_subscription_required(user):
+        from src.services.subscription_messages import subscription_required_message
+
         await message.answer(
-            "Для доступа к мероприятиям нужна активная подписка.\n"
-            "Подписка открывает просмотр, запись и поиск мотопары на мероприятиях.",
+            await subscription_required_message("events_menu"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
                 [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],

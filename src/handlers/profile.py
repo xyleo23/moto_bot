@@ -119,11 +119,10 @@ async def cb_profile_subscribe(callback: CallbackQuery, user=None):
         )],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
     ])
+    from src.services.subscription_messages import subscription_required_message
+
     await callback.message.edit_text(
-        "Для доступа к поиску мотопары нужна активная подписка.\n\n"
-        "Подписка даёт:\n"
-        + texts.SUB_BENEFITS_FULL
-        + "\n\nВыбери срок:",
+        (await subscription_required_message("motopair_menu")) + "\n\nВыбери срок:",
         reply_markup=kb,
     )
     await callback.answer()
@@ -171,10 +170,13 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
         return
 
     # Paid raise
+    from src.config import get_settings
+    s = get_settings()
     payment = await create_payment(
         amount_kopecks=price,
         description="Поднятие анкеты",
         metadata={"type": "raise_profile", "user_id": str(user.id), "role": role},
+        return_url=s.telegram_return_url or "https://t.me",
     )
     if payment and payment.get("confirmation_url"):
         await state.set_state(ProfileRaiseStates.awaiting_payment)

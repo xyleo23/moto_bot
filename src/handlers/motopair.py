@@ -30,11 +30,12 @@ async def cb_motopair_menu(callback: CallbackQuery, user=None):
     from src.services.subscription import check_subscription_required
 
     if user and await check_subscription_required(user):
+        from src.services.subscription_messages import subscription_required_message
+
         await callback.message.edit_text(
-            "Для доступа к поиску мотопары нужна активная подписка.\n"
-            "Подписка открывает анкеты, лайки и контакты при совпадении.",
+            await subscription_required_message("motopair_menu"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Оформить подписку", callback_data="menu_profile")],
+                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
                 [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
             ]),
         )
@@ -185,11 +186,12 @@ async def cb_motopair_list(callback: CallbackQuery, user=None):
         return
 
     if await check_subscription_required(user):
+        from src.services.subscription_messages import subscription_required_message
+
         await callback.message.edit_text(
-            "Для просмотра анкет нужна активная подписка.\n\n"
-            "Оформить можно в разделе «Мой профиль».",
+            await subscription_required_message("motopair_cards"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile"),
+                InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe"),
                 InlineKeyboardButton(text="◀️ Назад", callback_data="menu_motopair"),
             ]]),
         )

@@ -1,6 +1,6 @@
 # Moto Bot — Telegram/MAX бот для мотоциклистов
 
-Бот мото-сообщества Екатеринбурга. Платформы: Telegram, MAX (в разработке).
+Бот мото-сообщества Екатеринбурга. Платформы: **Telegram** и **MAX** (long polling, оплата через ЮKassa).
 
 ## Функции
 
@@ -57,6 +57,10 @@ PLATFORM=telegram python -m src.main
 ## Деплой на VPS
 
 См. [deploy/README.md](deploy/README.md) — Docker Compose или systemd.
+
+**Перед продакшеном:** [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md) (секреты, webhook, nginx, ЮKassa).
+
+**Webhook ЮKassa:** [docs/ИНСТРУКЦИЯ_WEBHOOK_ЮKASSA.md](docs/ИНСТРУКЦИЯ_WEBHOOK_ЮKASSA.md)
 
 ## Структура
 

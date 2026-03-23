@@ -81,3 +81,16 @@
 ## 6. Рекомендация
 
 Проект в рабочем состоянии для основного ТЗ; критичные пробелы — **CRUD городов** и **документация/прокси для webhook**. Тесты после правок: **28 passed**, 1 skipped.
+
+---
+
+## 7. Аудит перед продакшеном (март 2026)
+
+| Изменение | Зачем |
+|-----------|--------|
+| `max_return_url` без `@` (`https://max.ru/id…_bot`) | Совпадение с рабочими ссылками MAX |
+| `sub_benefits_full_text(limit)` + БД в профиле TG / тексте подписки MAX | Текст мотопробегов совпадает с `event_motorcade_limit_per_month` |
+| `WEBHOOK_TRUST_PROXY` + `_effective_client_ip()` | За nginx IP ЮKassa берётся из `X-Real-IP` |
+| `docs/PRODUCTION_CHECKLIST.md` | Единый чеклист выкладки |
+
+Тесты: **29 passed**, 1 skipped (добавлен `test_webhook_trust_proxy_x_real_ip`).

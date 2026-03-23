@@ -83,3 +83,28 @@ async def test_webhook_ignores_non_succeeded():
     status, body = await handle_yookassa_webhook(request)
     assert status == 200
     assert body.get("status") == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_webhook_trust_proxy_x_real_ip():
+    """Behind nginx: WEBHOOK_TRUST_PROXY uses X-Real-IP for YooKassa range check."""
+    import json
+    from src.webhooks import handle_yookassa_webhook
+
+    request = AsyncMock()
+    request.read = AsyncMock(return_value=json.dumps({
+        "event": "payment.canceled",
+        "object": {"id": "pay_123"},
+    }).encode())
+    request.headers = {"X-Real-IP": "185.71.76.1"}
+    request.remote = "127.0.0.1"
+
+    with patch("src.webhooks.get_settings") as gs:
+        mock_s = MagicMock()
+        mock_s.yookassa_secret_key = "test_key"
+        mock_s.webhook_trust_proxy = True
+        gs.return_value = mock_s
+
+        status, body = await handle_yookassa_webhook(request)
+    assert status == 200
+    assert body.get("status") == "ignored"

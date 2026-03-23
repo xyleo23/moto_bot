@@ -26,6 +26,21 @@ _YOOKASSA_IP_RANGES = [
 ]
 
 
+def _effective_client_ip(request) -> str:
+    """TCP peer, or client IP from proxy headers if webhook_trust_proxy is enabled."""
+    settings = get_settings()
+    direct = (request.remote or "").strip()
+    if not getattr(settings, "webhook_trust_proxy", False):
+        return direct
+    x_real = (request.headers.get("X-Real-IP") or "").strip()
+    if x_real:
+        return x_real.split(",")[0].strip()
+    xff = (request.headers.get("X-Forwarded-For") or "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    return direct
+
+
 def _is_yookassa_ip(remote_ip: str) -> bool:
     """Return True if remote_ip belongs to known YooKassa IP ranges."""
     try:
@@ -74,7 +89,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
     # X-Content-Signature (HMAC) or terminate TLS at the app so request.remote is YooKassa.
     body = await request.read()
     signature = request.headers.get("X-Content-Signature", "")
-    remote_ip = request.remote or ""
+    remote_ip = _effective_client_ip(request)
 
     sig_valid = _verify_yookassa_signature(
         body, signature, settings.yookassa_secret_key or ""

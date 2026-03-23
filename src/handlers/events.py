@@ -116,10 +116,9 @@ async def cb_events_menu(callback: CallbackQuery, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     if user and await check_subscription_required(user):
-        text = (
-            "Для доступа к мероприятиям нужна активная подписка.\n"
-            "Подписка открывает просмотр, запись и поиск мотопары на мероприятиях."
-        )
+        from src.services.subscription_messages import subscription_required_message
+
+        text = await subscription_required_message("events_menu")
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
             [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
@@ -213,10 +212,13 @@ async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext, user=None
     )
 
     if needs_payment and price and price > 0:
+        from src.config import get_settings
+        s = get_settings()
         payment = await create_payment(
             amount_kopecks=price,
             description="Создание мероприятия",
             metadata={"type": "event_creation", "user_id": str(eff_id), "event_type": ev_type},
+            return_url=s.telegram_return_url or "https://t.me",
         )
         if payment and payment.get("confirmation_url"):
             await state.set_state(EventCreateStates.awaiting_payment)
@@ -752,11 +754,12 @@ async def cb_event_register(callback: CallbackQuery, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     if user and await check_subscription_required(user):
+        from src.services.subscription_messages import subscription_required_message
+
         await callback.message.edit_text(
-            "Для записи на мероприятие нужна активная подписка.\n\n"
-            "Оформить подписку можно в разделе «Мой профиль».",
+            await subscription_required_message("events_register"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile"),
+                InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe"),
                 InlineKeyboardButton(text="◀️ Назад", callback_data="menu_events"),
             ]]),
         )

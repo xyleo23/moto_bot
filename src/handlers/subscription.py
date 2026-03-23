@@ -40,6 +40,7 @@ async def cb_subscribe(callback: CallbackQuery, user=None, bot=None):
         amount_kopecks=amount,
         description=f"Подписка {period}",
         metadata={"user_id": str(user.id), "type": "subscription", "period": period},
+        return_url=get_settings().telegram_return_url or "https://t.me",
     )
     if not payment or not payment.get("confirmation_url"):
         await callback.message.edit_text(

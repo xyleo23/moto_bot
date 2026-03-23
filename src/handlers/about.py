@@ -134,11 +134,12 @@ async def about_donate_custom_amount(message: Message, state: FSMContext, user=N
 
     await state.clear()
 
+    s = get_settings()
     payment = await create_payment(
         amount_kopecks=amount_kop,
         description="Донат — поддержка бота мото-сообщества",
         metadata={"type": "donate", "user_id": str(user.id)},
-        return_url="https://t.me/",
+        return_url=s.telegram_return_url or "https://t.me",
     )
 
     if not payment or not payment.get("confirmation_url"):
@@ -174,11 +175,12 @@ async def cb_donate_amount(callback: CallbackQuery, state: FSMContext, user=None
         await callback.answer("Ошибка суммы.")
         return
 
+    s = get_settings()
     payment = await create_payment(
         amount_kopecks=amount_kop,
         description="Донат — поддержка бота мото-сообщества",
         metadata={"type": "donate", "user_id": str(user.id)},
-        return_url="https://t.me/",
+        return_url=s.telegram_return_url or "https://t.me",
     )
 
     if not payment or not payment.get("confirmation_url"):

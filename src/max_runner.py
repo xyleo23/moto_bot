@@ -1660,11 +1660,12 @@ async def _handle_sos_all_clear(adapter: MaxAdapter, chat_id: str, user) -> None
 
 async def handle_motopair_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
     from src.services.subscription import check_subscription_required
+    from src.services.subscription_messages import subscription_required_message
 
     if await check_subscription_required(user):
         await adapter.send_message(
             chat_id,
-            "Для доступа к мотопаре нужна подписка. Оформи в «Мой профиль».",
+            await subscription_required_message("motopair_menu"),
             [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_main")]],
         )
         return
@@ -1680,6 +1681,19 @@ async def handle_motopair_list(
     adapter: MaxAdapter, chat_id: str, user, role: str, offset: int = 0
 ) -> None:
     from src.services.motopair_service import get_next_profile
+    from src.services.subscription import check_subscription_required
+    from src.services.subscription_messages import subscription_required_message
+
+    if await check_subscription_required(user):
+        await adapter.send_message(
+            chat_id,
+            await subscription_required_message("motopair_cards"),
+            [
+                [Button("👤 Мой профиль", payload="menu_profile")],
+                [Button("« Назад", payload="menu_motopair")],
+            ],
+        )
+        return
 
     profile, has_more = await get_next_profile(effective_user_id(user), role, offset=offset)
     if not profile:
@@ -1838,11 +1852,12 @@ async def handle_contacts_list(
 
 async def handle_events_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
     from src.services.subscription import check_subscription_required
+    from src.services.subscription_messages import subscription_required_message
 
     if await check_subscription_required(user):
         await adapter.send_message(
             chat_id,
-            "Для доступа к мероприятиям нужна подписка. Оформи в «Мой профиль».",
+            await subscription_required_message("events_menu"),
             [
                 [Button("👤 Мой профиль", payload="menu_profile")],
                 [Button("« Назад", payload="menu_main")],
@@ -1865,11 +1880,12 @@ async def handle_events_list(
 ) -> None:
     from src.services.event_service import get_events_list
     from src.services.subscription import check_subscription_required
+    from src.services.subscription_messages import subscription_required_message
 
     if await check_subscription_required(user):
         await adapter.send_message(
             chat_id,
-            "Для доступа к мероприятиям нужна подписка. Оформи в «Мой профиль».",
+            await subscription_required_message("events_menu"),
             [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_main")]],
         )
         return
@@ -1956,13 +1972,17 @@ async def handle_event_register(
     adapter: MaxAdapter, chat_id: str, user, event_id: str, role: str
 ) -> None:
     from src.services.subscription import check_subscription_required
+    from src.services.subscription_messages import subscription_required_message
     from src.services.event_service import register_for_event
 
     if await check_subscription_required(user):
         await adapter.send_message(
             chat_id,
-            "Для записи на мероприятия нужна подписка. Оформи в «Мой профиль».",
-            get_back_to_menu_rows(),
+            await subscription_required_message("events_register"),
+            [
+                [Button("👤 Мой профиль", payload="menu_profile")],
+                [Button("« Назад", payload="menu_events")],
+            ],
         )
         return
     try:
@@ -2053,24 +2073,22 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             amount_kopecks=monthly_price,
             description="Подписка на 1 месяц — мото-бот",
             metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "monthly", "platform": "max"},
-            return_url="https://max.ru/",
+            return_url=get_settings().max_return_url,
         )
         season_payment = await create_payment(
             amount_kopecks=season_price,
             description="Подписка на сезон — мото-бот",
             metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "season", "platform": "max"},
-            return_url="https://max.ru/",
+            return_url=get_settings().max_return_url,
         )
 
+        from src.services.subscription_messages import max_profile_subscription_block
+
+        paywall = await max_profile_subscription_block()
         text = (
             "👤 Мой профиль\n\n"
-            "Для доступа к функциям бота нужна подписка.\n\n"
-            "Подписка открывает:\n"
-            "• Анкеты, лайки и контакты при совпадении\n"
-            "• Просмотр и запись на мероприятия\n"
-            "• Прохваты — без ограничений\n"
-            "• Мотопробеги — 2 бесплатно в месяц, далее платно\n"
-            "• Масштабные мероприятия — платное создание\n\n"
+            + paywall
+            + "\n\n"
             f"• 1 месяц — {monthly_price // 100} ₽\n"
             f"• Сезон — {season_price // 100} ₽\n\n"
             "Выбери тариф и оплати по ссылке. После оплаты нажми «Я оплатил — проверить»."
@@ -2253,13 +2271,13 @@ async def _handle_payment_callback(
             amount_kopecks=monthly_price,
             description="Продление подписки на 1 месяц — мото-бот",
             metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "monthly", "platform": "max"},
-            return_url="https://max.ru/",
+            return_url=get_settings().max_return_url,
         )
         season_payment = await create_payment(
             amount_kopecks=season_price,
             description="Продление подписки на сезон — мото-бот",
             metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "season", "platform": "max"},
-            return_url="https://max.ru/",
+            return_url=get_settings().max_return_url,
         )
 
         text = (
@@ -2311,7 +2329,7 @@ async def _handle_payment_callback(
             amount_kopecks=price,
             description="Поднятие анкеты — мото-бот",
             metadata={"type": "raise_profile", "user_id": str(effective_user_id(user)), "role": role, "platform": "max"},
-            return_url="https://max.ru/",
+            return_url=get_settings().max_return_url,
         )
         if not payment or not payment.get("confirmation_url"):
             await adapter.send_message(chat_id, "Платёжный сервис временно недоступен. Попробуй позже.", get_back_to_menu_rows())
@@ -2388,7 +2406,7 @@ async def _handle_payment_callback(
             amount_kopecks=amount_kop,
             description="Донат — поддержка бота мото-сообщества",
             metadata={"type": "donate", "user_id": str(effective_user_id(user)), "platform": "max"},
-            return_url="https://max.ru/",
+            return_url=get_settings().max_return_url,
         )
         if not payment or not payment.get("confirmation_url"):
             await adapter.send_message(chat_id, "Не удалось создать платёж. Попробуй позже.", get_back_to_menu_rows())
@@ -2404,10 +2422,12 @@ async def _handle_payment_callback(
     # ── Event create (MAX) ────────────────────────────────────────────────────
     if data == "max_event_create":
         from src.services.subscription import check_subscription_required
+        from src.services.subscription_messages import subscription_required_message
+
         if await check_subscription_required(user):
             await adapter.send_message(
                 chat_id,
-                "Для создания мероприятий нужна подписка. Оформи в «Мой профиль».",
+                await subscription_required_message("events_create"),
                 [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_events")]],
             )
             return True
@@ -2442,7 +2462,7 @@ async def _handle_payment_callback(
                 amount_kopecks=price,
                 description="Создание мероприятия — мото-бот",
                 metadata={"type": "event_creation", "user_id": str(effective_user_id(user)), "event_type": ev_type, "platform": "max"},
-                return_url="https://max.ru/",
+                return_url=get_settings().max_return_url,
             )
             if not payment or not payment.get("confirmation_url"):
                 await adapter.send_message(chat_id, "Платёжный сервис временно недоступен.", get_back_to_menu_rows())

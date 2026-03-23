@@ -23,12 +23,20 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str | None = Field(default=None, description="Telegram bot token")
+    telegram_bot_username: str | None = Field(
+        default=None,
+        description="Bot username for return_url after YooKassa payment (e.g. MyMotoBot)",
+    )
 
     # MAX
     max_bot_token: str | None = Field(default=None, description="MAX bot token")
     max_api_base: str = Field(
         default="https://platform-api.max.ru",
         description="MAX API base URL",
+    )
+    max_bot_username: str | None = Field(
+        default=None,
+        description="MAX bot username for return_url (e.g. id123456_bot)",
     )
 
     # Database
@@ -44,6 +52,10 @@ class Settings(BaseSettings):
     yookassa_shop_id: str | None = Field(default=None, description="YooKassa shop ID")
     yookassa_secret_key: str | None = Field(default=None, description="YooKassa secret key")
     webhook_port: int = Field(default=8080, description="Port for YooKassa webhook server")
+    webhook_trust_proxy: bool = Field(
+        default=False,
+        description="Behind nginx: trust X-Real-IP / X-Forwarded-For for YooKassa IP check",
+    )
 
     # App — str избегает JSON-парсинга; @property не участвует в env-загрузке
     superadmin_ids_raw: str = Field(
@@ -56,6 +68,22 @@ class Settings(BaseSettings):
     def superadmin_ids(self) -> list[int]:
         """List of superadmin IDs — computed from superadmin_ids_raw."""
         return _parse_superadmin_ids(self.superadmin_ids_raw)
+
+    @property
+    def telegram_return_url(self) -> str | None:
+        """URL for YooKassa 'return to store' — opens bot in Telegram."""
+        if self.telegram_bot_username:
+            uname = self.telegram_bot_username.lstrip("@")
+            return f"https://t.me/{uname}"
+        return None
+
+    @property
+    def max_return_url(self) -> str:
+        """URL for YooKassa 'return to store' — opens bot in MAX (официальный формат max.ru/id…_bot)."""
+        if self.max_bot_username:
+            uname = self.max_bot_username.lstrip("@")
+            return f"https://max.ru/{uname}"
+        return "https://max.ru/"
 
     support_username: str = Field(default="support", description="Support Telegram username")
     support_email: str = Field(default="support@example.com", description="Support email")
