@@ -244,9 +244,10 @@ async def _send_sos_alert(
         f"SOS broadcast: city_id={user.city_id} tg_recipients={len(user_ids)} max_recipients={len(max_user_ids)} exclude_sender={user.platform_user_id}",
     )
 
+    # HTML parse_mode: escape profile (name, @username, phone may contain <>&)
     broadcast_text = texts.SOS_BROADCAST_TYPE.format(
         type_label=type_labels.get(data["sos_type"], "Другое"),
-        profile=profile,
+        profile=escape(profile),
     )
     if comment:
         broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=escape(comment))

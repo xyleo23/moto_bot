@@ -53,7 +53,7 @@ async def _do_broadcast(
             await bot.send_message(uid, **kwargs)
             sent += 1
         except Exception as e:
-            logger.debug("broadcast: could not send to %s: %s", uid, e)
+            logger.warning(f"broadcast: could not send to {uid}: {e}")
             failed += 1
         await asyncio.sleep(_SEND_DELAY)
 
@@ -104,7 +104,7 @@ async def _do_max_broadcast(
             await adapter.send_message(str(uid), text, kb_rows)
             sent += 1
         except Exception as e:
-            logger.debug("max_broadcast: could not send to %s: %s", uid, e)
+            logger.warning(f"max_broadcast: could not send to {uid}: {e}")
             failed += 1
         await asyncio.sleep(_SEND_DELAY)
 

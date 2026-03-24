@@ -1556,7 +1556,7 @@ async def _handle_sos_send(
 
     broadcast_text = texts.SOS_BROADCAST_TYPE.format(
         type_label=type_labels.get(data["sos_type"], "Другое"),
-        profile=profile,
+        profile=escape(profile),
     )
     if comment:
         broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=escape(comment))

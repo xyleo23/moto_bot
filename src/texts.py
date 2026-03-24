@@ -107,7 +107,8 @@ SOS_ALL_CLEAR_BTN = "✅ Помощь получена — отбой"
 SOS_ALL_CLEAR_BROADCAST = "✅ Отбой! {name} сообщает: помощь получена."
 SOS_BROADCAST_TYPE = "🚨 SOS: {type_label}\n\n{profile}\n\n"
 SOS_BROADCAST_COMMENT = "Комментарий: {comment}\n\n"
-SOS_BROADCAST_MAP = "📍 https://yandex.ru/maps/?ll={lon},{lat}&z=16"
+# & must be &amp; when message uses Telegram HTML parse_mode
+SOS_BROADCAST_MAP = "📍 https://yandex.ru/maps/?ll={lon},{lat}&amp;z=16"
 SOS_BTN_CALL = "📞 Позвонить"
 SOS_BTN_TELEGRAM = "✈️ Написать в Telegram"
 
