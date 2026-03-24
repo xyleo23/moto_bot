@@ -162,7 +162,11 @@ async def _send_sos_alert(
     platform_user_id: int | None = None,
 ) -> None:
     """Create SOS alert and broadcast to city users as background task."""
-    from src.services.sos_service import create_sos_alert, get_city_telegram_user_ids
+    from src.services.sos_service import (
+        create_sos_alert,
+        get_city_telegram_user_ids,
+        get_city_max_user_ids,
+    )
     from src.services.broadcast import broadcast_background
     from src.services.user import get_user_profile_display
     from src.config import get_settings
@@ -235,6 +239,12 @@ async def _send_sos_alert(
     profile = await get_user_profile_display(user)
     user_ids = await get_city_telegram_user_ids(user.city_id)
 
+    max_user_ids = await get_city_max_user_ids(user.city_id)
+    logger.info(
+        "SOS broadcast: city_id=%s tg_recipients=%d max_recipients=%d exclude_sender=%s",
+        user.city_id, len(user_ids), len(max_user_ids), user.platform_user_id,
+    )
+
     broadcast_text = texts.SOS_BROADCAST_TYPE.format(
         type_label=type_labels.get(data["sos_type"], "Другое"),
         profile=profile,
@@ -270,22 +280,19 @@ async def _send_sos_alert(
         )
 
     # Cross-platform: also broadcast to MAX users in the same city
-    from src.services.sos_service import get_city_max_user_ids
     from src.services.broadcast import get_max_adapter, broadcast_max_background
     from src.platforms.base import Button, ButtonType
     max_adapter = get_max_adapter()
-    if max_adapter:
-        max_user_ids = await get_city_max_user_ids(user.city_id)
-        if max_user_ids:
-            max_kb_rows = []
-            if phone:
-                max_kb_rows.append([Button(text="📞 Позвонить", type=ButtonType.URL, url=f"tel:{phone}")])
-            broadcast_max_background(
-                max_adapter,
-                max_user_ids,
-                broadcast_text,
-                kb_rows=max_kb_rows if max_kb_rows else None,
-            )
+    if max_adapter and max_user_ids:
+        max_kb_rows = []
+        if phone:
+            max_kb_rows.append([Button(text="📞 Позвонить", type=ButtonType.URL, url=f"tel:{phone}")])
+        broadcast_max_background(
+            max_adapter,
+            max_user_ids,
+            broadcast_text,
+            kb_rows=max_kb_rows if max_kb_rows else None,
+        )
 
     cooldown_mins = settings.sos_cooldown_minutes
     # Reply with confirmation + timer + all-clear button
