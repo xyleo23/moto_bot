@@ -241,8 +241,7 @@ async def _send_sos_alert(
 
     max_user_ids = await get_city_max_user_ids(user.city_id)
     logger.info(
-        "SOS broadcast: city_id=%s tg_recipients=%d max_recipients=%d exclude_sender=%s",
-        user.city_id, len(user_ids), len(max_user_ids), user.platform_user_id,
+        f"SOS broadcast: city_id={user.city_id} tg_recipients={len(user_ids)} max_recipients={len(max_user_ids)} exclude_sender={user.platform_user_id}",
     )
 
     broadcast_text = texts.SOS_BROADCAST_TYPE.format(
@@ -269,6 +268,10 @@ async def _send_sos_alert(
     broadcast_kb = InlineKeyboardMarkup(inline_keyboard=broadcast_kb_rows)
 
     send_bot = bot or getattr(message, "bot", None)
+    if not send_bot:
+        logger.warning("SOS broadcast skipped: no bot instance")
+    elif not user_ids:
+        logger.warning("SOS broadcast skipped: no recipients in city")
     if send_bot and user_ids:
         # Non-blocking background broadcast with 50ms inter-message delay
         broadcast_background(

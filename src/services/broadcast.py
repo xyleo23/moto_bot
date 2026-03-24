@@ -57,7 +57,7 @@ async def _do_broadcast(
             failed += 1
         await asyncio.sleep(_SEND_DELAY)
 
-    logger.info("broadcast done: sent=%d failed=%d", sent, failed)
+    logger.info(f"broadcast done: sent={sent} failed={failed}")
     return sent, failed
 
 
@@ -108,7 +108,7 @@ async def _do_max_broadcast(
             failed += 1
         await asyncio.sleep(_SEND_DELAY)
 
-    logger.info("max_broadcast done: sent=%d failed=%d", sent, failed)
+    logger.info(f"max_broadcast done: sent={sent} failed={failed}")
     return sent, failed
 
 

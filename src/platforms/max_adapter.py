@@ -117,7 +117,7 @@ class MaxAdapter(PlatformAdapter):
             if resp.status >= 400:
                 text = await resp.text()
                 from loguru import logger
-                logger.warning("MAX API error %s: %s", resp.status, text[:500])
+                logger.warning(f"MAX API error {resp.status}: {text[:500]}")
                 raise RuntimeError(f"MAX API error {resp.status}: {text}")
             if resp.status == 204:
                 return {}
