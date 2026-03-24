@@ -1562,23 +1562,7 @@ async def _handle_sos_send(
         broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=escape(comment))
     broadcast_text += texts.SOS_BROADCAST_MAP.format(lon=data["lon"], lat=data["lat"])
 
-    # Build keyboard for MAX recipients
-    from src.models.profile_pilot import ProfilePilot
-    from src.models.profile_passenger import ProfilePassenger
-    from src.models.base import get_session_factory as _gsf
-    from sqlalchemy import select as _sel
-    phone = None
-    _sf = _gsf()
-    async with _sf() as _sess:
-        if user.role.value == "pilot":
-            r = await _sess.execute(_sel(ProfilePilot.phone).where(ProfilePilot.user_id == eff_uid))
-        else:
-            r = await _sess.execute(_sel(ProfilePassenger.phone).where(ProfilePassenger.user_id == eff_uid))
-        phone = r.scalar_one_or_none()
-
-    max_kb = []
-    if phone:
-        max_kb.append([Button(text=texts.SOS_BTN_CALL, type=ButtonType.URL, url=f"tel:{phone}")])
+    # No tel: in inline buttons — Telegram/MAX reject it; phone is in message text (profile).
 
     # Broadcast to MAX users in the city
     max_user_ids = await get_city_max_user_ids(user.city_id)
@@ -1586,20 +1570,15 @@ async def _handle_sos_send(
         broadcast_max_background(
             adapter, max_user_ids, broadcast_text,
             exclude_id=user.platform_user_id,
-            kb_rows=max_kb if max_kb else None,
+            kb_rows=None,
         )
 
     # Cross-platform: also broadcast to Telegram users in the city
     from src.services.broadcast import broadcast_background
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     tg_user_ids = await get_city_telegram_user_ids(user.city_id)
     if tg_user_ids:
-        # Build Telegram keyboard with phone and "write in Telegram" button
-        # Note: MAX user doesn't have a Telegram profile link, so only phone button
-        tg_kb_rows = []
-        if phone:
-            tg_kb_rows.append([InlineKeyboardButton(text=texts.SOS_BTN_CALL, url=f"tel:{phone}")])
-        tg_kb = InlineKeyboardMarkup(inline_keyboard=tg_kb_rows) if tg_kb_rows else None
+        # MAX sender: no tg:// link; phone is already in broadcast_text profile
+        tg_kb = None
         tg_bot_instance = _get_tg_bot()
         if tg_bot_instance:
             broadcast_background(tg_bot_instance, tg_user_ids, broadcast_text, reply_markup=tg_kb)

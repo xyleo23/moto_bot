@@ -130,28 +130,6 @@ async def sos_comment(message: Message, state: FSMContext, user=None, bot=None):
         )
 
 
-async def _get_user_phone(user) -> str | None:
-    """Get user's phone number from their pilot/passenger profile."""
-    from src.models.base import get_session_factory
-    from src.models.profile_pilot import ProfilePilot
-    from src.models.profile_passenger import ProfilePassenger
-    from src.models.user import UserRole
-    from sqlalchemy import select
-
-    uid = effective_user_id(user)
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        if user.role == UserRole.PILOT:
-            r = await session.execute(
-                select(ProfilePilot.phone).where(ProfilePilot.user_id == uid)
-            )
-        else:
-            r = await session.execute(
-                select(ProfilePassenger.phone).where(ProfilePassenger.user_id == uid)
-            )
-        return r.scalar_one_or_none()
-
-
 async def _send_sos_alert(
     message: Message,
     state: FSMContext,
@@ -255,17 +233,12 @@ async def _send_sos_alert(
         lon=data["lon"], lat=data["lat"]
     )
 
-    # Build keyboard with "Call" and "Telegram" quick-contact buttons
-    phone = await _get_user_phone(user)
-    broadcast_kb_rows = []
-    if phone:
-        broadcast_kb_rows.append([
-            InlineKeyboardButton(text=texts.SOS_BTN_CALL, url=f"tel:{phone}"),
-        ])
+    # Telegram rejects tel: in inline URL buttons ("Wrong port number"); MAX only allows http(s).
+    # Phone stays in the message body (profile). Only "Написать в Telegram" uses tg://.
     tg_id = user.platform_user_id  # message.from_user может быть бот (при callback)
-    broadcast_kb_rows.append([
+    broadcast_kb_rows = [[
         InlineKeyboardButton(text=texts.SOS_BTN_TELEGRAM, url=f"tg://user?id={tg_id}"),
-    ])
+    ]]
     broadcast_kb = InlineKeyboardMarkup(inline_keyboard=broadcast_kb_rows)
 
     send_bot = bot or getattr(message, "bot", None)
@@ -288,14 +261,11 @@ async def _send_sos_alert(
     from src.platforms.base import Button, ButtonType
     max_adapter = get_max_adapter()
     if max_adapter and max_user_ids:
-        max_kb_rows = []
-        if phone:
-            max_kb_rows.append([Button(text="📞 Позвонить", type=ButtonType.URL, url=f"tel:{phone}")])
         broadcast_max_background(
             max_adapter,
             max_user_ids,
             broadcast_text,
-            kb_rows=max_kb_rows if max_kb_rows else None,
+            kb_rows=None,
         )
 
     cooldown_mins = settings.sos_cooldown_minutes
