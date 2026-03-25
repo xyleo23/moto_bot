@@ -116,6 +116,15 @@ ADMIN_ACCESS_DENIED = (
     "Вы не администратор. Если нужен доступ к администрированию — напишите в поддержку "
     "или воспользуйтесь контактами в разделе «📇 Полезные контакты» / «📞 Контакты»."
 )
+
+BROADCAST_HTML_HINT = (
+    "Текст уходит с <b>parse_mode=HTML</b>.\n"
+    "Можно: <code>&lt;b&gt;жирный&lt;/b&gt;</code>, <code>&lt;i&gt;курсив&lt;/i&gt;</code>, "
+    "<code>&lt;code&gt;код&lt;/code&gt;</code>, "
+    "<code>&lt;a href=\"https://…\"&gt;ссылка&lt;/a&gt;</code>.\n"
+    "Символы <code>&lt;</code> и <code>&gt;</code> в обычном тексте без тегов ломают разбор — "
+    "экранируй или пиши без них."
+)
 SOS_BTN_CALL = "📞 Позвонить"
 SOS_BTN_TELEGRAM = "✈️ Написать в Telegram"
 

@@ -300,7 +300,15 @@ async def msg_admin_users(message: Message, state: FSMContext, user=None):
     await message.answer(text, reply_markup=kb)
 
 
-@router.message(F.text == "🏙 Админы городов")
+@router.message(F.text == "🏙 Города")
+async def msg_admin_cities(message: Message, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    text, kb = await _admin_cities_list_text_kb()
+    await message.answer(text, reply_markup=kb)
+
+
+@router.message(F.text.in_({"🏙 Админы городов", "👤 Админы городов"}))
 async def msg_admin_city_admins(message: Message, user=None):
     if not _is_superadmin(message.from_user.id):
         return
@@ -320,6 +328,38 @@ async def msg_admin_settings(message: Message, user=None):
         return
     s = await get_subscription_settings()
     await message.answer(_settings_text(s), reply_markup=get_settings_kb(s))
+
+
+@router.message(F.text == "📧 Шаблоны")
+async def msg_admin_templates(message: Message, state: FSMContext, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    await state.clear()
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.notification_templates import TEMPLATE_KEYS
+
+    rows = []
+    for key, (_default, _desc) in TEMPLATE_KEYS.items():
+        label = key.replace("template_", "").replace("_", " ").title()
+        rows.append([InlineKeyboardButton(text=f"✏ {label}", callback_data=f"admin_tpl_edit_{key}")])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    await message.answer(
+        "<b>📧 Шаблоны уведомлений</b>\n\n"
+        "Выбери шаблон для редактирования. Поддерживаются плейсхолдеры: "
+        "<code>{profile}</code>, <code>{period}</code> и т.д.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@router.message(F.text == "📋 Логи")
+async def msg_admin_logs(message: Message, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    from src.services.activity_log_service import get_logs
+
+    logs, total = await get_logs(limit=LOGS_PAGE_SIZE, offset=0)
+    text, kb = _build_logs_page(logs, total, 0, None)
+    await message.answer(text, reply_markup=kb)
 
 
 @router.message(F.text == "📢 Рассылка")
@@ -351,7 +391,7 @@ async def msg_admin_contacts(message: Message, user=None):
     await message.answer("Контакты — управление", reply_markup=get_admin_contacts_menu_kb())
 
 
-@router.message(F.text == "📝 О нас")
+@router.message(F.text.in_({"📝 О нас", "📝 Текст «О нас»"}))
 async def msg_admin_text_about(message: Message, state: FSMContext, user=None):
     if not _is_superadmin(message.from_user.id):
         return
@@ -1370,13 +1410,10 @@ async def cb_admin_broadcast_segment(callback: CallbackQuery, state: FSMContext)
         return
     await state.update_data(admin_bc_segment=seg)
     await state.set_state(AdminBroadcastStates.message)
+    from src import texts as _texts
+
     await callback.message.edit_text(
-        "Введи текст рассылки одним сообщением.\n\n"
-        "Достаточно обычного текста — он уйдёт всем как написал.\n\n"
-        "Нужно оформление (жирный, ссылка) — смотри справку по HTML в Telegram "
-        "(как у @BotFather, режим HTML): теги b, i, a, code.\n\n"
-        "Символы «меньше/больше» в обычном тексте без тегов ломают HTML — тогда пиши без них "
-        "или оформляй только простым текстом.",
+        "Введи текст рассылки одним сообщением.\n\n" + _texts.BROADCAST_HTML_HINT,
     )
     await callback.answer()
 

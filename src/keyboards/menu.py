@@ -145,7 +145,7 @@ def get_back_to_menu_kb() -> InlineKeyboardMarkup:
 
 
 def get_admin_superadmin_kb() -> ReplyKeyboardMarkup:
-    """Постоянная клавиатура суперадмина (как в референсном проекте)."""
+    """Постоянная клавиатура суперадмина — те же разделы, что и в inline admin_panel."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -153,16 +153,21 @@ def get_admin_superadmin_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="👥 Пользователи"),
             ],
             [
-                KeyboardButton(text="🏙 Админы городов"),
-                KeyboardButton(text="📅 Мероприятия"),
+                KeyboardButton(text="🏙 Города"),
+                KeyboardButton(text="👤 Админы городов"),
             ],
+            [KeyboardButton(text="📅 Мероприятия")],
             [
                 KeyboardButton(text="⚙️ Настройки"),
                 KeyboardButton(text="📢 Рассылка"),
             ],
             [
+                KeyboardButton(text="📝 Текст «О нас»"),
+                KeyboardButton(text="📧 Шаблоны"),
+            ],
+            [
+                KeyboardButton(text="📋 Логи"),
                 KeyboardButton(text="📇 Контакты"),
-                KeyboardButton(text="📝 О нас"),
             ],
             [KeyboardButton(text="🏠 Главное меню")],
         ],

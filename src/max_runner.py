@@ -35,7 +35,7 @@ def set_tg_bot(bot) -> None:
 
 def _get_tg_bot():
     return _tg_bot
-from src.services.user import get_or_create_user, has_profile
+from src.services.user import get_or_create_user, has_profile, delete_user_data
 from src.services import max_registration_state as reg_state
 from src.services.registration_service import (
     finish_pilot_registration,
@@ -57,6 +57,12 @@ from src.keyboards.shared import (
     get_events_menu_rows,
     get_event_list_rows,
     get_event_detail_rows,
+    get_welcome_city_rows_for_cities,
+    get_welcome_role_rows,
+    get_max_documents_menu_rows,
+    get_max_delete_confirm_rows,
+    get_match_max_rows,
+    get_like_notification_max_rows,
 )
 from src.utils.progress import progress_prefix
 from src import texts
@@ -79,7 +85,16 @@ MAX_MENU_MESSAGE_TO_CMD: dict[str, str] = {
     "📅 Мероприятия": "events",
     "👤 Мой профиль": "profile",
     "ℹ️ О нас": "about",
+    "📄 Документы": "documents",
 }
+
+
+async def _max_send_legal_chunks(adapter: MaxAdapter, chat_id: str, content: str) -> None:
+    """Отправить длинный юридический текст частями (как в Telegram)."""
+    from src.handlers.legal import _chunk_text
+
+    for chunk in _chunk_text(content):
+        await adapter.send_message(chat_id, chunk, None)
 
 
 def _parse_russian_date(text: str):
@@ -1109,6 +1124,43 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
     if cmd == "about":
         await handle_about(adapter, ev.chat_id)
         return
+    if cmd == "documents":
+        await adapter.send_message(ev.chat_id, texts.LEGAL_DOCS_INTRO, get_max_documents_menu_rows())
+        return
+
+    low = text.lower()
+    if low.startswith("/privacy") or low == "privacy":
+        from src.handlers.legal import _chunk_text, _format_legal
+
+        for chunk in _chunk_text(_format_legal(texts.PRIVACY_TEXT)):
+            await adapter.send_message(ev.chat_id, chunk, None)
+        return
+    if low.startswith("/consent") or low == "consent":
+        from src.handlers.legal import _chunk_text, _format_legal
+
+        for chunk in _chunk_text(_format_legal(texts.CONSENT_TEXT)):
+            await adapter.send_message(ev.chat_id, chunk, None)
+        return
+    if low.startswith("/delete_data") or low.startswith("/deletedata"):
+        await adapter.send_message(
+            ev.chat_id,
+            texts.LEGAL_DELETE_CONFIRM,
+            get_max_delete_confirm_rows(),
+        )
+        return
+    if low.startswith("/support"):
+        from src.config import get_settings
+
+        s = get_settings()
+        try:
+            st = texts.LEGAL_SUPPORT_TEXT.format(
+                email=s.support_email,
+                username=s.support_username or "support",
+            )
+        except KeyError:
+            st = texts.LEGAL_SUPPORT_TEXT
+        await adapter.send_message(ev.chat_id, st, None)
+        return
 
     # Default
     await adapter.send_message(ev.chat_id, "Используй меню или /start", get_main_menu_rows())
@@ -1129,19 +1181,17 @@ async def handle_photo(adapter: MaxAdapter, ev: IncomingPhoto) -> None:
 
 async def handle_start(adapter: MaxAdapter, chat_id: str, user) -> None:
     """Handle /start flow — including resuming active FSM."""
-    WELCOME = (
-        "Привет! 👋\n"
-        "Это бот мото‑сообщества Екатеринбурга.\n\n"
-        "Здесь ты можешь:\n"
-        "• 🚨 Отправить SOS в экстренной ситуации\n"
-        "• 🏍 Найти мотопару\n"
-        "• 📇 Узнать полезные контакты\n"
-        "• 📅 Создавать и посещать мероприятия\n\n"
-        "Для начала выбери город и свою роль."
-    )
-
     if not user.city_id:
-        await adapter.send_message(chat_id, WELCOME, get_city_select_rows())
+        from src.services.admin_service import get_cities
+
+        cities = await get_cities()
+        intro = (
+            f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_LEGAL_DISCLAIMER}\n\n{texts.WELCOME_CITY_PROMPT}"
+        )
+        if cities:
+            await adapter.send_message(chat_id, intro, get_welcome_city_rows_for_cities(cities))
+        else:
+            await adapter.send_message(chat_id, intro, get_city_select_rows())
         return
 
     if not await has_profile(user):
@@ -1164,9 +1214,11 @@ async def handle_start(adapter: MaxAdapter, chat_id: str, user) -> None:
                 else:
                     await _start_passenger_registration(adapter, chat_id, user.platform_user_id)
             return
-        else:
-            await adapter.send_message(chat_id, WELCOME, get_role_select_rows())
-            return
+        role_intro = (
+            f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_LEGAL_DISCLAIMER}\n\n{texts.WELCOME_ROLE_PROMPT}"
+        )
+        await adapter.send_message(chat_id, role_intro, get_welcome_role_rows())
+        return
 
     await adapter.send_message(
         chat_id,
@@ -1251,25 +1303,102 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
             return
 
     # ── City selection ────────────────────────────────────────────────────────
-    if data == "city_ekb":
+    if data == "city_ekb" or (data.startswith("city_") and len(data) > 5):
         from src.models.city import City
+
         cb_user = (ev.raw.get("callback") or {}).get("user") or {}
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            r = await session.execute(select(City).where(City.name == "Екатеринбург"))
-            city = r.scalar_one_or_none()
-            if city:
-                user = await get_or_create_user(
-                    platform="max",
-                    platform_user_id=ev.user_id,
-                    username=cb_user.get("username"),
-                    first_name=cb_user.get("first_name") or cb_user.get("name"),
-                    city_id=city.id,
-                )
+        city = None
+        if data == "city_ekb":
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                r = await session.execute(select(City).where(City.name == "Екатеринбург"))
+                city = r.scalar_one_or_none()
+        else:
+            cid_str = data.replace("city_", "").strip()
+            try:
+                c_uuid = uuid.UUID(cid_str)
+            except (ValueError, TypeError):
+                c_uuid = None
+            if c_uuid:
+                session_factory = get_session_factory()
+                async with session_factory() as session:
+                    r = await session.execute(select(City).where(City.id == c_uuid))
+                    city = r.scalar_one_or_none()
+        if not city:
+            await adapter.send_message(
+                chat_id,
+                "Город не найден. Нажми /start и выбери город из списка.",
+                get_back_to_menu_rows(),
+            )
+            return
+        await get_or_create_user(
+            platform="max",
+            platform_user_id=ev.user_id,
+            username=cb_user.get("username"),
+            first_name=cb_user.get("first_name") or cb_user.get("name"),
+            city_id=city.id,
+        )
         await adapter.send_message(
             chat_id,
             "Отлично! Теперь выбери свою роль:",
             get_role_select_rows(),
+        )
+        return
+
+    # ── Юридические документы (как в Telegram) ───────────────────────────────
+    if data == "menu_documents":
+        await adapter.send_message(chat_id, texts.LEGAL_DOCS_INTRO, get_max_documents_menu_rows())
+        return
+    if data == "doc_privacy":
+        from src.handlers.legal import _format_legal
+
+        await _max_send_legal_chunks(adapter, chat_id, _format_legal(texts.PRIVACY_TEXT))
+        await adapter.send_message(chat_id, "Документы:", get_max_documents_menu_rows())
+        return
+    if data == "doc_agreement":
+        t = texts.AGREEMENT_TEXT
+        if "{support_email}" in t:
+            from src.handlers.legal import _format_legal
+
+            t = _format_legal(t)
+        await _max_send_legal_chunks(adapter, chat_id, t)
+        await adapter.send_message(chat_id, "Документы:", get_max_documents_menu_rows())
+        return
+    if data == "doc_consent":
+        from src.handlers.legal import _format_legal
+
+        await _max_send_legal_chunks(adapter, chat_id, _format_legal(texts.CONSENT_TEXT))
+        await adapter.send_message(chat_id, "Документы:", get_max_documents_menu_rows())
+        return
+    if data == "doc_delete":
+        await adapter.send_message(
+            chat_id,
+            texts.LEGAL_DELETE_CONFIRM,
+            get_max_delete_confirm_rows(),
+        )
+        return
+    if data == "doc_support":
+        from src.config import get_settings
+
+        s = get_settings()
+        try:
+            st = texts.LEGAL_SUPPORT_TEXT.format(
+                email=s.support_email,
+                username=s.support_username or "support",
+            )
+        except KeyError:
+            st = texts.LEGAL_SUPPORT_TEXT
+        await adapter.send_message(chat_id, st, None)
+        await adapter.send_message(chat_id, "Документы:", get_max_documents_menu_rows())
+        return
+    if data == "confirm_delete_data":
+        if user:
+            await delete_user_data(user)
+        await adapter.send_message(chat_id, texts.LEGAL_DELETE_DONE, get_main_menu_rows())
+        await adapter.send_message(
+            chat_id,
+            "Чтобы зарегистрироваться снова, нажми /start или кнопку меню.",
+            get_main_menu_rows(),
         )
         return
 
@@ -1357,6 +1486,13 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
             await handle_motopair_like(
                 adapter, ev, user, str(pid), role, is_like, list_offset=off,
             )
+        return
+
+    if data.startswith("reply_like_"):
+        await _handle_max_reply_like(adapter, chat_id, user, data)
+        return
+    if data.startswith("reply_skip_"):
+        await adapter.send_message(chat_id, "Хорошо, пропускаем.", get_back_to_menu_rows())
         return
 
     # ── Contacts callbacks ────────────────────────────────────────────────────
@@ -1670,6 +1806,60 @@ async def handle_motopair_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
     await adapter.send_message(chat_id, "🏍 Мотопара\n\nВыбери категорию:", kb)
 
 
+async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: str) -> None:
+    """Взаимный лайк из уведомления (MAX)."""
+    from sqlalchemy import select
+    from src.models.user import User
+    from src.services.motopair_service import process_like, get_profile_info_text
+    from src.services.notification_templates import get_template
+    from src.services.cross_platform_notify import send_text_to_all_identities
+    from src.services.broadcast import get_max_adapter
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    rest = data.replace("reply_like_", "")
+    try:
+        from_uid = uuid.UUID(rest)
+    except ValueError:
+        return
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        res = await session.execute(select(User).where(User.id == from_uid))
+        from_user = res.scalar_one_or_none()
+    if not from_user:
+        await adapter.send_message(chat_id, "Пользователь не найден.", get_back_to_menu_rows())
+        return
+    from_canon = effective_user_id(from_user)
+    await process_like(effective_user_id(user), from_canon, is_like=True)
+    from_text, _ = await get_profile_info_text(from_canon)
+    to_text, _ = await get_profile_info_text(effective_user_id(user))
+    msg_self = await get_template("template_mutual_like_self", profile=from_text)
+    await adapter.send_message(
+        chat_id,
+        msg_self,
+        get_match_max_rows(from_user.platform_username),
+    )
+    msg_target = await get_template("template_mutual_like_reply", profile=to_text)
+    tg_mk = []
+    if user.platform_username:
+        tg_mk.append([InlineKeyboardButton(
+            text="💬 Написать",
+            url=f"https://t.me/{user.platform_username}",
+        )])
+    elif user.platform_user_id:
+        tg_mk.append([InlineKeyboardButton(
+            text="💬 Написать",
+            url=f"tg://user?id={user.platform_user_id}",
+        )])
+    await send_text_to_all_identities(
+        from_canon,
+        msg_target,
+        telegram_bot=_get_tg_bot(),
+        max_adapter=get_max_adapter(),
+        tg_reply_markup=InlineKeyboardMarkup(inline_keyboard=tg_mk) if tg_mk else None,
+        max_kb_rows=get_match_max_rows(user.platform_username),
+    )
+
+
 async def handle_motopair_list(
     adapter: MaxAdapter, chat_id: str, user, role: str, offset: int = 0
 ) -> None:
@@ -1729,6 +1919,9 @@ async def handle_motopair_like(
         from src.services.notification_templates import get_template
         from src.services.activity_log_service import log_event
         from src.models.activity_log import ActivityEventType
+        from src.services.cross_platform_notify import send_text_to_all_identities
+        from src.services.broadcast import get_max_adapter
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
         await log_event(
             ActivityEventType.MUTUAL_LIKE,
@@ -1736,83 +1929,53 @@ async def handle_motopair_like(
             data={"target_user_id": str(target_user.id), "from_user_id": str(eff_from)},
         )
 
-        # Show target's contact info to current (MAX) user
         from_text, _ = await get_profile_info_text(target_user.id)
-        match_kb = []
-        if target_user.platform_username:
-            match_kb.append([Button(
-                "💬 Написать",
-                type=ButtonType.URL,
-                url=f"https://t.me/{target_user.platform_username}",
-            )])
         msg_self = await get_template("template_mutual_like_self", profile=from_text)
-        await adapter.send_message(ev.chat_id, msg_self, match_kb if match_kb else get_back_to_menu_rows())
+        self_rows = get_match_max_rows(target_user.platform_username)
+        await adapter.send_message(ev.chat_id, msg_self, self_rows)
 
-        # Notify the target user on their platform
         to_text, _ = await get_profile_info_text(eff_from)
-        if result.get("target_platform_user_id"):
-            target_platform = result.get("target_platform")
-            msg_target = await get_template("template_mutual_like_target", profile=to_text)
-            if target_platform and target_platform.value == "max":
-                # Notify on MAX
-                max_match_kb = []
-                if user.platform_username:
-                    max_match_kb.append([Button(
-                        "💬 Написать",
-                        type=ButtonType.URL,
-                        url=f"https://t.me/{user.platform_username}",
-                    )])
-                try:
-                    await adapter.send_message(
-                        str(result["target_platform_user_id"]), msg_target,
-                        max_match_kb if max_match_kb else None
-                    )
-                except Exception as e:
-                    logger.warning("MAX: cannot notify matched user %s: %s", result["target_platform_user_id"], e)
-            else:
-                # Notify on Telegram
-                tg_bot_instance = _get_tg_bot()
-                if tg_bot_instance:
-                    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                    tg_match_kb = []
-                    if user.platform_username:
-                        tg_match_kb.append([InlineKeyboardButton(
-                            text="💬 Написать в MAX?",
-                            url=f"https://t.me/{user.platform_username}",
-                        )])
-                    try:
-                        await tg_bot_instance.send_message(
-                            result["target_platform_user_id"],
-                            msg_target,
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=tg_match_kb) if tg_match_kb else None,
-                        )
-                    except Exception as e:
-                        logger.warning("TG: cannot notify matched user %s: %s", result["target_platform_user_id"], e)
+        msg_target = await get_template("template_mutual_like_target", profile=to_text)
+        tg_mk = []
+        if user.platform_username:
+            tg_mk.append([InlineKeyboardButton(
+                text="💬 Написать",
+                url=f"https://t.me/{user.platform_username}",
+            )])
+        elif user.platform_user_id:
+            tg_mk.append([InlineKeyboardButton(
+                text="💬 Написать",
+                url=f"tg://user?id={user.platform_user_id}",
+            )])
+        await send_text_to_all_identities(
+            result["target_user_id"],
+            msg_target,
+            telegram_bot=_get_tg_bot(),
+            max_adapter=get_max_adapter(),
+            tg_reply_markup=InlineKeyboardMarkup(inline_keyboard=tg_mk) if tg_mk else None,
+            max_kb_rows=get_match_max_rows(user.platform_username),
+        )
 
     elif is_like:
-        # Notify the liked user (like received)
         from src.services.motopair_service import get_profile_info_text
         from src.services.notification_templates import get_template
-        from_text, _ = await get_profile_info_text(eff_from)
-        if result.get("target_platform_user_id"):
-            target_platform = result.get("target_platform")
-            notify_text = await get_template("template_like_received", profile=from_text)
-            if target_platform and target_platform.value == "max":
-                try:
-                    await adapter.send_message(
-                        str(result["target_platform_user_id"]), notify_text
-                    )
-                except Exception as e:
-                    logger.warning("MAX: cannot notify like user %s: %s", result["target_platform_user_id"], e)
-            else:
-                tg_bot_instance = _get_tg_bot()
-                if tg_bot_instance:
-                    try:
-                        await tg_bot_instance.send_message(
-                            result["target_platform_user_id"], notify_text
-                        )
-                    except Exception as e:
-                        logger.warning("TG: cannot notify like user %s: %s", result["target_platform_user_id"], e)
+        from src.services.cross_platform_notify import notify_like_received_cross_platform
+        from src.services.broadcast import get_max_adapter
+        from src.keyboards.motopair import get_like_notification_kb
+
+        from_text, from_photo = await get_profile_info_text(eff_from)
+        notify_text = await get_template("template_like_received", profile=from_text)
+        kb_tg = get_like_notification_kb(str(eff_from))
+        max_rows = get_like_notification_max_rows(str(eff_from))
+        await notify_like_received_cross_platform(
+            result["target_user_id"],
+            notify_text,
+            from_photo,
+            telegram_bot=_get_tg_bot(),
+            max_adapter=get_max_adapter(),
+            tg_reply_markup=kb_tg,
+            max_kb_rows=max_rows,
+        )
 
         await handle_motopair_list(adapter, ev.chat_id, user, role, list_offset)
     else:

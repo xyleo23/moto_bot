@@ -591,22 +591,22 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
         from_text, _ = await get_profile_info_text(target_user.id)
         to_text, _ = await get_profile_info_text(eff_from)
 
-        if bot and result["target_platform_user_id"]:
-            try:
-                from src.services.notification_templates import get_template
-                msg_target = await get_template("template_mutual_like_target", profile=to_text)
-                await bot.send_message(
-                    chat_id=result["target_platform_user_id"],
-                    text=msg_target,
-                    reply_markup=get_match_kb(
-                        callback.from_user.username,
-                        callback.from_user.id,
-                    ),
-                )
-            except Exception as e:
-                logger.warning(
-                    "Cannot notify match user %s: %s", result["target_platform_user_id"], e
-                )
+        if bot:
+            from src.services.notification_templates import get_template
+            from src.services.cross_platform_notify import send_text_to_all_identities
+            from src.services.broadcast import get_max_adapter
+            from src.keyboards.shared import get_match_max_rows
+
+            msg_target = await get_template("template_mutual_like_target", profile=to_text)
+            tg_mk = get_match_kb(callback.from_user.username, callback.from_user.id)
+            await send_text_to_all_identities(
+                result["target_user_id"],
+                msg_target,
+                telegram_bot=bot,
+                max_adapter=get_max_adapter(),
+                tg_reply_markup=tg_mk,
+                max_kb_rows=get_match_max_rows(callback.from_user.username),
+            )
 
         from src.services.notification_templates import get_template
         msg_self = await get_template("template_mutual_like_self", profile=from_text)
@@ -618,29 +618,24 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
             ),
         )
     else:
-        if bot and result["target_platform_user_id"]:
+        if bot:
             from_text, from_photo = await get_profile_info_text(eff_from)
-            try:
-                from src.services.notification_templates import get_template
-                notify_text = await get_template("template_like_received", profile=from_text)
-                kb = get_like_notification_kb(str(user.id))
-                if from_photo:
-                    await bot.send_photo(
-                        chat_id=result["target_platform_user_id"],
-                        photo=from_photo,
-                        caption=notify_text,
-                        reply_markup=kb,
-                    )
-                else:
-                    await bot.send_message(
-                        chat_id=result["target_platform_user_id"],
-                        text=notify_text,
-                        reply_markup=kb,
-                    )
-            except Exception as e:
-                logger.warning(
-                    "Cannot notify like user %s: %s", result["target_platform_user_id"], e
-                )
+            from src.services.notification_templates import get_template
+            from src.services.cross_platform_notify import notify_like_received_cross_platform
+            from src.services.broadcast import get_max_adapter
+            from src.keyboards.shared import get_like_notification_max_rows
+
+            notify_text = await get_template("template_like_received", profile=from_text)
+            kb = get_like_notification_kb(str(eff_from))
+            await notify_like_received_cross_platform(
+                result["target_user_id"],
+                notify_text,
+                from_photo,
+                telegram_bot=bot,
+                max_adapter=get_max_adapter(),
+                tg_reply_markup=kb,
+                max_kb_rows=get_like_notification_max_rows(str(eff_from)),
+            )
 
         await _show_motopair_card_at(callback.message, user, role, list_offset)
     await callback.answer()
@@ -702,26 +697,29 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
         await callback.answer("Пользователь не найден.", show_alert=True)
         return
 
-    result = await process_like(effective_user_id(user), from_user_uuid, is_like=True)
-    from_text, _ = await get_profile_info_text(from_user_uuid)
+    from_canon = effective_user_id(from_user)
+    result = await process_like(effective_user_id(user), from_canon, is_like=True)
+    from_text, _ = await get_profile_info_text(from_canon)
 
     match_kb_target = get_match_kb(user.platform_username, user.platform_user_id)
     match_kb_self = get_match_kb(from_user.platform_username, from_user.platform_user_id)
 
-    if bot and from_user.platform_user_id:
-        to_text, _ = await get_profile_info_text(user.id)
-        try:
-            from src.services.notification_templates import get_template
-            msg = await get_template("template_mutual_like_reply", profile=to_text)
-            await bot.send_message(
-                chat_id=from_user.platform_user_id,
-                text=msg,
-                reply_markup=match_kb_target,
-            )
-        except Exception as e:
-            logger.warning(
-                "Cannot notify match reply user %s: %s", from_user.platform_user_id, e
-            )
+    if bot:
+        to_text, _ = await get_profile_info_text(effective_user_id(user))
+        from src.services.notification_templates import get_template
+        from src.services.cross_platform_notify import send_text_to_all_identities
+        from src.services.broadcast import get_max_adapter
+        from src.keyboards.shared import get_match_max_rows
+
+        msg = await get_template("template_mutual_like_reply", profile=to_text)
+        await send_text_to_all_identities(
+            from_canon,
+            msg,
+            telegram_bot=bot,
+            max_adapter=get_max_adapter(),
+            tg_reply_markup=match_kb_target,
+            max_kb_rows=get_match_max_rows(user.platform_username),
+        )
 
     from src.services.notification_templates import get_template
     text_self = await get_template("template_mutual_like_self", profile=from_text)

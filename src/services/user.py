@@ -1,6 +1,6 @@
 """User service."""
 import uuid
-from sqlalchemy import select, delete, update
+from sqlalchemy import select, delete, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.base import get_session_factory
@@ -67,6 +67,24 @@ async def get_user_by_platform(platform: str, platform_user_id: int) -> User | N
 
 async def is_superadmin(platform_user_id: int) -> bool:
     return platform_user_id in get_settings().superadmin_ids
+
+
+async def get_all_platform_identities(canonical_user_id: uuid.UUID) -> list[User]:
+    """
+    Все записи User, относящиеся к одному человеку: каноническая запись и все
+    привязанные по linked_user_id (TG + MAX и т.д.). Для кросс-платформенных уведомлений.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(User).where(
+                or_(
+                    User.id == canonical_user_id,
+                    User.linked_user_id == canonical_user_id,
+                )
+            )
+        )
+        return list(r.scalars().all())
 
 
 async def has_profile(user: User) -> bool:

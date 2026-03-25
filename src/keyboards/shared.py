@@ -11,11 +11,80 @@ def get_main_menu_rows() -> list[KeyboardRow]:
         [Button("📅 Мероприятия", type=ButtonType.MESSAGE)],
         [Button("👤 Мой профиль", type=ButtonType.MESSAGE)],
         [Button("ℹ️ О нас", type=ButtonType.MESSAGE)],
+        [Button("📄 Документы", payload="menu_documents")],
     ]
 
 
 def get_city_select_rows() -> list[KeyboardRow]:
     return [[Button("Екатеринбург", payload="city_ekb")]]
+
+
+def get_welcome_city_rows_for_cities(cities: list) -> list[KeyboardRow]:
+    """Города + юридические кнопки (как в Telegram welcome_with_city)."""
+    rows: list[KeyboardRow] = [[Button(c.name, payload=f"city_{c.id}")] for c in cities]
+    rows.append([
+        Button("🔒 Политика", payload="doc_privacy"),
+        Button("📄 Соглашение", payload="doc_agreement"),
+    ])
+    rows.append([Button("✅ Согласие на ПД", payload="doc_consent")])
+    return rows
+
+
+def get_welcome_role_rows() -> list[KeyboardRow]:
+    """Роль + юридические кнопки."""
+    return [
+        [
+            Button("Я Пилот", payload="role_pilot"),
+            Button("Я Двойка", payload="role_passenger"),
+        ],
+        [
+            Button("🔒 Политика", payload="doc_privacy"),
+            Button("📄 Соглашение", payload="doc_agreement"),
+        ],
+        [Button("✅ Согласие на ПД", payload="doc_consent")],
+    ]
+
+
+def get_max_documents_menu_rows() -> list[KeyboardRow]:
+    return [
+        [Button("🔒 Политика", payload="doc_privacy")],
+        [Button("📄 Пользовательское соглашение", payload="doc_agreement")],
+        [Button("✅ Согласие на обработку ПД", payload="doc_consent")],
+        [Button("🗑 Удалить мои данные", payload="doc_delete")],
+        [Button("📞 Поддержка", payload="doc_support")],
+        [Button("« Назад в меню", payload="menu_main")],
+    ]
+
+
+def get_max_delete_confirm_rows() -> list[KeyboardRow]:
+    return [
+        [Button("✅ Да, удалить", payload="confirm_delete_data")],
+        [Button("❌ Отмена", payload="menu_documents")],
+    ]
+
+
+def get_match_max_rows(telegram_username: str | None) -> list[KeyboardRow]:
+    """Кнопка «Написать» для MAX после взаимного лайка (только t.me)."""
+    rows: list[KeyboardRow] = []
+    if telegram_username:
+        rows.append([
+            Button(
+                "💬 Написать в Telegram",
+                type=ButtonType.URL,
+                url=f"https://t.me/{telegram_username}",
+            ),
+        ])
+    rows.append([Button("« В меню", payload="menu_motopair")])
+    return rows
+
+
+def get_like_notification_max_rows(from_user_internal_id: str) -> list[KeyboardRow]:
+    return [
+        [
+            Button("💚 Взаимно!", payload=f"reply_like_{from_user_internal_id}"),
+            Button("👎 Пропустить", payload=f"reply_skip_{from_user_internal_id}"),
+        ],
+    ]
 
 
 def get_role_select_rows() -> list[KeyboardRow]:

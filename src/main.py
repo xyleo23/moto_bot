@@ -284,6 +284,10 @@ async def run_max(shared_adapter=None):
             {"name": "events", "description": "📅 Мероприятия"},
             {"name": "profile", "description": "👤 Мой профиль"},
             {"name": "about", "description": "ℹ️ О нас"},
+            {"name": "privacy", "description": "🔒 Политика конфиденциальности"},
+            {"name": "consent", "description": "✅ Согласие на обработку ПД"},
+            {"name": "delete_data", "description": "🗑 Удалить мои данные"},
+            {"name": "support", "description": "📞 Поддержка"},
         ])
         logger.info("MAX bot commands registered")
     except Exception as e:
