@@ -13,7 +13,7 @@ from src.keyboards.menu import (
     get_main_menu_kb_for_user,
     get_city_select_kb,
     get_role_select_kb,
-    get_persistent_kb,
+    get_reply_keyboard_for_user,
     get_welcome_legal_kb,
     get_welcome_with_city_kb,
     get_welcome_with_role_kb,
@@ -52,7 +52,10 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
             return
 
         # Show persistent keyboard once on /start, then inline menu
-        await message.answer("⌨️", reply_markup=get_persistent_kb())
+        await message.answer(
+            "⌨️",
+            reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
+        )
         await message.answer(
             texts.WELCOME_RETURNING,
             reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
@@ -86,7 +89,7 @@ async def cmd_cancel(message: Message, state: FSMContext, user=None):
         await state.clear()
     await message.answer(
         texts.FSM_CANCEL_TEXT,
-        reply_markup=get_persistent_kb(),
+        reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
     )
     await message.answer(
         "Меню:",

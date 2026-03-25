@@ -108,7 +108,14 @@ SOS_ALL_CLEAR_BROADCAST = "✅ Отбой! {name} сообщает: помощь
 SOS_BROADCAST_TYPE = "🚨 SOS: {type_label}\n\n{profile}\n\n"
 SOS_BROADCAST_COMMENT = "Комментарий: {comment}\n\n"
 # & must be &amp; when message uses Telegram HTML parse_mode
-SOS_BROADCAST_MAP = "📍 https://yandex.ru/maps/?ll={lon},{lat}&amp;z=16"
+SOS_BROADCAST_MAP = (
+    "📍 https://yandex.ru/maps/?pt={lon},{lat}&amp;z=17&amp;l=map"
+)
+
+ADMIN_ACCESS_DENIED = (
+    "Вы не администратор. Если нужен доступ к администрированию — напишите в поддержку "
+    "или воспользуйтесь контактами в разделе «📇 Полезные контакты» / «📞 Контакты»."
+)
 SOS_BTN_CALL = "📞 Позвонить"
 SOS_BTN_TELEGRAM = "✈️ Написать в Telegram"
 

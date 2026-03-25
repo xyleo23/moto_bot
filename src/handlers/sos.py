@@ -285,6 +285,7 @@ def _sos_cooldown_kb(remaining_seconds: int) -> InlineKeyboardMarkup:
     """Keyboard shown when cooldown is active."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
+        [InlineKeyboardButton(text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear")],
         [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
     ])
 
@@ -311,6 +312,7 @@ async def cb_sos_check_ready(callback: CallbackQuery, state: FSMContext, user=No
             secs = remaining % 60
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
+                [InlineKeyboardButton(text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear")],
                 [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
             ])
             try:

@@ -47,6 +47,21 @@ async def get_main_menu_kb_for_user(platform_user_id: int | None, user) -> Inlin
     return get_main_menu_kb(platform_user_id=platform_user_id, show_admin=show_admin)
 
 
+async def get_reply_keyboard_for_user(platform_user_id: int | None, user) -> ReplyKeyboardMarkup:
+    """Нижняя reply-клавиатура: обычное меню или админская — как у inline-главного меню."""
+    from src.config import get_settings
+    from src.services.admin_service import is_city_admin, get_city_admin_city_id
+
+    if platform_user_id is not None:
+        if platform_user_id in get_settings().superadmin_ids:
+            return get_admin_superadmin_kb()
+        if user and user.city_id and await is_city_admin(platform_user_id, user.city_id):
+            return get_admin_city_kb()
+        if await get_city_admin_city_id(platform_user_id) is not None:
+            return get_admin_city_kb()
+    return get_persistent_kb()
+
+
 def get_persistent_kb() -> ReplyKeyboardMarkup:
     """
     Persistent bottom keyboard always visible.

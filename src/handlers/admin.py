@@ -20,8 +20,6 @@ from src.keyboards.menu import (
     get_back_to_menu_kb,
     get_admin_superadmin_kb,
     get_admin_city_kb,
-    get_persistent_kb,
-    get_main_menu_kb,
 )
 from src.services.admin_service import (
     get_stats,
@@ -121,13 +119,9 @@ async def cmd_admin(message: Message, user=None):
             reply_markup=get_admin_city_kb(),
         )
         return
-    # Нет доступа — показываем ID для отладки
-    await message.answer(
-        f"⚠️ Доступ к админ-панели закрыт.\n\n"
-        f"Твой Telegram ID: <code>{message.from_user.id}</code>\n\n"
-        f"Добавь его в <code>SUPERADMIN_IDS</code> в .env на сервере, "
-        f"перезапусти контейнер и нажми /start заново."
-    )
+    from src import texts as _texts
+
+    await message.answer(_texts.ADMIN_ACCESS_DENIED)
 
 
 @router.callback_query(F.data == "admin_panel")
@@ -378,11 +372,16 @@ async def msg_admin_text_about(message: Message, state: FSMContext, user=None):
 async def msg_admin_main_menu(message: Message, state: FSMContext, user=None):
     """Return to main menu — always works as escape hatch (e.g. after losing admin rights)."""
     from src import texts
+    from src.keyboards.menu import get_main_menu_kb_for_user, get_reply_keyboard_for_user
+
     await state.clear()
-    await message.answer("⌨️", reply_markup=get_persistent_kb())
+    await message.answer(
+        "⌨️",
+        reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
+    )
     await message.answer(
         texts.WELCOME_RETURNING,
-        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+        reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
     )
 
 

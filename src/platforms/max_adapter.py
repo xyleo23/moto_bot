@@ -266,9 +266,8 @@ class MaxAdapter(PlatformAdapter):
         """POST /answers?callback_id=... — acknowledge button press with optional notification."""
         if not callback_id:
             return
-        body: dict = {}
-        if text:
-            body["notification"] = text
+        # MAX API requires at least one of `message` or `notification` in the body.
+        body: dict = {"notification": (text or "").strip() or " "}
         try:
             await self._request(
                 "POST",

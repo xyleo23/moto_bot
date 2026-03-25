@@ -65,8 +65,8 @@ def get_contacts_page_rows(category: str, offset: int, has_more: bool) -> list[K
 def get_motopair_profile_rows(profile_id: str, role: str, offset: int, has_more: bool) -> list[KeyboardRow]:
     rows = [
         [
-            Button("👍 Лайк", payload=f"like_{profile_id}_{role}"),
-            Button("👎 Дизлайк", payload=f"dislike_{profile_id}_{role}"),
+            Button("👍 Лайк", payload=f"like_{profile_id}_{role}_{offset}"),
+            Button("👎 Дизлайк", payload=f"dislike_{profile_id}_{role}_{offset}"),
         ],
     ]
     if has_more:

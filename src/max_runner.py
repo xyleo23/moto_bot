@@ -1348,15 +1348,15 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         offset = int(parts[1]) if len(parts) > 1 else 0
         await handle_motopair_list(adapter, chat_id, user, role, offset)
         return
-    if data.startswith("like_"):
-        parts = data.replace("like_", "").rsplit("_", 1)
-        if len(parts) == 2:
-            await handle_motopair_like(adapter, ev, user, parts[0], parts[1], is_like=True)
-        return
-    if data.startswith("dislike_"):
-        parts = data.replace("dislike_", "").rsplit("_", 1)
-        if len(parts) == 2:
-            await handle_motopair_like(adapter, ev, user, parts[0], parts[1], is_like=False)
+    if data.startswith("like_") or data.startswith("dislike_"):
+        from src.services.motopair_service import parse_motopair_like_callback
+
+        parsed = parse_motopair_like_callback(data)
+        if parsed:
+            pid, role, off, is_like = parsed
+            await handle_motopair_like(
+                adapter, ev, user, str(pid), role, is_like, list_offset=off,
+            )
         return
 
     # ── Contacts callbacks ────────────────────────────────────────────────────
@@ -1472,7 +1472,11 @@ async def _handle_sos_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
     remaining = await check_sos_cooldown(effective_user_id(user))
     if remaining > 0:
         mins, secs = remaining // 60, remaining % 60
-        kb = [[Button(texts.SOS_CHECK_READY, payload="sos_check_ready")], [Button("« Назад", payload="menu_main")]]
+        kb = [
+            [Button(texts.SOS_CHECK_READY, payload="sos_check_ready")],
+            [Button(texts.SOS_ALL_CLEAR_BTN, payload="sos_all_clear")],
+            [Button("« Назад", payload="menu_main")],
+        ]
         await adapter.send_message(
             chat_id,
             texts.SOS_READY_WAIT.format(mins=mins, secs=secs),
@@ -1541,7 +1545,11 @@ async def _handle_sos_send(
     )
     if not ok:
         mins, secs = remaining // 60, remaining % 60
-        kb = [[Button(texts.SOS_CHECK_READY, payload="sos_check_ready")], [Button("« Назад", payload="menu_main")]]
+        kb = [
+            [Button(texts.SOS_CHECK_READY, payload="sos_check_ready")],
+            [Button(texts.SOS_ALL_CLEAR_BTN, payload="sos_all_clear")],
+            [Button("« Назад", payload="menu_main")],
+        ]
         await adapter.send_message(chat_id, texts.SOS_READY_WAIT.format(mins=mins, secs=secs), kb)
         return
 
@@ -1605,7 +1613,11 @@ async def _handle_sos_check_ready(adapter: MaxAdapter, chat_id: str, user_id: in
         await adapter.send_message(chat_id, texts.SOS_READY_NOW, kb)
     else:
         mins, secs = remaining // 60, remaining % 60
-        kb = [[Button(texts.SOS_CHECK_READY, payload="sos_check_ready")], [Button("« Назад", payload="menu_main")]]
+        kb = [
+            [Button(texts.SOS_CHECK_READY, payload="sos_check_ready")],
+            [Button(texts.SOS_ALL_CLEAR_BTN, payload="sos_all_clear")],
+            [Button("« Назад", payload="menu_main")],
+        ]
         await adapter.send_message(chat_id, texts.SOS_READY_WAIT.format(mins=mins, secs=secs), kb)
 
 
@@ -1689,7 +1701,14 @@ async def handle_motopair_list(
 
 
 async def handle_motopair_like(
-    adapter: MaxAdapter, ev: IncomingCallback, user, profile_id_str: str, role: str, is_like: bool
+    adapter: MaxAdapter,
+    ev: IncomingCallback,
+    user,
+    profile_id_str: str,
+    role: str,
+    is_like: bool,
+    *,
+    list_offset: int = 0,
 ) -> None:
     from src.services.motopair_service import get_user_for_profile, process_like
 
@@ -1795,10 +1814,10 @@ async def handle_motopair_like(
                     except Exception as e:
                         logger.warning("TG: cannot notify like user %s: %s", result["target_platform_user_id"], e)
 
-        await adapter.send_message(ev.chat_id, "👍 Лайк отправлен!", get_back_to_menu_rows())
+        await handle_motopair_list(adapter, ev.chat_id, user, role, list_offset)
     else:
-        await adapter.send_message(ev.chat_id, "👎 Дизлайк учтён.", get_back_to_menu_rows())
-    await handle_motopair_list(adapter, ev.chat_id, user, role, 0)
+        next_off = list_offset if result.get("blacklisted") else list_offset + 1
+        await handle_motopair_list(adapter, ev.chat_id, user, role, next_off)
 
 
 async def handle_contacts_menu(adapter: MaxAdapter, chat_id: str, user) -> None:

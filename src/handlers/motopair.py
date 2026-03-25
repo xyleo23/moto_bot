@@ -175,10 +175,69 @@ def _format_profile(profile, username: str | None = None) -> str:
     )
 
 
+async def _show_motopair_card_at(message: Message, user, role: str, offset: int) -> None:
+    """Показать анкету с индексом offset (после лайка/скипа — та же логика, что у списка)."""
+    from src.services.motopair_service import get_next_profile, get_user_for_profile
+    from src.services.filter_store import get_filter
+
+    eff_id = effective_user_id(user)
+    filters = await get_filter(eff_id, role)
+    profile, has_more = await get_next_profile(eff_id, role, offset=offset, filters=filters)
+
+    empty_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=texts.MOTOPAIR_RAISE_BTN,
+            callback_data="profile_raise",
+        )],
+        [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+    ])
+
+    if not profile:
+        try:
+            await message.edit_text(texts.MOTOPAIR_NO_PROFILES, reply_markup=empty_kb)
+        except Exception:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await message.answer(texts.MOTOPAIR_NO_PROFILES, reply_markup=empty_kb)
+        return
+
+    profile_owner = await get_user_for_profile(profile.id, role)
+    owner_username = profile_owner.platform_username if profile_owner else None
+    text = _format_profile(profile, username=owner_username)
+    kb = _profile_kb_with_report(str(profile.id), role, offset, has_more)
+    if profile.photo_file_id:
+        try:
+            await message.delete()
+            await message.answer_photo(
+                photo=profile.photo_file_id,
+                caption=text,
+                reply_markup=kb,
+            )
+        except Exception as e:
+            logger.warning("_show_motopair_card_at: answer_photo failed, fallback: %s", e)
+            try:
+                await message.edit_text(text, reply_markup=kb)
+            except Exception:
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
+                await message.answer(text, reply_markup=kb)
+    else:
+        try:
+            await message.edit_text(text, reply_markup=kb)
+        except Exception:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await message.answer(text, reply_markup=kb)
+
+
 @router.callback_query(F.data.startswith("motopair_list_") | F.data.startswith("motopair_next_"))
 async def cb_motopair_list(callback: CallbackQuery, user=None):
-    from src.services.motopair_service import get_next_profile
-    from src.services.filter_store import get_filter
     from src.services.subscription import check_subscription_required
 
     if not user:
@@ -198,44 +257,8 @@ async def cb_motopair_list(callback: CallbackQuery, user=None):
         await callback.answer()
         return
 
-    from src.services.motopair_service import get_user_for_profile
-
     role, offset = _parse_motopair_cb(callback.data)
-    eff_id = effective_user_id(user)
-    filters = await get_filter(eff_id, role)
-    profile, has_more = await get_next_profile(eff_id, role, offset=offset, filters=filters)
-
-    if not profile:
-        # Improved empty state with "raise profile" CTA
-        await callback.message.edit_text(
-            texts.MOTOPAIR_NO_PROFILES,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text=texts.MOTOPAIR_RAISE_BTN,
-                    callback_data="profile_raise",
-                )],
-                [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-            ]),
-        )
-    else:
-        # Fetch profile owner's username for clickable link
-        profile_owner = await get_user_for_profile(profile.id, role)
-        owner_username = profile_owner.platform_username if profile_owner else None
-        text = _format_profile(profile, username=owner_username)
-        kb = _profile_kb_with_report(str(profile.id), role, offset, has_more)
-        if profile.photo_file_id:
-            try:
-                await callback.message.delete()
-                await callback.message.answer_photo(
-                    photo=profile.photo_file_id,
-                    caption=text,
-                    reply_markup=kb,
-                )
-            except Exception as e:
-                logger.warning("cb_motopair_profile: answer_photo failed, fallback to edit_text: %s", e)
-                await callback.message.edit_text(text, reply_markup=kb)
-        else:
-            await callback.message.edit_text(text, reply_markup=kb)
+    await _show_motopair_card_at(callback.message, user, role, offset)
     await callback.answer()
 
 
@@ -248,8 +271,14 @@ def _profile_kb_with_report(
     """Build profile view keyboard with like/dislike/next + report button."""
     rows = [
         [
-            InlineKeyboardButton(text="❤️ Лайк", callback_data=f"like_{profile_id}_{role}"),
-            InlineKeyboardButton(text="👎 Пропустить", callback_data=f"dislike_{profile_id}_{role}"),
+            InlineKeyboardButton(
+                text="❤️ Лайк",
+                callback_data=f"like_{profile_id}_{role}_{offset}",
+            ),
+            InlineKeyboardButton(
+                text="👎 Пропустить",
+                callback_data=f"dislike_{profile_id}_{role}_{offset}",
+            ),
         ],
     ]
     if has_more:
@@ -527,26 +556,21 @@ async def city_admin_block_reason(message: Message, state: FSMContext, user=None
 @router.callback_query(F.data.startswith("like_"))
 async def cb_like(callback: CallbackQuery, user=None, bot=None):
     from src.services.motopair_service import (
-        process_like, get_user_for_profile, get_profile_info_text
+        process_like,
+        get_user_for_profile,
+        get_profile_info_text,
+        parse_motopair_like_callback,
     )
 
     if not user:
         await callback.answer("Ошибка.", show_alert=True)
         return
 
-    parts = callback.data.split("_")
-    if len(parts) < 3:
+    parsed = parse_motopair_like_callback(callback.data)
+    if not parsed:
         await callback.answer()
         return
-
-    profile_id_str = parts[1]
-    role = parts[2]
-
-    try:
-        profile_uuid = uuid.UUID(profile_id_str)
-    except ValueError:
-        await callback.answer()
-        return
+    profile_uuid, role, list_offset, _is_like = parsed
 
     target_user = await get_user_for_profile(profile_uuid, role)
     if not target_user:
@@ -618,34 +642,27 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
                     "Cannot notify like user %s: %s", result["target_platform_user_id"], e
                 )
 
-        await callback.message.edit_text(
-            "👍 Лайк отправлен! Если понравишься в ответ — сообщим о совпадении.",
-            reply_markup=get_back_to_menu_kb(),
-        )
+        await _show_motopair_card_at(callback.message, user, role, list_offset)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("dislike_"))
 async def cb_dislike(callback: CallbackQuery, user=None):
-    from src.services.motopair_service import process_like, get_user_for_profile
+    from src.services.motopair_service import (
+        process_like,
+        get_user_for_profile,
+        parse_motopair_like_callback,
+    )
 
     if not user:
         await callback.answer("Ошибка.", show_alert=True)
         return
 
-    parts = callback.data.split("_")
-    if len(parts) < 3:
+    parsed = parse_motopair_like_callback(callback.data)
+    if not parsed:
         await callback.answer()
         return
-
-    profile_id_str = parts[1]
-    role = parts[2]
-
-    try:
-        profile_uuid = uuid.UUID(profile_id_str)
-    except ValueError:
-        await callback.answer()
-        return
+    profile_uuid, role, list_offset, _ = parsed
 
     target_user = await get_user_for_profile(profile_uuid, role)
     if not target_user:
@@ -653,8 +670,8 @@ async def cb_dislike(callback: CallbackQuery, user=None):
         return
 
     result = await process_like(effective_user_id(user), target_user.id, is_like=False)
-    text = "👎 Анкета скрыта." if result["blacklisted"] else "👎 Пропущено."
-    await callback.message.edit_text(text, reply_markup=get_back_to_menu_kb())
+    next_offset = list_offset if result["blacklisted"] else list_offset + 1
+    await _show_motopair_card_at(callback.message, user, role, next_offset)
     await callback.answer()
 
 

@@ -17,7 +17,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command, StateFilter
 
 from src.models.user import UserRole
-from src.keyboards.menu import get_main_menu_kb, get_persistent_kb
+from src.keyboards.menu import get_main_menu_kb_for_user, get_reply_keyboard_for_user
 from src.config import get_settings
 from src.utils.progress import progress_prefix
 from src import texts
@@ -62,18 +62,18 @@ class PassengerRegistration(StatesGroup):
 # ── /cancel handler — works in any FSM state ─────────────────────────────────
 
 @router.message(Command("cancel"), StateFilter("*"))
-async def cmd_cancel(message: Message, state: FSMContext):
+async def cmd_cancel(message: Message, state: FSMContext, user=None):
     """Cancel current FSM flow and return to main menu."""
     current = await state.get_state()
     if current is not None:
         await state.clear()
     await message.answer(
         texts.FSM_CANCEL_TEXT,
-        reply_markup=get_persistent_kb(),
+        reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
     )
     await message.answer(
         "Меню:",
-        reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+        reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
     )
 
 
@@ -477,7 +477,10 @@ async def _finish_pilot_registration(
         return
 
     _u = await _get_user(platform="telegram", platform_user_id=pid)
-    await message.answer("✅", reply_markup=get_persistent_kb())
+    await message.answer(
+        "✅",
+        reply_markup=await get_reply_keyboard_for_user(pid, _u),
+    )
     await message.answer(
         texts.REG_DONE,
         reply_markup=await get_main_menu_kb_for_user(pid, _u),
@@ -780,7 +783,10 @@ async def _finish_passenger_registration(
         return
 
     _u = await _get_user(platform="telegram", platform_user_id=pid)
-    await message.answer("✅", reply_markup=get_persistent_kb())
+    await message.answer(
+        "✅",
+        reply_markup=await get_reply_keyboard_for_user(pid, _u),
+    )
     await message.answer(
         texts.REG_DONE,
         reply_markup=await get_main_menu_kb_for_user(pid, _u),

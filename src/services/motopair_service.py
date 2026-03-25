@@ -1,4 +1,5 @@
 """MotoPair service - profiles, likes, matches."""
+import re
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -17,6 +18,37 @@ def _like_pair_lock_key(a: int, b: int) -> int:
     return (lo * 1_000_000_007 + hi) & 0x7FFFFFFFFFFFFFFF
 
 DISLIKE_BLACKLIST_THRESHOLD = 3
+
+
+def parse_motopair_like_callback(data: str) -> tuple[UUID, str, int, bool] | None:
+    """
+    Parse Telegram/MAX callback_data like_* / dislike_*.
+
+    Format: like_{uuid}_{role} or like_{uuid}_{role}_{offset} (same for dislike_).
+    Returns (profile_id, role, list_offset, is_like) or None.
+    """
+    if data.startswith("like_"):
+        rest = data[5:]
+        is_like = True
+    elif data.startswith("dislike_"):
+        rest = data[8:]
+        is_like = False
+    else:
+        return None
+
+    m = re.match(r"^(.+)_(pilot|passenger)_(\d+)$", rest)
+    if m:
+        try:
+            return UUID(m.group(1)), m.group(2), int(m.group(3)), is_like
+        except ValueError:
+            return None
+    m2 = re.match(r"^(.+)_(pilot|passenger)$", rest)
+    if m2:
+        try:
+            return UUID(m2.group(1)), m2.group(2), 0, is_like
+        except ValueError:
+            return None
+    return None
 
 
 def _apply_filter_pilot(stmt, f: dict):
