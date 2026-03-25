@@ -19,6 +19,11 @@ from aiogram.fsm.state import State, StatesGroup
 from src.keyboards.menu import get_back_to_menu_kb
 from src import texts
 from src.models.user import effective_user_id
+from src.utils.yandex_maps import (
+    format_sos_broadcast_map_html,
+    is_plausible_gps_coordinate,
+    yandex_maps_point_url,
+)
 
 router = Router()
 
@@ -80,6 +85,9 @@ async def cb_sos_type(callback: CallbackQuery, state: FSMContext, user=None):
 async def sos_location(message: Message, state: FSMContext, user=None, bot=None):
     try:
         loc = message.location
+        if not is_plausible_gps_coordinate(loc.latitude, loc.longitude):
+            await message.answer(texts.SOS_GEO_INVALID)
+            return
         await state.update_data(lat=loc.latitude, lon=loc.longitude)
         await state.set_state(SosStates.comment)
         await message.answer(
@@ -150,7 +158,6 @@ async def _send_sos_alert(
     from src.config import get_settings
 
     data = await state.get_data()
-    await state.clear()
 
     # Fallback: load user if middleware didn't pass.
     # Use explicit platform_user_id when called from callback (message.from_user = bot).
@@ -173,11 +180,27 @@ async def _send_sos_alert(
             [k for k in required_keys if k not in data],
             list(data.keys()),
         )
+        await state.clear()
         await message.answer(
             "Данные устарели. Начни SOS заново — нажми /sos или кнопку 🚨 SOS.",
             reply_markup=get_back_to_menu_kb(),
         )
         return
+
+    if not is_plausible_gps_coordinate(float(data["lat"]), float(data["lon"])):
+        await state.set_state(SosStates.location)
+        await state.set_data({"sos_type": data["sos_type"]})
+        await message.answer(
+            texts.SOS_GEO_INVALID,
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+            ),
+        )
+        return
+
+    await state.clear()
 
     if not user or not user.city_id:
         await message.answer(texts.SOS_NO_CITY)
@@ -229,16 +252,16 @@ async def _send_sos_alert(
     )
     if comment:
         broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=escape(comment))
-    broadcast_text += texts.SOS_BROADCAST_MAP.format(
-        lon=data["lon"], lat=data["lat"]
-    )
+    broadcast_text += format_sos_broadcast_map_html(data["lat"], data["lon"])
 
     # Telegram rejects tel: in inline URL buttons ("Wrong port number"); MAX only allows http(s).
     # Phone stays in the message body (profile). Only "Написать в Telegram" uses tg://.
     tg_id = user.platform_user_id  # message.from_user может быть бот (при callback)
-    broadcast_kb_rows = [[
-        InlineKeyboardButton(text=texts.SOS_BTN_TELEGRAM, url=f"tg://user?id={tg_id}"),
-    ]]
+    map_url = yandex_maps_point_url(data["lat"], data["lon"])
+    broadcast_kb_rows = [
+        [InlineKeyboardButton(text=texts.SOS_BROADCAST_MAP_LINK_LABEL, url=map_url)],
+        [InlineKeyboardButton(text=texts.SOS_BTN_TELEGRAM, url=f"tg://user?id={tg_id}")],
+    ]
     broadcast_kb = InlineKeyboardMarkup(inline_keyboard=broadcast_kb_rows)
 
     send_bot = bot or getattr(message, "bot", None)
@@ -261,11 +284,20 @@ async def _send_sos_alert(
     from src.platforms.base import Button, ButtonType
     max_adapter = get_max_adapter()
     if max_adapter and max_user_ids:
+        map_rows = [
+            [
+                Button(
+                    text=texts.SOS_BROADCAST_MAP_LINK_LABEL,
+                    type=ButtonType.URL,
+                    url=map_url,
+                ),
+            ],
+        ]
         broadcast_max_background(
             max_adapter,
             max_user_ids,
             broadcast_text,
-            kb_rows=None,
+            kb_rows=map_rows,
         )
 
     cooldown_mins = settings.sos_cooldown_minutes

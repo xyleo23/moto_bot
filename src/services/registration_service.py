@@ -8,7 +8,9 @@ phone number that already exists in a profile on another platform, their
 user record is linked (linked_user_id) to the canonical user, and all
 profile/subscription/like data is shared.
 """
+from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from uuid import UUID
 
 from loguru import logger
@@ -65,6 +67,198 @@ async def _find_canonical_user_by_phone(
         if owner and owner.platform != exclude_platform:
             return owner.linked_user_id if owner.linked_user_id else owner.id
 
+    return None
+
+
+def normalize_registration_phone(raw: str) -> str:
+    """Same rules as finish_* registration (leading +, max 20 chars)."""
+    p = str(raw or "").strip()[:20]
+    if not p:
+        return ""
+    if not p.startswith("+"):
+        p = "+" + p
+    return p
+
+
+def mask_registration_phone_hint(phone: str) -> str:
+    """Masked phone for cross-link confirmation UI."""
+    p = phone.replace(" ", "")
+    if len(p) <= 4:
+        return "••••"
+    return f"{p[:2]} •••• {p[-4:]}"
+
+
+def user_role_display_ru(role: UserRole | None) -> str:
+    if role is None:
+        return "—"
+    return {
+        UserRole.PILOT: "Пилот",
+        UserRole.PASSENGER: "Двойка",
+        UserRole.ADMIN: "Администратор",
+        UserRole.SUPERADMIN: "Администратор",
+    }.get(role, str(role.value))
+
+
+class MaxCrossLinkKind(str, Enum):
+    """Registration: outcome of phone lookup against other platforms (TG ↔ MAX)."""
+
+    NONE = "none"
+    OFFER = "offer"
+    ROLE_MISMATCH = "role_mismatch"
+
+
+@dataclass(frozen=True)
+class MaxCrossLinkCheck:
+    kind: MaxCrossLinkKind
+    canonical_user_id: UUID | None = None
+    display_name: str = ""
+    platform_label: str = "Telegram"
+    existing_role: UserRole | None = None
+
+
+async def check_cross_platform_registration_link(
+    phone_raw: str,
+    *,
+    platform: Platform,
+    platform_user_id: int,
+    registering_as: UserRole,
+) -> MaxCrossLinkCheck:
+    """
+    After the user entered a phone mid-registration: if another platform already
+    has this number (same role), offer early link via linked_user_id.
+    """
+    phone = normalize_registration_phone(phone_raw)
+    if len(phone) < 5:
+        return MaxCrossLinkCheck(kind=MaxCrossLinkKind.NONE)
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(User).where(
+                User.platform_user_id == platform_user_id,
+                User.platform == platform,
+            )
+        )
+        row = r.scalar_one_or_none()
+        if not row or row.linked_user_id:
+            return MaxCrossLinkCheck(kind=MaxCrossLinkKind.NONE)
+
+        canonical_uid = await _find_canonical_user_by_phone(session, phone, platform)
+        if not canonical_uid:
+            return MaxCrossLinkCheck(kind=MaxCrossLinkKind.NONE)
+
+        r2 = await session.execute(select(User).where(User.id == canonical_uid))
+        canon = r2.scalar_one_or_none()
+        if not canon or canon.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            return MaxCrossLinkCheck(kind=MaxCrossLinkKind.NONE)
+
+        if canon.role != registering_as:
+            plab = "Telegram" if canon.platform == Platform.TELEGRAM else "MAX"
+            return MaxCrossLinkCheck(
+                kind=MaxCrossLinkKind.ROLE_MISMATCH,
+                platform_label=plab,
+                existing_role=canon.role,
+            )
+
+        display_name = ""
+        pp = await session.execute(
+            select(ProfilePilot).where(ProfilePilot.user_id == canonical_uid)
+        )
+        pilot = pp.scalar_one_or_none()
+        if pilot:
+            display_name = pilot.name or ""
+        else:
+            ppr = await session.execute(
+                select(ProfilePassenger).where(ProfilePassenger.user_id == canonical_uid)
+            )
+            pax = ppr.scalar_one_or_none()
+            if pax:
+                display_name = pax.name or ""
+
+        plab = "Telegram" if canon.platform == Platform.TELEGRAM else "MAX"
+        return MaxCrossLinkCheck(
+            kind=MaxCrossLinkKind.OFFER,
+            canonical_user_id=canonical_uid,
+            display_name=display_name or "—",
+            platform_label=plab,
+            existing_role=canon.role,
+        )
+
+
+async def check_max_registration_cross_link(
+    phone_raw: str,
+    *,
+    max_platform_user_id: int,
+    registering_as: UserRole,
+) -> MaxCrossLinkCheck:
+    """See :func:`check_cross_platform_registration_link` (MAX entry)."""
+    return await check_cross_platform_registration_link(
+        phone_raw,
+        platform=Platform.MAX,
+        platform_user_id=max_platform_user_id,
+        registering_as=registering_as,
+    )
+
+
+async def apply_max_early_account_link(
+    max_platform_user_id: int,
+    canonical_user_id: UUID,
+) -> str | None:
+    """
+    Link MAX user row to an existing canonical account before registration ends.
+    Returns None on success, or an error code string.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(User).where(
+                User.platform_user_id == max_platform_user_id,
+                User.platform == Platform.MAX,
+            )
+        )
+        max_u = r.scalar_one_or_none()
+        if not max_u:
+            return "user_not_found"
+        r2 = await session.execute(select(User).where(User.id == canonical_user_id))
+        canon = r2.scalar_one_or_none()
+        if not canon:
+            return "canonical_not_found"
+        max_u.linked_user_id = canonical_user_id
+        if max_u.city_id is None and canon.city_id is not None:
+            max_u.city_id = canon.city_id
+        max_u.role = canon.role
+        await session.commit()
+    return None
+
+
+async def apply_telegram_early_account_link(
+    telegram_platform_user_id: int,
+    canonical_user_id: UUID,
+) -> str | None:
+    """
+    Link Telegram user row to an existing canonical account before registration ends.
+    Returns None on success, or an error code string.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(User).where(
+                User.platform_user_id == telegram_platform_user_id,
+                User.platform == Platform.TELEGRAM,
+            )
+        )
+        tg_u = r.scalar_one_or_none()
+        if not tg_u:
+            return "user_not_found"
+        r2 = await session.execute(select(User).where(User.id == canonical_user_id))
+        canon = r2.scalar_one_or_none()
+        if not canon:
+            return "canonical_not_found"
+        tg_u.linked_user_id = canonical_user_id
+        if tg_u.city_id is None and canon.city_id is not None:
+            tg_u.city_id = canon.city_id
+        tg_u.role = canon.role
+        await session.commit()
     return None
 
 
@@ -162,6 +356,9 @@ async def finish_pilot_registration(
 
         if profile:
             for k, v in kwargs.items():
+                # Не затирать фото при обновлении, если в data нет ключа (частичные апдейты)
+                if k == "photo_file_id" and "photo_file_id" not in data:
+                    continue
                 setattr(profile, k, v)
         else:
             profile = ProfilePilot(user_id=profile_owner_id, **kwargs)
@@ -267,6 +464,8 @@ async def finish_passenger_registration(
 
         if profile:
             for k, v in kwargs.items():
+                if k == "photo_file_id" and "photo_file_id" not in data:
+                    continue
                 setattr(profile, k, v)
         else:
             profile = ProfilePassenger(user_id=profile_owner_id, **kwargs)

@@ -358,3 +358,48 @@ async def get_profile_info_text(user_id: UUID) -> tuple[str, str | None]:
             return text, pp.photo_file_id
 
         return "Профиль не найден", None
+
+
+async def contact_footer_html_for_max_notifications(canonical_user_id: UUID) -> str:
+    """
+    Extra HTML block for like/match notifications in MAX: phone + Telegram @username
+    (кнопка «Написать в Telegram» в MAX часто бесполезна без приложения Telegram).
+    """
+    from html import escape
+
+    from src.models.user import Platform
+    from src.services.user import get_all_platform_identities
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        pilot = await session.execute(
+            select(ProfilePilot).where(ProfilePilot.user_id == canonical_user_id)
+        )
+        p = pilot.scalar_one_or_none()
+        phone = p.phone if p else None
+        if not phone:
+            passenger = await session.execute(
+                select(ProfilePassenger).where(ProfilePassenger.user_id == canonical_user_id)
+            )
+            pp = passenger.scalar_one_or_none()
+            if pp:
+                phone = pp.phone
+
+    lines: list[str] = []
+    if phone:
+        lines.append(f"📞 <b>Телефон:</b> {escape(phone)}")
+
+    identities = await get_all_platform_identities(canonical_user_id)
+    tg_u = next(
+        (u for u in identities if u.platform == Platform.TELEGRAM and u.platform_username),
+        None,
+    )
+    if tg_u and tg_u.platform_username:
+        un = tg_u.platform_username.lstrip("@")
+        lines.append(
+            f'✈️ Telegram: <a href="https://t.me/{escape(un)}">@{escape(un)}</a>'
+        )
+
+    if not lines:
+        return ""
+    return "\n\n<i>Контакт для связи:</i>\n" + "\n".join(lines)

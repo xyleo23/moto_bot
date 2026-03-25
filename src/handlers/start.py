@@ -115,12 +115,12 @@ async def cmd_sos(message: Message, state: FSMContext, user=None):
 @router.message(Command("profile"))
 async def cmd_profile(message: Message, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from src.services.profile_service import get_profile_text
+    from src.services.profile_service import get_profile_display
     from src.services.subscription import check_subscription_required
     if not user:
         await message.answer(texts.WELCOME_RETURNING, reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id))
         return
-    profile_text = await get_profile_text(user)
+    display_text, photo_id = await get_profile_display(user)
     sub_required = await check_subscription_required(user)
     kb_rows = [[InlineKeyboardButton(text="Редактировать анкету", callback_data="profile_edit")]]
     if sub_required:
@@ -130,7 +130,14 @@ async def cmd_profile(message: Message, state: FSMContext, user=None):
         [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
-    await message.answer(profile_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    if photo_id:
+        try:
+            await message.answer_photo(photo_id, caption=display_text, reply_markup=kb)
+            return
+        except Exception as e:
+            logger.warning("cmd_profile: answer_photo failed: %s", e)
+    await message.answer(display_text, reply_markup=kb)
 
 
 @router.message(Command("motopair"))
@@ -434,7 +441,7 @@ async def kb_contacts(message: Message, state: FSMContext, user=None):
 @router.message(F.text == "👤 Профиль")
 async def kb_profile(message: Message, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from src.services.profile_service import get_profile_text
+    from src.services.profile_service import get_profile_display
     from src.services.subscription import check_subscription_required
 
     if not user:
@@ -444,7 +451,7 @@ async def kb_profile(message: Message, state: FSMContext, user=None):
         )
         return
 
-    profile_text = await get_profile_text(user)
+    display_text, photo_id = await get_profile_display(user)
     sub_required = await check_subscription_required(user)
     kb_rows = [
         [InlineKeyboardButton(text="Редактировать анкету", callback_data="profile_edit")],
@@ -456,7 +463,14 @@ async def kb_profile(message: Message, state: FSMContext, user=None):
         [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
-    await message.answer(profile_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    if photo_id:
+        try:
+            await message.answer_photo(photo_id, caption=display_text, reply_markup=kb)
+            return
+        except Exception as e:
+            logger.warning("kb_profile: answer_photo failed: %s", e)
+    await message.answer(display_text, reply_markup=kb)
 
 
 @router.message(F.text == "🏠 Главное меню")

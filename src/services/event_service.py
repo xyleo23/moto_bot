@@ -114,6 +114,8 @@ async def event_creation_payment_required(
     city_id: UUID,
     event_type: str,
     settings: SubscriptionSettings | None,
+    *,
+    apply_subscription_benefits: bool = True,
 ) -> tuple[bool, int | None]:
     """
     Determine if payment is required for creating an event.
@@ -121,6 +123,9 @@ async def event_creation_payment_required(
     - large: admin free, user always paid (not in subscription)
     - motorcade: admin free; no sub = paid; with sub = 2/month free, then paid
     - run: admin free; no sub = paid; with sub = free unlimited
+
+    If ``apply_subscription_benefits`` is False (MAX messenger), льготы подписки
+    на создание не применяются — как платное создание для всех (кроме админов).
     """
     if not settings or not settings.event_creation_enabled or settings.event_creation_price_kopecks <= 0:
         return False, None
@@ -136,6 +141,8 @@ async def event_creation_payment_required(
         return True, price
 
     if event_type == "motorcade":
+        if not apply_subscription_benefits:
+            return True, price
         has_sub = await _user_has_active_subscription(user_id)
         if not has_sub:
             return True, price
@@ -144,6 +151,8 @@ async def event_creation_payment_required(
         return count >= limit, price if count >= limit else None
 
     if event_type == "run":
+        if not apply_subscription_benefits:
+            return True, price
         has_sub = await _user_has_active_subscription(user_id)
         return not has_sub, price if not has_sub else None
 

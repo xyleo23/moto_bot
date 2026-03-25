@@ -14,7 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command, StateFilter
 
-from src.models.user import UserRole
+from src.models.user import UserRole, effective_user_id
 from src.models.profile_pilot import ProfilePilot, DrivingStyle, Gender
 from src.models.profile_passenger import ProfilePassenger, PreferredStyle
 from src.models.base import get_session_factory
@@ -66,11 +66,12 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
         await callback.answer("Ошибка.", show_alert=True)
         return
 
+    uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         if user.role == UserRole.PILOT:
             r = await session.execute(
-                select(ProfilePilot).where(ProfilePilot.user_id == user.id)
+                select(ProfilePilot).where(ProfilePilot.user_id == uid)
             )
             p = r.scalar_one_or_none()
             if not p:
@@ -99,7 +100,7 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
             )
         else:
             r = await session.execute(
-                select(ProfilePassenger).where(ProfilePassenger.user_id == user.id)
+                select(ProfilePassenger).where(ProfilePassenger.user_id == uid)
             )
             p = r.scalar_one_or_none()
             if not p:
@@ -251,7 +252,7 @@ async def pilot_edit_cc_skip(callback: CallbackQuery, state: FSMContext):
 
 async def _pilot_edit_ask_style(message: Message, state: FSMContext):
     data = await state.get_data()
-    style_labels = {"calm": "Спокойный", "aggressive": "Агрессивный", "mixed": "Смешанный"}
+    style_labels = {"calm": "Спокойный", "aggressive": "Динамичный", "mixed": "Смешанный"}
     current = style_labels.get(str(data.get("driving_style", "")), "—")
     await state.set_state(PilotEdit.driving_style)
     await message.answer(
@@ -259,7 +260,7 @@ async def _pilot_edit_ask_style(message: Message, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="Спокойный", callback_data="edit_style_calm"),
-                InlineKeyboardButton(text="Агрессивный", callback_data="edit_style_aggressive"),
+                InlineKeyboardButton(text="Динамичный", callback_data="edit_style_aggressive"),
                 InlineKeyboardButton(text="Смешанный", callback_data="edit_style_mixed"),
             ],
             [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
@@ -358,10 +359,11 @@ async def _finish_pilot_edit(message: Message, state: FSMContext, user):
     }
     from sqlalchemy import select
 
+    uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.execute(
-            select(ProfilePilot).where(ProfilePilot.user_id == user.id)
+            select(ProfilePilot).where(ProfilePilot.user_id == uid)
         )
         p = r.scalar_one_or_none()
         if not p:
@@ -495,7 +497,7 @@ async def passenger_edit_height_skip(callback: CallbackQuery, state: FSMContext)
 
 async def _pax_edit_ask_style(message: Message, state: FSMContext):
     data = await state.get_data()
-    style_labels = {"calm": "Спокойный", "aggressive": "Агрессивный", "mixed": "Смешанный"}
+    style_labels = {"calm": "Спокойный", "dynamic": "Динамичный", "mixed": "Смешанный"}
     current = style_labels.get(str(data.get("preferred_style", "")), "—")
     await state.set_state(PassengerEdit.preferred_style)
     await message.answer(
@@ -503,7 +505,7 @@ async def _pax_edit_ask_style(message: Message, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="Спокойный", callback_data="edit_pax_style_calm"),
-                InlineKeyboardButton(text="Агрессивный", callback_data="edit_pax_style_aggressive"),
+                InlineKeyboardButton(text="Динамичный", callback_data="edit_pax_style_dynamic"),
                 InlineKeyboardButton(text="Смешанный", callback_data="edit_pax_style_mixed"),
             ],
             [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
@@ -514,6 +516,8 @@ async def _pax_edit_ask_style(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("edit_pax_style_"), PassengerEdit.preferred_style)
 async def passenger_edit_style(callback: CallbackQuery, state: FSMContext):
     style = callback.data.replace("edit_pax_style_", "")
+    if style == "aggressive":
+        style = "dynamic"
     await state.update_data(preferred_style=style)
     await callback.answer()
     await _pax_edit_ask_photo(callback.message, state)
@@ -597,15 +601,17 @@ async def _finish_passenger_edit(message: Message, state: FSMContext, user):
 
     style_map = {
         "calm": PreferredStyle.CALM,
-        "aggressive": PreferredStyle.AGGRESSIVE,
+        "dynamic": PreferredStyle.DYNAMIC,
         "mixed": PreferredStyle.MIXED,
+        "aggressive": PreferredStyle.DYNAMIC,
     }
     from sqlalchemy import select
 
+    uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.execute(
-            select(ProfilePassenger).where(ProfilePassenger.user_id == user.id)
+            select(ProfilePassenger).where(ProfilePassenger.user_id == uid)
         )
         p = r.scalar_one_or_none()
         if not p:

@@ -152,10 +152,11 @@ def get_events_menu_rows() -> list[KeyboardRow]:
 
 
 def get_event_list_rows() -> list[KeyboardRow]:
-    """Event list keyboard with filter buttons."""
+    """Event list keyboard with filter buttons (как в Telegram: все типы)."""
     return [
         [
             Button("Все", payload="event_list_all"),
+            Button("Масштабное", payload="event_list_large"),
             Button("Мотопробег", payload="event_list_motorcade"),
             Button("Прохват", payload="event_list_run"),
         ],

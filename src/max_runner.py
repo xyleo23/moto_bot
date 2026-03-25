@@ -44,6 +44,18 @@ from src.services.registration_service import (
 from src.models.user import User, UserRole, Platform, effective_user_id
 from src.models.base import get_session_factory
 from sqlalchemy import select
+from src.utils.yandex_maps import (
+    format_sos_broadcast_map_html,
+    is_plausible_gps_coordinate,
+    yandex_maps_point_url,
+)
+from src.services.registration_service import (
+    MaxCrossLinkKind,
+    apply_max_early_account_link,
+    check_max_registration_cross_link,
+    mask_registration_phone_hint,
+    user_role_display_ru,
+)
 from src.keyboards.shared import (
     get_main_menu_rows,
     get_city_select_rows,
@@ -146,14 +158,13 @@ def _pilot_gender_kb() -> list[KeyboardRow]:
     return [[
         Button("Муж", payload="max_reg_gender_male"),
         Button("Жен", payload="max_reg_gender_female"),
-        Button("Другое", payload="max_reg_gender_other"),
     ]]
 
 
 def _pilot_style_kb() -> list[KeyboardRow]:
     return [
         [Button("Спокойный", payload="max_reg_style_calm")],
-        [Button("Агрессивный", payload="max_reg_style_aggressive")],
+        [Button("Динамичный", payload="max_reg_style_aggressive")],
         [Button("Смешанный", payload="max_reg_style_mixed")],
     ]
 
@@ -177,7 +188,6 @@ def _pax_gender_kb() -> list[KeyboardRow]:
     return [[
         Button("Муж", payload="max_reg_pax_gender_male"),
         Button("Жен", payload="max_reg_pax_gender_female"),
-        Button("Другое", payload="max_reg_pax_gender_other"),
     ]]
 
 
@@ -208,10 +218,89 @@ def _cancel_kb() -> list[KeyboardRow]:
     return [[Button("❌ Отменить", payload="max_reg_cancel")]]
 
 
+def _cross_link_confirm_kb() -> list[KeyboardRow]:
+    return [
+        [Button("✅ Да, это я", payload="max_reg_cross_link_yes")],
+        [Button("❌ Нет, другой номер", payload="max_reg_cross_link_no")],
+    ]
+
+
+def _strip_cross_link_keys(data: dict) -> dict:
+    return {k: v for k, v in data.items() if not str(k).startswith("cross_link_")}
+
+
+async def _advance_max_reg_past_phone(
+    adapter: MaxAdapter, chat_id: str, user_id: int, data: dict, *, is_pilot: bool
+) -> None:
+    if is_pilot:
+        await reg_state.set_state(user_id, "pilot:age", data)
+        logger.info("MAX reg: user_id=%s state=pilot:age", user_id)
+        await adapter.send_message(
+            chat_id,
+            progress_prefix(3, PILOT_TOTAL_STEPS) + texts.REG_ASK_AGE,
+            _cancel_kb(),
+        )
+    else:
+        await reg_state.set_state(user_id, "passenger:age", data)
+        logger.info("MAX reg: user_id=%s state=passenger:age", user_id)
+        await adapter.send_message(
+            chat_id,
+            progress_prefix(3, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_AGE,
+            _cancel_kb(),
+        )
+
+
+async def _process_max_reg_phone_captured(
+    adapter: MaxAdapter, chat_id: str, user_id: int, data: dict, *, is_pilot: bool
+) -> None:
+    role = UserRole.PILOT if is_pilot else UserRole.PASSENGER
+    chk = await check_max_registration_cross_link(
+        data.get("phone", ""),
+        max_platform_user_id=user_id,
+        registering_as=role,
+    )
+    if chk.kind == MaxCrossLinkKind.NONE:
+        await _advance_max_reg_past_phone(adapter, chat_id, user_id, data, is_pilot=is_pilot)
+        return
+    if chk.kind == MaxCrossLinkKind.ROLE_MISMATCH:
+        clean = _strip_cross_link_keys(dict(data))
+        clean.pop("phone", None)
+        st = "pilot:phone" if is_pilot else "passenger:phone"
+        await reg_state.set_state(user_id, st, clean)
+        await adapter.send_message(
+            chat_id,
+            texts.REG_CROSS_LINK_ROLE_MISMATCH.format(
+                platform=chk.platform_label,
+                existing_role=user_role_display_ru(chk.existing_role),
+                registering_role=user_role_display_ru(role),
+            ),
+            [get_contact_button_row(), _cancel_kb()[0]],
+        )
+        return
+    assert chk.canonical_user_id is not None
+    data = dict(data)
+    data["cross_link_canonical_id"] = str(chk.canonical_user_id)
+    data["cross_link_display_name"] = chk.display_name
+    data["cross_link_platform_label"] = chk.platform_label
+    confirm_state = "pilot:cross_link_confirm" if is_pilot else "passenger:cross_link_confirm"
+    await reg_state.set_state(user_id, confirm_state, data)
+    phone_masked = mask_registration_phone_hint(str(data.get("phone", "")))
+    await adapter.send_message(
+        chat_id,
+        texts.REG_CROSS_LINK_ASK.format(
+            phone_masked=phone_masked,
+            platform=chk.platform_label,
+            name=chk.display_name,
+            role_label=user_role_display_ru(chk.existing_role),
+        ),
+        _cross_link_confirm_kb(),
+    )
+
+
 # ── Preview text builders ─────────────────────────────────────────────────────
 
 def _build_pilot_preview(data: dict) -> str:
-    style_labels = {"calm": "Спокойный", "aggressive": "Агрессивный", "mixed": "Смешанный"}
+    style_labels = {"calm": "Спокойный", "aggressive": "Динамичный", "mixed": "Смешанный"}
     gender_labels = {"male": "Муж", "female": "Жен", "other": "Другое"}
     return (
         texts.PROFILE_PREVIEW_HEADER
@@ -336,13 +425,8 @@ async def _handle_fsm_message(
             if not phone.startswith("+"):
                 phone = "+" + phone
             data["phone"] = phone
-            await reg_state.set_state(user_id, "pilot:age", data)
-            logger.info("MAX reg: user_id=%s state=pilot:age (manual phone)", user_id)
-            await adapter.send_message(
-                chat_id,
-                progress_prefix(3, PILOT_TOTAL_STEPS) + texts.REG_ASK_AGE,
-                _cancel_kb(),
-            )
+            logger.info("MAX reg: user_id=%s pilot phone captured (manual)", user_id)
+            await _process_max_reg_phone_captured(adapter, chat_id, user_id, data, is_pilot=True)
         else:
             await adapter.send_message(
                 chat_id,
@@ -492,13 +576,8 @@ async def _handle_fsm_message(
             if not phone.startswith("+"):
                 phone = "+" + phone
             data["phone"] = phone
-            await reg_state.set_state(user_id, "passenger:age", data)
-            logger.info("MAX reg: user_id=%s state=passenger:age (manual phone)", user_id)
-            await adapter.send_message(
-                chat_id,
-                progress_prefix(3, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_AGE,
-                _cancel_kb(),
-            )
+            logger.info("MAX reg: user_id=%s passenger phone captured (manual)", user_id)
+            await _process_max_reg_phone_captured(adapter, chat_id, user_id, data, is_pilot=False)
         else:
             await adapter.send_message(
                 chat_id,
@@ -707,25 +786,7 @@ async def _handle_fsm_contact(
 
     data["phone"] = phone
     is_pilot = state.startswith("pilot")
-
-    if is_pilot:
-        next_state = "pilot:age"
-        step = 3
-        total = PILOT_TOTAL_STEPS
-        ask_text = texts.REG_ASK_AGE
-    else:
-        next_state = "passenger:age"
-        step = 3
-        total = PASSENGER_TOTAL_STEPS
-        ask_text = texts.REG_ASK_AGE
-
-    await reg_state.set_state(user_id, next_state, data)
-    logger.info(f"MAX reg: user_id={user_id} state={next_state}")
-    await adapter.send_message(
-        chat_id,
-        progress_prefix(step, total) + ask_text,
-        _cancel_kb(),
-    )
+    await _process_max_reg_phone_captured(adapter, chat_id, user_id, data, is_pilot=is_pilot)
 
 
 async def _handle_fsm_photo(
@@ -773,6 +834,36 @@ async def _handle_fsm_callback(
     data = fsm.get("data", {})
     if not state:
         return False
+
+    # ── Cross-platform link (same phone as Telegram) ──────────────────────────
+    if cb_data == "max_reg_cross_link_yes" and state in (
+        "pilot:cross_link_confirm",
+        "passenger:cross_link_confirm",
+    ):
+        raw = data.get("cross_link_canonical_id")
+        try:
+            canon = uuid.UUID(str(raw))
+        except (ValueError, TypeError):
+            await adapter.send_message(chat_id, texts.REG_ERROR_SAVE, get_back_to_menu_rows())
+            await reg_state.clear_state(user_id)
+            return True
+        err = await apply_max_early_account_link(user_id, canon)
+        if err:
+            logger.warning("MAX cross_link_yes: apply failed uid=%s err=%s", user_id, err)
+            await adapter.send_message(chat_id, texts.REG_ERROR_SAVE, get_back_to_menu_rows())
+        else:
+            await reg_state.clear_state(user_id)
+            await adapter.send_message(chat_id, texts.REG_CROSS_LINK_SUCCESS, get_main_menu_rows())
+        return True
+
+    if cb_data == "max_reg_cross_link_no" and state in (
+        "pilot:cross_link_confirm",
+        "passenger:cross_link_confirm",
+    ):
+        is_pilot = state.startswith("pilot")
+        data = _strip_cross_link_keys(dict(data))
+        await _advance_max_reg_past_phone(adapter, chat_id, user_id, data, is_pilot=is_pilot)
+        return True
 
     # ── SOS skip comment ─────────────────────────────────────────────────────
     if cb_data == "sos_skip_comment" and state == "sos:comment":
@@ -975,7 +1066,7 @@ async def _do_create_event(
 
     ev = await create_event(
         city_id=u.city_id,
-        creator_id=u.id,
+        creator_id=effective_user_id(u),
         event_type=data.get("event_type", "run"),
         title=data.get("title"),
         start_at=start_at,
@@ -1231,6 +1322,18 @@ async def _resend_current_step(
     adapter: MaxAdapter, chat_id: str, user_id: int, state: str, data: dict
 ) -> None:
     """Re-send the prompt for the current FSM step (used when /start is called mid-flow)."""
+    if state in ("pilot:cross_link_confirm", "passenger:cross_link_confirm"):
+        phone_masked = mask_registration_phone_hint(str(data.get("phone", "")))
+        role = UserRole.PILOT if state.startswith("pilot") else UserRole.PASSENGER
+        ask = texts.REG_CROSS_LINK_ASK.format(
+            phone_masked=phone_masked,
+            platform=data.get("cross_link_platform_label", "Telegram"),
+            name=data.get("cross_link_display_name", "—"),
+            role_label=user_role_display_ru(role),
+        )
+        await adapter.send_message(chat_id, ask, _cross_link_confirm_kb())
+        return
+
     step_map = {
         "pilot:name": (1, PILOT_TOTAL_STEPS, texts.REG_ASK_NAME, _cancel_kb()),
         "pilot:phone": (2, PILOT_TOTAL_STEPS, texts.REG_ASK_PHONE_MAX, [get_contact_button_row(), _cancel_kb()[0]]),
@@ -1566,6 +1669,16 @@ async def handle_location(adapter: MaxAdapter, ev: IncomingLocation) -> None:
 
     fsm = await reg_state.get_state(ev.user_id)
     if fsm and fsm.get("state") == "sos:location":
+        if not is_plausible_gps_coordinate(ev.latitude, ev.longitude):
+            logger.warning(
+                "MAX SOS: reject implausible location uid=%s lat=%s lon=%s",
+                ev.user_id,
+                ev.latitude,
+                ev.longitude,
+            )
+            kb = [[get_location_button_row()[0]], [Button("❌ Отменить", payload="max_reg_cancel")]]
+            await adapter.send_message(ev.chat_id, texts.SOS_GEO_INVALID, kb)
+            return
         # Save location data and transition to comment step
         data = fsm.get("data", {})
         data["lat"] = ev.latitude
@@ -1649,13 +1762,12 @@ async def _handle_sos_send(
         get_city_telegram_user_ids,
         get_city_max_user_ids,
     )
-    from src.services.broadcast import broadcast_max_background, get_max_adapter
+    from src.services.broadcast import broadcast_max_background
     from src.services.user import get_user_profile_display
     from src.config import get_settings
 
     fsm = await reg_state.get_state(user.platform_user_id)
-    data = fsm.get("data", {}) if fsm else {}
-    await reg_state.clear_state(user.platform_user_id)
+    data = dict(fsm.get("data", {}) if fsm else {})
 
     required = ("sos_type", "lat", "lon")
     if not all(k in data for k in required):
@@ -1665,6 +1777,18 @@ async def _handle_sos_send(
             get_back_to_menu_rows(),
         )
         return
+
+    if not is_plausible_gps_coordinate(float(data["lat"]), float(data["lon"])):
+        kb = [[get_location_button_row()[0]], [Button("❌ Отменить", payload="max_reg_cancel")]]
+        await adapter.send_message(chat_id, texts.SOS_GEO_INVALID, kb)
+        await reg_state.set_state(
+            user.platform_user_id,
+            "sos:location",
+            {"sos_type": data["sos_type"]},
+        )
+        return
+
+    await reg_state.clear_state(user.platform_user_id)
 
     if not user.city_id:
         await adapter.send_message(chat_id, texts.SOS_NO_CITY, get_back_to_menu_rows())
@@ -1704,28 +1828,51 @@ async def _handle_sos_send(
     )
     if comment:
         broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=escape(comment))
-    broadcast_text += texts.SOS_BROADCAST_MAP.format(lon=data["lon"], lat=data["lat"])
+    broadcast_text += format_sos_broadcast_map_html(data["lat"], data["lon"])
 
     # No tel: in inline buttons — Telegram/MAX reject it; phone is in message text (profile).
+
+    map_kb_row: list[KeyboardRow] = [
+        [
+            Button(
+                text=texts.SOS_BROADCAST_MAP_LINK_LABEL,
+                type=ButtonType.URL,
+                url=yandex_maps_point_url(data["lat"], data["lon"]),
+            )
+        ],
+    ]
 
     # Broadcast to MAX users in the city
     max_user_ids = await get_city_max_user_ids(user.city_id)
     if max_user_ids:
         broadcast_max_background(
-            adapter, max_user_ids, broadcast_text,
+            adapter,
+            max_user_ids,
+            broadcast_text,
             exclude_id=user.platform_user_id,
-            kb_rows=None,
+            kb_rows=map_kb_row,
         )
 
     # Cross-platform: also broadcast to Telegram users in the city
     from src.services.broadcast import broadcast_background
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
     tg_user_ids = await get_city_telegram_user_ids(user.city_id)
     if tg_user_ids:
-        # MAX sender: no tg:// link; phone is already in broadcast_text profile
-        tg_kb = None
+        map_url = yandex_maps_point_url(data["lat"], data["lon"])
+        tg_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.SOS_BROADCAST_MAP_LINK_LABEL, url=map_url)],
+            ]
+        )
         tg_bot_instance = _get_tg_bot()
         if tg_bot_instance:
-            broadcast_background(tg_bot_instance, tg_user_ids, broadcast_text, reply_markup=tg_kb)
+            broadcast_background(
+                tg_bot_instance,
+                tg_user_ids,
+                broadcast_text,
+                reply_markup=tg_kb,
+            )
 
     cooldown_mins = settings.sos_cooldown_minutes
     kb = [
@@ -1810,9 +1957,16 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
     """Взаимный лайк из уведомления (MAX)."""
     from sqlalchemy import select
     from src.models.user import User
-    from src.services.motopair_service import process_like, get_profile_info_text
+    from src.services.motopair_service import (
+        process_like,
+        get_profile_info_text,
+        contact_footer_html_for_max_notifications,
+    )
     from src.services.notification_templates import get_template
-    from src.services.cross_platform_notify import send_text_to_all_identities
+    from src.services.cross_platform_notify import (
+        send_text_to_all_identities,
+        max_send_message_with_optional_profile_photo,
+    )
     from src.services.broadcast import get_max_adapter
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -1830,13 +1984,16 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
         return
     from_canon = effective_user_id(from_user)
     await process_like(effective_user_id(user), from_canon, is_like=True)
-    from_text, _ = await get_profile_info_text(from_canon)
-    to_text, _ = await get_profile_info_text(effective_user_id(user))
+    from_text, original_liker_photo = await get_profile_info_text(from_canon)
+    to_text, replier_photo = await get_profile_info_text(effective_user_id(user))
     msg_self = await get_template("template_mutual_like_self", profile=from_text)
-    await adapter.send_message(
+    await max_send_message_with_optional_profile_photo(
+        adapter,
         chat_id,
         msg_self,
         get_match_max_rows(from_user.platform_username),
+        original_liker_photo,
+        _get_tg_bot(),
     )
     msg_target = await get_template("template_mutual_like_reply", profile=to_text)
     tg_mk = []
@@ -1850,6 +2007,7 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
             text="💬 Написать",
             url=f"tg://user?id={user.platform_user_id}",
         )])
+    max_suffix = await contact_footer_html_for_max_notifications(effective_user_id(user))
     await send_text_to_all_identities(
         from_canon,
         msg_target,
@@ -1857,6 +2015,8 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
         max_adapter=get_max_adapter(),
         tg_reply_markup=InlineKeyboardMarkup(inline_keyboard=tg_mk) if tg_mk else None,
         max_kb_rows=get_match_max_rows(user.platform_username),
+        max_extra_html=max_suffix,
+        photo_file_id=replier_photo,
     )
 
 
@@ -1900,7 +2060,11 @@ async def handle_motopair_like(
     *,
     list_offset: int = 0,
 ) -> None:
-    from src.services.motopair_service import get_user_for_profile, process_like
+    from src.services.motopair_service import (
+        get_user_for_profile,
+        process_like,
+        contact_footer_html_for_max_notifications,
+    )
 
     try:
         to_user_id = await get_user_for_profile(uuid.UUID(profile_id_str), role)
@@ -1919,7 +2083,10 @@ async def handle_motopair_like(
         from src.services.notification_templates import get_template
         from src.services.activity_log_service import log_event
         from src.models.activity_log import ActivityEventType
-        from src.services.cross_platform_notify import send_text_to_all_identities
+        from src.services.cross_platform_notify import (
+            send_text_to_all_identities,
+            max_send_message_with_optional_profile_photo,
+        )
         from src.services.broadcast import get_max_adapter
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -1929,12 +2096,19 @@ async def handle_motopair_like(
             data={"target_user_id": str(target_user.id), "from_user_id": str(eff_from)},
         )
 
-        from_text, _ = await get_profile_info_text(target_user.id)
+        from_text, match_photo = await get_profile_info_text(target_user.id)
         msg_self = await get_template("template_mutual_like_self", profile=from_text)
         self_rows = get_match_max_rows(target_user.platform_username)
-        await adapter.send_message(ev.chat_id, msg_self, self_rows)
+        await max_send_message_with_optional_profile_photo(
+            adapter,
+            ev.chat_id,
+            msg_self,
+            self_rows,
+            match_photo,
+            _get_tg_bot(),
+        )
 
-        to_text, _ = await get_profile_info_text(eff_from)
+        to_text, liker_photo = await get_profile_info_text(eff_from)
         msg_target = await get_template("template_mutual_like_target", profile=to_text)
         tg_mk = []
         if user.platform_username:
@@ -1947,6 +2121,7 @@ async def handle_motopair_like(
                 text="💬 Написать",
                 url=f"tg://user?id={user.platform_user_id}",
             )])
+        max_suffix_match = await contact_footer_html_for_max_notifications(eff_from)
         await send_text_to_all_identities(
             result["target_user_id"],
             msg_target,
@@ -1954,6 +2129,8 @@ async def handle_motopair_like(
             max_adapter=get_max_adapter(),
             tg_reply_markup=InlineKeyboardMarkup(inline_keyboard=tg_mk) if tg_mk else None,
             max_kb_rows=get_match_max_rows(user.platform_username),
+            max_extra_html=max_suffix_match,
+            photo_file_id=liker_photo,
         )
 
     elif is_like:
@@ -1967,6 +2144,7 @@ async def handle_motopair_like(
         notify_text = await get_template("template_like_received", profile=from_text)
         kb_tg = get_like_notification_kb(str(eff_from))
         max_rows = get_like_notification_max_rows(str(eff_from))
+        max_suffix_like = await contact_footer_html_for_max_notifications(eff_from)
         await notify_like_received_cross_platform(
             result["target_user_id"],
             notify_text,
@@ -1975,6 +2153,7 @@ async def handle_motopair_like(
             max_adapter=get_max_adapter(),
             tg_reply_markup=kb_tg,
             max_kb_rows=max_rows,
+            max_extra_html=max_suffix_like,
         )
 
         await handle_motopair_list(adapter, ev.chat_id, user, role, list_offset)
@@ -2269,6 +2448,9 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             kb.append([Button(f"💳 Сезон — {season_price // 100} ₽", type=ButtonType.URL, url=season_payment["confirmation_url"])])
         if kb:
             kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
+        _tg_pay = get_settings().telegram_return_url
+        if _tg_pay:
+            kb.append([Button("✏️ Редактировать анкету (Telegram)", type=ButtonType.URL, url=_tg_pay)])
         kb.append([Button("« Назад", payload="menu_main")])
         await adapter.send_message(chat_id, text, kb)
     else:
@@ -2287,6 +2469,11 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         raise_price = (sub_settings2.raise_profile_price_kopecks if sub_settings2 and sub_settings2.raise_profile_price_kopecks else 0)
 
         kb = [[Button("🔄 Продлить подписку", payload="max_profile_renew_sub")]]
+        tg_url = get_settings().telegram_return_url
+        if tg_url:
+            kb.append(
+                [Button("✏️ Редактировать анкету", type=ButtonType.URL, url=tg_url)],
+            )
         if raise_enabled:
             label = f"⬆️ Поднять анкету — {raise_price // 100} ₽" if raise_price > 0 else "⬆️ Поднять анкету (бесплатно)"
             kb.append([Button(label, payload="max_profile_raise")])
@@ -2616,15 +2803,22 @@ async def _handle_payment_callback(
         from src.services.event_service import event_creation_payment_required
 
         sub_settings = await get_subscription_settings()
+        eff_uid = effective_user_id(user)
+        # В MAX создание мероприятий всегда платное (льготы подписки только в Telegram).
         needs_payment, price = await event_creation_payment_required(
-            user.id, user.platform_user_id, user.city_id, ev_type, sub_settings
+            eff_uid,
+            user.platform_user_id,
+            user.city_id,
+            ev_type,
+            sub_settings,
+            apply_subscription_benefits=False,
         )
 
         if needs_payment and price and price > 0:
             payment = await create_payment(
                 amount_kopecks=price,
                 description="Создание мероприятия — мото-бот",
-                metadata={"type": "event_creation", "user_id": str(effective_user_id(user)), "event_type": ev_type, "platform": "max"},
+                metadata={"type": "event_creation", "user_id": str(eff_uid), "event_type": ev_type, "platform": "max"},
                 return_url=get_settings().max_return_url,
             )
             if not payment or not payment.get("confirmation_url"):

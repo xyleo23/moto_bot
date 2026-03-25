@@ -41,24 +41,25 @@ class AdminPhoneApprovalStates(StatesGroup):
 @router.callback_query(F.data == "menu_profile")
 async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from src.services.profile_service import get_profile_text
+    from src.services.profile_service import get_profile_display
     from src.services.subscription import check_subscription_required
     from src.models.subscription import Subscription
     from src.models.base import get_session_factory
     from sqlalchemy import select
 
     await state.clear()
-    text = await get_profile_text(user)
+    display_text, photo_id = await get_profile_display(user)
     sub_required = await check_subscription_required(user)
 
     # Check if user has an active subscription to decide which button to show
     sub_active = False
     if user:
+        uid = effective_user_id(user)
         session_factory = get_session_factory()
         async with session_factory() as session:
             sub_r = await session.execute(
                 select(Subscription).where(
-                    Subscription.user_id == user.id,
+                    Subscription.user_id == uid,
                     Subscription.is_active.is_(True),
                 ).limit(1)
             )
@@ -80,11 +81,29 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
         [InlineKeyboardButton(text=texts.PHONE_CHANGE_BTN, callback_data="profile_phone_change")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
-    await callback.message.edit_text(
-        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    )
     await callback.answer()
+    if photo_id:
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logger.debug("menu_profile: delete before photo failed: %s", e)
+        try:
+            await callback.bot.send_photo(
+                callback.message.chat.id,
+                photo=photo_id,
+                caption=display_text,
+                reply_markup=kb,
+            )
+            return
+        except Exception as e:
+            logger.warning("menu_profile: send_photo failed, fallback to text: %s", e)
+    try:
+        await callback.message.edit_text(display_text, reply_markup=kb)
+    except Exception as e:
+        logger.debug("menu_profile: edit_text failed, send new message: %s", e)
+        await callback.message.answer(display_text, reply_markup=kb)
 
 
 

@@ -1,5 +1,6 @@
 """MAX messenger platform adapter."""
 import contextvars
+import json
 from typing import Any
 
 import aiohttp
@@ -149,6 +150,73 @@ class MaxAdapter(PlatformAdapter):
             params=params,
             json_data=body,
         )
+
+    async def upload_image_bytes(self, data: bytes, filename: str = "photo.jpg") -> str | None:
+        """Upload image to MAX CDN; returns attachment token for POST /messages or None."""
+        if not data:
+            return None
+        try:
+            r1 = await self._request("POST", "/uploads", params={"type": "image"})
+        except Exception as e:
+            logger.warning("MAX POST /uploads?type=image failed: %s", e)
+            return None
+        upload_url = r1.get("url") if isinstance(r1, dict) else None
+        if not upload_url:
+            logger.warning("MAX /uploads response missing url: %s", r1)
+            return None
+        session = await self._get_session()
+        form = aiohttp.FormData()
+        form.add_field(
+            "data",
+            data,
+            filename=filename,
+            content_type="image/jpeg",
+        )
+        try:
+            async with session.post(upload_url, data=form, headers=self._headers()) as resp:
+                raw = await resp.text()
+                if resp.status >= 400:
+                    logger.warning("MAX image upload POST %s: %s", resp.status, raw[:400])
+                    return None
+                try:
+                    body = json.loads(raw) if raw.strip() else {}
+                except json.JSONDecodeError:
+                    logger.warning("MAX image upload non-JSON: %s", raw[:200])
+                    return None
+                token = body.get("token")
+                if not token:
+                    logger.warning("MAX image upload response without token: %s", raw[:300])
+                return token
+        except Exception as e:
+            logger.warning("MAX multipart image upload failed: %s", e)
+            return None
+
+    async def import_photo_from_telegram(self, telegram_bot, tg_file_id: str) -> str | None:
+        """Download a Telegram file_id and upload to MAX; returns MAX token or None."""
+        if not telegram_bot or not tg_file_id:
+            return None
+        from src.config import get_settings
+
+        token = get_settings().telegram_bot_token
+        if not token:
+            return None
+        try:
+            tg_file = await telegram_bot.get_file(tg_file_id)
+            if not tg_file or not tg_file.file_path:
+                return None
+            file_url = f"https://api.telegram.org/file/bot{token}/{tg_file.file_path}"
+            session = await self._get_session()
+            async with session.get(file_url) as resp:
+                if resp.status != 200:
+                    logger.warning("Telegram file download %s for MAX bridge", resp.status)
+                    return None
+                data = await resp.read()
+            ext = (tg_file.file_path or "").lower().split(".")[-1]
+            fname = f"photo.{ext}" if ext in ("jpg", "jpeg", "png", "gif", "webp") else "photo.jpg"
+            return await self.upload_image_bytes(data, filename=fname)
+        except Exception as e:
+            logger.warning("import_photo_from_telegram: %s", e)
+            return None
 
     async def send_photo(
         self,

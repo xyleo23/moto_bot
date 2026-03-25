@@ -1,4 +1,5 @@
 """Registration and profile filling with FSM."""
+import uuid
 from datetime import datetime
 
 from loguru import logger
@@ -16,13 +17,133 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command, StateFilter
 
-from src.models.user import UserRole
+from src.models.user import UserRole, Platform
+from src.services.registration_service import (
+    MaxCrossLinkKind,
+    apply_telegram_early_account_link,
+    check_cross_platform_registration_link,
+    mask_registration_phone_hint,
+    user_role_display_ru,
+)
+from src.services.user import get_or_create_user
 from src.keyboards.menu import get_main_menu_kb_for_user, get_reply_keyboard_for_user
 from src.config import get_settings
 from src.utils.progress import progress_prefix
 from src import texts
 
 router = Router()
+
+
+def _strip_tg_cross_link_keys(data: dict) -> dict:
+    return {k: v for k, v in data.items() if not str(k).startswith("cross_link_")}
+
+
+async def _advance_telegram_reg_past_phone(
+    message: Message,
+    state: FSMContext,
+    *,
+    data: dict,
+    is_pilot: bool,
+) -> None:
+    clean = _strip_tg_cross_link_keys(dict(data))
+    await state.set_data(clean)
+    if is_pilot:
+        await state.set_state(PilotRegistration.age)
+        await message.answer(
+            progress_prefix(3, PILOT_TOTAL_STEPS) + texts.REG_ASK_AGE,
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    else:
+        await state.set_state(PassengerRegistration.age)
+        await message.answer(
+            progress_prefix(3, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_AGE,
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+
+async def _process_telegram_reg_after_phone(
+    message: Message,
+    state: FSMContext,
+    *,
+    is_pilot: bool,
+) -> None:
+    data = await state.get_data()
+    phone = str(data.get("phone") or "")
+    role = UserRole.PILOT if is_pilot else UserRole.PASSENGER
+    chk = await check_cross_platform_registration_link(
+        phone,
+        platform=Platform.TELEGRAM,
+        platform_user_id=message.from_user.id,
+        registering_as=role,
+    )
+    if chk.kind == MaxCrossLinkKind.NONE:
+        await _advance_telegram_reg_past_phone(
+            message, state, data=data, is_pilot=is_pilot
+        )
+        return
+    if chk.kind == MaxCrossLinkKind.ROLE_MISMATCH:
+        clean = _strip_tg_cross_link_keys(dict(data))
+        clean.pop("phone", None)
+        await state.set_data(clean)
+        await state.set_state(
+            PilotRegistration.phone if is_pilot else PassengerRegistration.phone
+        )
+        await message.answer(
+            texts.REG_CROSS_LINK_ROLE_MISMATCH.format(
+                platform=chk.platform_label,
+                existing_role=user_role_display_ru(chk.existing_role),
+                registering_role=user_role_display_ru(role),
+            ),
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="Отправить мой номер", request_contact=True)]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+            ),
+        )
+        return
+    assert chk.canonical_user_id is not None
+    await state.update_data(
+        cross_link_canonical_id=str(chk.canonical_user_id),
+        cross_link_display_name=chk.display_name,
+        cross_link_platform_label=chk.platform_label,
+        cross_link_is_pilot=is_pilot,
+    )
+    await state.set_state(
+        PilotRegistration.cross_link_confirm
+        if is_pilot
+        else PassengerRegistration.cross_link_confirm
+    )
+    phone_masked = mask_registration_phone_hint(phone)
+    await message.answer(
+        texts.REG_CROSS_LINK_ASK.format(
+            phone_masked=phone_masked,
+            platform=chk.platform_label,
+            name=chk.display_name,
+            role_label=user_role_display_ru(chk.existing_role),
+        ),
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await message.answer(
+        "Подтверди:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Да, это я",
+                        callback_data="tg_reg_cross_link_yes",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="❌ Нет, продолжить регистрацию",
+                        callback_data="tg_reg_cross_link_no",
+                    ),
+                ],
+            ],
+        ),
+    )
+
 
 # ── Step counts for progress bar ──────────────────────────────────────────────
 PILOT_TOTAL_STEPS = 11      # name, phone, age, gender, brand, model, cc, since, style, photo, about
@@ -32,6 +153,7 @@ PASSENGER_TOTAL_STEPS = 9   # name, phone, age, gender, weight, height, style, p
 class PilotRegistration(StatesGroup):
     name = State()
     phone = State()
+    cross_link_confirm = State()
     age = State()
     gender = State()
     bike_brand = State()
@@ -48,6 +170,7 @@ class PilotRegistration(StatesGroup):
 class PassengerRegistration(StatesGroup):
     name = State()
     phone = State()
+    cross_link_confirm = State()
     age = State()
     gender = State()
     weight = State()
@@ -122,11 +245,7 @@ async def pilot_phone(message: Message, state: FSMContext, user=None):
     if not phone.startswith("+"):
         phone = "+" + phone
     await state.update_data(phone=phone)
-    await state.set_state(PilotRegistration.age)
-    await message.answer(
-        progress_prefix(3, PILOT_TOTAL_STEPS) + texts.REG_ASK_AGE,
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    await _process_telegram_reg_after_phone(message, state, is_pilot=True)
 
 
 @router.message(PilotRegistration.phone)
@@ -138,6 +257,70 @@ async def pilot_phone_fallback(message: Message, state: FSMContext):
             resize_keyboard=True,
             one_time_keyboard=True,
         ),
+    )
+
+
+@router.callback_query(
+    F.data == "tg_reg_cross_link_yes",
+    StateFilter(PilotRegistration.cross_link_confirm, PassengerRegistration.cross_link_confirm),
+)
+async def tg_reg_cross_link_yes(callback: CallbackQuery, state: FSMContext, user=None):
+    await callback.answer()
+    data = await state.get_data()
+    raw = data.get("cross_link_canonical_id")
+    try:
+        canon = uuid.UUID(str(raw))
+    except (ValueError, TypeError):
+        await state.clear()
+        await callback.message.answer(texts.REG_ERROR_SAVE)
+        return
+    pid = callback.from_user.id
+    err = await apply_telegram_early_account_link(pid, canon)
+    await state.clear()
+    if err:
+        logger.warning("tg_reg_cross_link_yes: apply failed uid=%s err=%s", pid, err)
+        await callback.message.answer(texts.REG_ERROR_SAVE)
+        return
+    u = await get_or_create_user(
+        platform="telegram",
+        platform_user_id=pid,
+        username=callback.from_user.username,
+        first_name=callback.from_user.first_name,
+    )
+    try:
+        await callback.message.edit_text(texts.REG_CROSS_LINK_SUCCESS, parse_mode="HTML")
+    except Exception as e:
+        logger.warning("tg_reg_cross_link_yes: edit_text failed: %s", e)
+        await callback.message.answer(texts.REG_CROSS_LINK_SUCCESS, parse_mode="HTML")
+    await callback.message.answer(
+        "✅",
+        reply_markup=await get_reply_keyboard_for_user(pid, u),
+    )
+    await callback.message.answer(
+        "Меню:",
+        reply_markup=await get_main_menu_kb_for_user(pid, u),
+    )
+
+
+@router.callback_query(
+    F.data == "tg_reg_cross_link_no",
+    StateFilter(PilotRegistration.cross_link_confirm, PassengerRegistration.cross_link_confirm),
+)
+async def tg_reg_cross_link_no(callback: CallbackQuery, state: FSMContext, user=None):
+    await callback.answer()
+    data = await state.get_data()
+    is_pilot = bool(data.get("cross_link_is_pilot", True))
+    clean = _strip_tg_cross_link_keys(dict(data))
+    await state.set_data(clean)
+    try:
+        await callback.message.edit_text("Хорошо, продолжим анкету.")
+    except Exception as e:
+        logger.warning("tg_reg_cross_link_no: edit failed: %s", e)
+    await _advance_telegram_reg_past_phone(
+        callback.message,
+        state,
+        data=clean,
+        is_pilot=is_pilot,
     )
 
 
@@ -153,7 +336,6 @@ async def pilot_age(message: Message, state: FSMContext, user=None):
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                     InlineKeyboardButton(text="Муж", callback_data="gender_male"),
                     InlineKeyboardButton(text="Жен", callback_data="gender_female"),
-                    InlineKeyboardButton(text="Другое", callback_data="gender_other"),
                 ]]),
             )
         else:
@@ -297,7 +479,7 @@ async def pilot_driving_since(message: Message, state: FSMContext):
             await state.set_state(PilotRegistration.driving_style)
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Спокойный", callback_data="style_calm")],
-                [InlineKeyboardButton(text="Агрессивный", callback_data="style_aggressive")],
+                [InlineKeyboardButton(text="Динамичный", callback_data="style_aggressive")],
                 [InlineKeyboardButton(text="Смешанный", callback_data="style_mixed")],
             ])
             await message.answer(
@@ -396,7 +578,7 @@ async def pilot_about_fallback(message: Message, state: FSMContext):
 async def _show_pilot_preview(message: Message, state: FSMContext):
     """Show profile preview card before saving."""
     data = await state.get_data()
-    style_labels = {"calm": "Спокойный", "aggressive": "Агрессивный", "mixed": "Смешанный"}
+    style_labels = {"calm": "Спокойный", "aggressive": "Динамичный", "mixed": "Смешанный"}
     gender_labels = {"male": "Муж", "female": "Жен", "other": "Другое"}
 
     text = (
@@ -516,11 +698,7 @@ async def passenger_phone(message: Message, state: FSMContext):
     if not phone.startswith("+"):
         phone = "+" + phone
     await state.update_data(phone=phone)
-    await state.set_state(PassengerRegistration.age)
-    await message.answer(
-        progress_prefix(3, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_AGE,
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    await _process_telegram_reg_after_phone(message, state, is_pilot=False)
 
 
 @router.message(PassengerRegistration.phone)
@@ -547,7 +725,6 @@ async def passenger_age(message: Message, state: FSMContext):
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                     InlineKeyboardButton(text="Муж", callback_data="pax_gender_male"),
                     InlineKeyboardButton(text="Жен", callback_data="pax_gender_female"),
-                    InlineKeyboardButton(text="Другое", callback_data="pax_gender_other"),
                 ]]),
             )
         else:

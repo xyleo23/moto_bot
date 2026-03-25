@@ -17,6 +17,119 @@ from src.platforms.base import (
 )
 
 
+def _floatish(value) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        s = str(value).strip().replace(",", ".", 1)
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _pair_to_lat_lon(a: float, b: float) -> tuple[float, float] | None:
+    """Interpret two numbers as lat/lon; accept either (lat,lon) or GeoJSON (lon,lat)."""
+    if -90 <= a <= 90 and -180 <= b <= 180:
+        return (a, b)
+    if -90 <= b <= 90 and -180 <= a <= 180:
+        return (b, a)
+    return None
+
+
+def _coords_from_mapping(d: dict) -> tuple[float, float] | None:
+    if not isinstance(d, dict):
+        return None
+    for lk, gk in (
+        ("latitude", "longitude"),
+        ("lat", "lon"),
+        ("lat", "lng"),
+        ("lat", "long"),
+    ):
+        la = _floatish(d.get(lk))
+        lo = _floatish(d.get(gk))
+        if la is not None and lo is not None:
+            return la, lo
+    return None
+
+
+def _extract_coords_from_max_location_attachment(att: dict) -> tuple[float, float] | None:
+    """
+    MAX may send coordinates under different keys or nested objects (VK-like).
+    Returns (latitude, longitude) or None.
+    """
+    payload = att.get("payload") if isinstance(att.get("payload"), dict) else {}
+
+    for block in (payload, att):
+        if not isinstance(block, dict):
+            continue
+        direct = _coords_from_mapping(block)
+        if direct:
+            return direct
+
+    for block in (payload, att):
+        if not isinstance(block, dict):
+            continue
+        geo = block.get("geo")
+        if isinstance(geo, dict):
+            nested = _coords_from_mapping(geo)
+            if nested:
+                return nested
+            coords = geo.get("coordinates")
+            if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                a, b = _floatish(coords[0]), _floatish(coords[1])
+                if a is not None and b is not None:
+                    pair = _pair_to_lat_lon(a, b)
+                    if pair:
+                        return pair
+
+    for block in (payload, att):
+        if not isinstance(block, dict):
+            continue
+        coords = block.get("coordinates")
+        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            a, b = _floatish(coords[0]), _floatish(coords[1])
+            if a is not None and b is not None:
+                pair = _pair_to_lat_lon(a, b)
+                if pair:
+                    return pair
+
+    for block in (payload, att):
+        if not isinstance(block, dict):
+            continue
+        for key in ("point", "place", "location", "position"):
+            sub = block.get(key)
+            if isinstance(sub, dict):
+                got = _coords_from_mapping(sub)
+                if got:
+                    return got
+                if isinstance(sub.get("coordinates"), (list, tuple)) and len(sub["coordinates"]) >= 2:
+                    a = _floatish(sub["coordinates"][0])
+                    b = _floatish(sub["coordinates"][1])
+                    if a is not None and b is not None:
+                        pair = _pair_to_lat_lon(a, b)
+                        if pair:
+                            return pair
+
+    for block in (payload, att):
+        if not isinstance(block, dict):
+            continue
+        for key, val in block.items():
+            if not isinstance(val, str):
+                continue
+            parts = val.replace(" ", "").split(",")
+            if len(parts) == 2:
+                a, b = _floatish(parts[0]), _floatish(parts[1])
+                if a is not None and b is not None:
+                    pair = _pair_to_lat_lon(a, b)
+                    if pair:
+                        return pair
+    return None
+
+
 def _extract_photo_file_id(body: dict) -> str | None:
     """Extract photo token from message body attachments."""
     attachments = body.get("attachments") or []
@@ -190,10 +303,20 @@ def parse_update(raw: dict):
                 phone_number=str(phone).strip(),
                 raw=raw,
             )
-        if att.get("type") in ("location", "geo"):
-            payload = att.get("payload") or {}
-            lat = float(payload.get("latitude") or payload.get("lat") or 0)
-            lon = float(payload.get("longitude") or payload.get("lon") or 0)
+        att_type = att.get("type")
+        if att_type in ("location", "geo", "geo_location", "map"):
+            coords = _extract_coords_from_max_location_attachment(att)
+            if coords is None:
+                import logging as _logging
+
+                _logging.getLogger("max_parser").warning(
+                    "MAX location attachment without coords: type=%r att=%r",
+                    att_type,
+                    att,
+                )
+                lat, lon = 0.0, 0.0
+            else:
+                lat, lon = coords
             return IncomingLocation(
                 platform="max",
                 chat_id=chat_id,
@@ -202,6 +325,36 @@ def parse_update(raw: dict):
                 longitude=lon,
                 raw=raw,
             )
+        # Shared map / place (only if coordinates are present)
+        if att_type == "share":
+            coords = _extract_coords_from_max_location_attachment(att)
+            if coords is not None:
+                lat, lon = coords
+                return IncomingLocation(
+                    platform="max",
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    latitude=lat,
+                    longitude=lon,
+                    raw=raw,
+                )
+
+    # Standalone geo on message body (some MAX builds omit attachment type)
+    for key in ("location", "geo", "geo_location"):
+        block = body.get(key)
+        if isinstance(block, dict):
+            fake_att = {"type": "location", "payload": block}
+            coords = _extract_coords_from_max_location_attachment(fake_att)
+            if coords is not None:
+                lat, lon = coords
+                return IncomingLocation(
+                    platform="max",
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    latitude=lat,
+                    longitude=lon,
+                    raw=raw,
+                )
 
     # Photo
     photo_file_id = _extract_photo_file_id(body)

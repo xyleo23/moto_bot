@@ -589,16 +589,18 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
             data={"target_user_id": str(target_user.id), "from_user_id": str(eff_from)},
         )
         from_text, _ = await get_profile_info_text(target_user.id)
-        to_text, _ = await get_profile_info_text(eff_from)
+        to_text, liker_photo = await get_profile_info_text(eff_from)
 
         if bot:
             from src.services.notification_templates import get_template
             from src.services.cross_platform_notify import send_text_to_all_identities
             from src.services.broadcast import get_max_adapter
             from src.keyboards.shared import get_match_max_rows
+            from src.services.motopair_service import contact_footer_html_for_max_notifications
 
             msg_target = await get_template("template_mutual_like_target", profile=to_text)
             tg_mk = get_match_kb(callback.from_user.username, callback.from_user.id)
+            max_suffix = await contact_footer_html_for_max_notifications(eff_from)
             await send_text_to_all_identities(
                 result["target_user_id"],
                 msg_target,
@@ -606,6 +608,8 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
                 max_adapter=get_max_adapter(),
                 tg_reply_markup=tg_mk,
                 max_kb_rows=get_match_max_rows(callback.from_user.username),
+                max_extra_html=max_suffix,
+                photo_file_id=liker_photo,
             )
 
         from src.services.notification_templates import get_template
@@ -624,9 +628,11 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
             from src.services.cross_platform_notify import notify_like_received_cross_platform
             from src.services.broadcast import get_max_adapter
             from src.keyboards.shared import get_like_notification_max_rows
+            from src.services.motopair_service import contact_footer_html_for_max_notifications
 
             notify_text = await get_template("template_like_received", profile=from_text)
             kb = get_like_notification_kb(str(eff_from))
+            max_suffix = await contact_footer_html_for_max_notifications(eff_from)
             await notify_like_received_cross_platform(
                 result["target_user_id"],
                 notify_text,
@@ -635,6 +641,7 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
                 max_adapter=get_max_adapter(),
                 tg_reply_markup=kb,
                 max_kb_rows=get_like_notification_max_rows(str(eff_from)),
+                max_extra_html=max_suffix,
             )
 
         await _show_motopair_card_at(callback.message, user, role, list_offset)
@@ -705,13 +712,15 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
     match_kb_self = get_match_kb(from_user.platform_username, from_user.platform_user_id)
 
     if bot:
-        to_text, _ = await get_profile_info_text(effective_user_id(user))
+        to_text, replier_photo = await get_profile_info_text(effective_user_id(user))
         from src.services.notification_templates import get_template
         from src.services.cross_platform_notify import send_text_to_all_identities
         from src.services.broadcast import get_max_adapter
         from src.keyboards.shared import get_match_max_rows
+        from src.services.motopair_service import contact_footer_html_for_max_notifications
 
         msg = await get_template("template_mutual_like_reply", profile=to_text)
+        max_suffix = await contact_footer_html_for_max_notifications(effective_user_id(user))
         await send_text_to_all_identities(
             from_canon,
             msg,
@@ -719,6 +728,8 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
             max_adapter=get_max_adapter(),
             tg_reply_markup=match_kb_target,
             max_kb_rows=get_match_max_rows(user.platform_username),
+            max_extra_html=max_suffix,
+            photo_file_id=replier_photo,
         )
 
     from src.services.notification_templates import get_template

@@ -261,6 +261,31 @@ async def run_max(shared_adapter=None):
     from src.services.broadcast import set_max_adapter
     set_max_adapter(adapter)
 
+    # Лёгкий клиент Telegram Bot API без polling (только при PLATFORM=max в отдельном процессе).
+    # В режиме both бот уже создан в run_both и передан через set_tg_bot до вызова run_max.
+    tg_bridge_bot = None
+    if shared_adapter is None:
+        if settings.telegram_bot_token:
+            from aiogram import Bot
+            from aiogram.client.default import DefaultBotProperties
+            from aiogram.enums import ParseMode
+            from src.max_runner import set_tg_bot
+
+            tg_bridge_bot = Bot(
+                token=settings.telegram_bot_token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            )
+            set_tg_bot(tg_bridge_bot)
+            logger.info(
+                "MAX-only worker: Telegram Bot API client registered "
+                "(TG→MAX photo bridge, SOS to Telegram users)"
+            )
+        else:
+            logger.warning(
+                "MAX-only worker: TELEGRAM_BOT_TOKEN not set — "
+                "cannot download Telegram file_id for MAX notifications"
+            )
+
     # Connection diagnostics
     try:
         me = await adapter.get_me()
@@ -309,6 +334,11 @@ async def run_max(shared_adapter=None):
                 await asyncio.sleep(5)
     finally:
         await adapter.close()
+        if tg_bridge_bot is not None:
+            try:
+                await tg_bridge_bot.session.close()
+            except Exception as e:
+                logger.debug("MAX worker: tg bridge bot session close: %s", e)
 
 
 def main():

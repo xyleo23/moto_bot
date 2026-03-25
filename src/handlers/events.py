@@ -74,9 +74,13 @@ def _format_location(value: str | None) -> str:
     if not value:
         return "—"
     import re
+
+    from src.utils.yandex_maps import yandex_maps_href_for_html
+
     if re.match(r"^-?\d+\.\d+,-?\d+\.\d+$", value.strip()):
         lat, lon = value.strip().split(",")
-        return f'<a href="https://yandex.ru/maps/?pt={lon},{lat}&z=16">📍 Открыть на карте</a>'
+        href = yandex_maps_href_for_html(float(lat), float(lon))
+        return f'<a href="{href}">📍 Открыть на карте</a>'
     return value
 
 

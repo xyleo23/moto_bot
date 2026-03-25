@@ -84,6 +84,24 @@ REG_ERROR_USER_NOT_FOUND = "Ошибка: пользователь не найд
 
 REG_DONE = "✅ Анкета заполнена! 🏍"
 
+# Один номер уже зарегистрирован в другом клиенте (TG ↔ MAX) — привязка без повторной анкеты
+REG_CROSS_LINK_ASK = (
+    "Нашёл аккаунт с номером <code>{phone_masked}</code> в <b>{platform}</b>:\n"
+    "<b>{name}</b> ({role_label})\n\n"
+    "Это ты? Тогда объединим входы в один профиль — анкета будет общая, "
+    "заполнять заново не придётся.\n\n"
+    "Если это не ты — нажми «Нет» и продолжи регистрацию (или укажи другой номер на шаге телефона)."
+)
+REG_CROSS_LINK_SUCCESS = (
+    "✅ Аккаунты объединены. Одна анкета в Telegram и в MAX.\n"
+    "Добро пожаловать!"
+)
+REG_CROSS_LINK_ROLE_MISMATCH = (
+    "На этот номер уже зарегистрирован аккаунт в <b>{platform}</b> как <b>{existing_role}</b>, "
+    "а ты регистрируешься как <b>{registering_role}</b>.\n\n"
+    "В боте один номер — одна роль (пилот или двойка). Укажи другой номер или напиши в поддержку."
+)
+
 # ——— Profile preview ———
 PROFILE_PREVIEW_HEADER = "👀 Вот как тебя будут видеть другие:\n\n"
 PROFILE_PREVIEW_CONFIRM = "Всё верно? Сохранить анкету?"
@@ -107,9 +125,14 @@ SOS_ALL_CLEAR_BTN = "✅ Помощь получена — отбой"
 SOS_ALL_CLEAR_BROADCAST = "✅ Отбой! {name} сообщает: помощь получена."
 SOS_BROADCAST_TYPE = "🚨 SOS: {type_label}\n\n{profile}\n\n"
 SOS_BROADCAST_COMMENT = "Комментарий: {comment}\n\n"
-# & must be &amp; when message uses Telegram HTML parse_mode
+# HTML: href uses &amp;; ll+pt+z helps Yandex Maps app show the pin (not only the district)
 SOS_BROADCAST_MAP = (
-    "📍 https://yandex.ru/maps/?pt={lon},{lat}&amp;z=17&amp;l=map"
+    "📍 {lat:.6f}, {lon:.6f}\n"
+    '<a href="{href}">{link_label}</a>'
+)
+SOS_BROADCAST_MAP_LINK_LABEL = "Открыть Яндекс Карты"
+SOS_GEO_INVALID = (
+    "Не удалось определить координаты (0°, 0°). Отправь геолокацию ещё раз кнопкой «Отправить геолокацию»."
 )
 
 ADMIN_ACCESS_DENIED = (
