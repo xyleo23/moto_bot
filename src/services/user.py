@@ -87,6 +87,23 @@ async def get_all_platform_identities(canonical_user_id: uuid.UUID) -> list[User
         return list(r.scalars().all())
 
 
+async def sync_city_across_linked_identities(canonical_user_id: uuid.UUID, city_id: uuid.UUID) -> None:
+    """Прописать city_id всем записям User (TG + MAX), связанным с одним человеком."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        await session.execute(
+            update(User)
+            .where(
+                or_(
+                    User.id == canonical_user_id,
+                    User.linked_user_id == canonical_user_id,
+                )
+            )
+            .values(city_id=city_id)
+        )
+        await session.commit()
+
+
 async def has_profile(user: User) -> bool:
     """Check if user has completed profile (pilot or passenger).
 

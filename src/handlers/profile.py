@@ -3,12 +3,12 @@ import uuid
 
 from loguru import logger
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import StateFilter
 
-from src.keyboards.menu import get_back_to_menu_kb
+from src.keyboards.menu import get_back_to_menu_kb, get_city_select_kb
 from src import texts
 from src.models.user import effective_user_id
 
@@ -37,6 +37,30 @@ class AdminPhoneApprovalStates(StatesGroup):
 # ─────────────────────────────────────────────────────────────────────────────
 # Profile menu
 # ─────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "profile_city_change")
+async def cb_profile_city_change(callback: CallbackQuery, state: FSMContext, user=None):
+    """Смена города из профиля: список городов, далее тот же callback city_* что и при /start."""
+    from aiogram.exceptions import TelegramBadRequest
+    from src.services.admin_service import get_cities
+
+    await callback.answer()
+    await state.update_data(profile_city_change=True)
+    cities = await get_cities()
+    base = get_city_select_kb(cities)
+    rows = list(base.inline_keyboard)
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="menu_profile")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    text = "Выбери новый город:"
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except TelegramBadRequest:
+        try:
+            await callback.message.delete()
+        except TelegramBadRequest:
+            pass
+        await callback.bot.send_message(callback.message.chat.id, text, reply_markup=kb)
+
 
 @router.callback_query(F.data == "menu_profile")
 async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None):
@@ -79,6 +103,7 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
     kb_rows.extend([
         [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
         [InlineKeyboardButton(text=texts.PHONE_CHANGE_BTN, callback_data="profile_phone_change")],
+        [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)

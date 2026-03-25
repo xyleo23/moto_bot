@@ -128,6 +128,7 @@ async def cmd_profile(message: Message, state: FSMContext, user=None):
     kb_rows.extend([
         [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
         [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
+        [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
@@ -263,6 +264,9 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
         )
         return
 
+    data = await state.get_data()
+    changing_profile_city = bool(data.get("profile_city_change"))
+
     user = await get_or_create_user(
         platform="telegram",
         platform_user_id=callback.from_user.id,
@@ -271,6 +275,33 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
         city_id=city_id,
     )
     await state.update_data(registration_city_id=str(city_id))
+
+    if changing_profile_city:
+        await state.update_data(profile_city_change=False)
+        if user:
+            from src.services.user import has_profile, effective_user_id, sync_city_across_linked_identities
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            from src.models.base import get_session_factory
+            from sqlalchemy import select
+            from src.models.city import City
+
+            await sync_city_across_linked_identities(effective_user_id(user), city_id)
+            if await has_profile(user):
+                session_factory = get_session_factory()
+                async with session_factory() as session:
+                    r = await session.execute(select(City).where(City.id == city_id))
+                    city_obj = r.scalar_one_or_none()
+                city_name = city_obj.name if city_obj else "новый город"
+                await callback.message.edit_text(
+                    f"✅ Город изменён на «{city_name}».",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text="👤 К профилю", callback_data="menu_profile")],
+                        ]
+                    ),
+                )
+                return
+
     role_text = f"Отлично! {texts.WELCOME_ROLE_PROMPT}"
     await callback.message.edit_text(
         role_text,
@@ -461,6 +492,7 @@ async def kb_profile(message: Message, state: FSMContext, user=None):
     kb_rows.extend([
         [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
         [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
+        [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
     ])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)

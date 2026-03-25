@@ -155,21 +155,17 @@ def _parse_motopair_cb(data: str) -> tuple[str, int]:
     return "pilot", 0
 
 
-def _format_profile(profile, username: str | None = None) -> str:
-    """Format profile card. username is Telegram @handle of the profile owner."""
-    tg_link = (
-        f'\n<a href="https://t.me/{username}">@{username}</a>'
-        if username else ""
-    )
+def _format_profile(profile) -> str:
+    """Текст анкеты в ленте мотопары. Без @username и t.me — контакт только после взаимного лайка."""
     if hasattr(profile, "bike_brand"):
         return (
-            f"🏍 <b>{profile.name}</b>{tg_link}\n"
+            f"🏍 <b>{profile.name}</b>\n"
             f"Возраст: {profile.age}\n"
             f"Мотоцикл: {profile.bike_brand} {profile.bike_model}, {profile.engine_cc} см³\n"
             f"О себе: {profile.about or '—'}"
         )
     return (
-        f"👤 <b>{profile.name}</b>{tg_link}\n"
+        f"👤 <b>{profile.name}</b>\n"
         f"Возраст: {profile.age}, Рост: {profile.height} см, Вес: {profile.weight} кг\n"
         f"О себе: {profile.about or '—'}"
     )
@@ -177,7 +173,7 @@ def _format_profile(profile, username: str | None = None) -> str:
 
 async def _show_motopair_card_at(message: Message, user, role: str, offset: int) -> None:
     """Показать анкету с индексом offset (после лайка/скипа — та же логика, что у списка)."""
-    from src.services.motopair_service import get_next_profile, get_user_for_profile
+    from src.services.motopair_service import get_next_profile
     from src.services.filter_store import get_filter
 
     eff_id = effective_user_id(user)
@@ -203,9 +199,7 @@ async def _show_motopair_card_at(message: Message, user, role: str, offset: int)
             await message.answer(texts.MOTOPAIR_NO_PROFILES, reply_markup=empty_kb)
         return
 
-    profile_owner = await get_user_for_profile(profile.id, role)
-    owner_username = profile_owner.platform_username if profile_owner else None
-    text = _format_profile(profile, username=owner_username)
+    text = _format_profile(profile)
     kb = _profile_kb_with_report(str(profile.id), role, offset, has_more)
     if profile.photo_file_id:
         try:
