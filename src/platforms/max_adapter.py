@@ -76,6 +76,37 @@ def _build_max_keyboard(rows: list[KeyboardRow]) -> list | None:
     return max_rows if max_rows else None
 
 
+def _extract_max_upload_token(parsed: Any) -> str | None:
+    """Parse token from MAX POST-to-upload-url JSON (shape varies by CDN build)."""
+    if isinstance(parsed, str) and len(parsed.strip()) > 8:
+        return parsed.strip()
+    if not isinstance(parsed, dict):
+        return None
+    for k in ("token", "fileToken", "file_token", "retval", "access_token", "photo_token"):
+        v = parsed.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    for nest in (
+        "photo",
+        "image",
+        "file",
+        "result",
+        "data",
+        "payload",
+        "response",
+        "body",
+        "photos",
+    ):
+        sub = parsed.get(nest)
+        if isinstance(sub, list) and sub:
+            sub = sub[0]
+        if isinstance(sub, dict):
+            t = _extract_max_upload_token(sub)
+            if t:
+                return t
+    return None
+
+
 class MaxAdapter(PlatformAdapter):
     """MAX messenger adapter using platform-api.max.ru."""
 
@@ -158,11 +189,11 @@ class MaxAdapter(PlatformAdapter):
         try:
             r1 = await self._request("POST", "/uploads", params={"type": "image"})
         except Exception as e:
-            logger.warning("MAX POST /uploads?type=image failed: %s", e)
+            logger.warning("MAX POST /uploads?type=image failed: {}", e)
             return None
         upload_url = r1.get("url") if isinstance(r1, dict) else None
         if not upload_url:
-            logger.warning("MAX /uploads response missing url: %s", r1)
+            logger.warning("MAX /uploads response missing url: {}", r1)
             return None
 
         # Determine content-type by filename extension
@@ -183,30 +214,29 @@ class MaxAdapter(PlatformAdapter):
             async with aiohttp.ClientSession() as upload_session:
                 async with upload_session.post(upload_url, data=form, headers=upload_headers) as resp:
                     raw = await resp.text()
-                    logger.debug("MAX image upload status=%s body=%s", resp.status, raw[:500])
+                    logger.debug("MAX image upload status={} body={}", resp.status, raw[:500])
                     if resp.status >= 400:
                         logger.warning(
-                            "MAX image upload HTTP %s: %s", resp.status, raw[:400]
+                            "MAX image upload HTTP {}: {}", resp.status, raw[:400]
                         )
                         return None
                     try:
-                        body = json.loads(raw) if raw.strip() else {}
+                        parsed = json.loads(raw) if raw.strip() else {}
                     except json.JSONDecodeError:
-                        logger.warning("MAX image upload non-JSON response: %s", raw[:300])
+                        logger.warning("MAX image upload non-JSON response: {!r}", raw[:500])
                         return None
-                    # MAX upload endpoint returns {"token": "..."} for image uploads
-                    token = (
-                        body.get("token")
-                        or body.get("fileToken")
-                        or (body.get("photo") or {}).get("token")
-                    )
+                    token = _extract_max_upload_token(parsed)
                     if not token:
+                        # Loguru: use {} / {!r} — NOT printf %s (it will print literally).
                         logger.warning(
-                            "MAX image upload response has no token. body=%s", raw[:300]
+                            "MAX image upload: no token. http_status={} raw={!r} parsed={}",
+                            resp.status,
+                            raw[:1200],
+                            parsed,
                         )
                     return token
         except Exception as e:
-            logger.warning("MAX multipart image upload failed: %s", e)
+            logger.warning("MAX multipart image upload failed: {}", e)
             return None
 
     async def import_photo_from_telegram(self, telegram_bot, tg_file_id: str) -> str | None:
@@ -221,25 +251,25 @@ class MaxAdapter(PlatformAdapter):
         try:
             tg_file = await telegram_bot.get_file(tg_file_id)
             if not tg_file or not tg_file.file_path:
-                logger.warning("import_photo_from_telegram: get_file returned empty for %s", tg_file_id)
+                logger.warning("import_photo_from_telegram: get_file returned empty for {}", tg_file_id)
                 return None
             file_url = f"https://api.telegram.org/file/bot{token}/{tg_file.file_path}"
             async with aiohttp.ClientSession() as dl_session:
                 async with dl_session.get(file_url) as resp:
                     if resp.status != 200:
                         logger.warning(
-                            "import_photo_from_telegram: TG download HTTP %s for file_id=%s",
+                            "import_photo_from_telegram: TG download HTTP {} for file_id={}",
                             resp.status, tg_file_id,
                         )
                         return None
                     img_data = await resp.read()
             if not img_data:
-                logger.warning("import_photo_from_telegram: empty bytes for file_id=%s", tg_file_id)
+                logger.warning("import_photo_from_telegram: empty bytes for file_id={}", tg_file_id)
                 return None
             ext = (tg_file.file_path or "").lower().rsplit(".", 1)[-1]
             fname = f"photo.{ext}" if ext in ("jpg", "jpeg", "png", "gif", "webp") else "photo.jpg"
             logger.debug(
-                "import_photo_from_telegram: downloaded %d bytes, fname=%s", len(img_data), fname
+                "import_photo_from_telegram: downloaded {} bytes, fname={}", len(img_data), fname
             )
             return await self.upload_image_bytes(img_data, filename=fname)
         except Exception as e:
@@ -291,9 +321,10 @@ class MaxAdapter(PlatformAdapter):
             except RuntimeError as e:
                 err_str = str(e)
                 if "attachment.not.ready" in err_str or "not.processed" in err_str:
+                    nxt = delays[attempt] if attempt < len(delays) else None
                     logger.debug(
-                        "MAX send_photo: attachment not ready (attempt %d), retrying in %ss",
-                        attempt + 1, delays[attempt] if attempt < len(delays) else "—",
+                        "MAX send_photo: attachment not ready (attempt {}), next_sleep={}",
+                        attempt + 1, nxt,
                     )
                     last_exc = e
                     continue
@@ -369,7 +400,7 @@ class MaxAdapter(PlatformAdapter):
                 json_data=body,
             )
         except Exception as e:
-            logger.warning("MAX answer_callback_with_edit failed: %s", e)
+            logger.warning("MAX answer_callback_with_edit failed: {}", e)
 
     async def request_contact(self, chat_id: str, text: str):
         keyboard = [[Button("Отправить мой номер", type=ButtonType.REQUEST_CONTACT)]]
@@ -393,7 +424,7 @@ class MaxAdapter(PlatformAdapter):
                 json_data=body,
             )
         except Exception as e:
-            logger.warning("MAX answer_callback failed: %s", e)
+            logger.warning("MAX answer_callback failed: {}", e)
 
     async def get_file_url(self, file_id: str) -> str:
         # MAX file download - may need GET /files/{fileId}
