@@ -355,26 +355,53 @@ async def _max_send_photo_caption_keyboard(
     stored_photo_id: str | None,
     caption: str,
     keyboard,
+    *,
+    log_ctx: str = "max_photo",
 ) -> None:
     """Отправить фото в MAX: id может быть MAX token (регистрация в MAX) или Telegram file_id."""
     if not stored_photo_id or not str(stored_photo_id).strip():
+        logger.info(
+            "{}: skip (no photo id) chat_id={} caption_len={}",
+            log_ctx,
+            chat_id,
+            len(caption or ""),
+        )
         await adapter.send_message(chat_id, caption, keyboard)
         return
     pid = str(stored_photo_id).strip()
+    ref_hint = f"{pid[:16]}…(len={len(pid)})" if len(pid) > 16 else pid
+    logger.info(
+        "{}: try_direct chat_id={} ref_hint={} tg_bot_registered={}",
+        log_ctx,
+        chat_id,
+        ref_hint,
+        _get_tg_bot() is not None,
+    )
     try:
         await adapter.send_photo(chat_id, pid, caption=caption, keyboard=keyboard)
+        logger.info("{}: direct_send_ok chat_id={}", log_ctx, chat_id)
         return
     except Exception as e:
-        logger.debug("MAX direct photo send failed, try TG bridge: {}", e)
+        logger.warning(
+            "{}: direct_send_fail chat_id={} err={}",
+            log_ctx,
+            chat_id,
+            str(e)[:400],
+        )
     tg_bot = _get_tg_bot()
     if tg_bot:
         try:
             max_token = await adapter.import_photo_from_telegram(tg_bot, pid)
             if max_token:
                 await adapter.send_photo(chat_id, max_token, caption=caption, keyboard=keyboard)
+                logger.info("{}: tg_bridge_ok chat_id={}", log_ctx, chat_id)
                 return
+            logger.warning("{}: tg_bridge_no_token chat_id={}", log_ctx, chat_id)
         except Exception as e:
-            logger.warning("MAX photo via Telegram import failed: {}", e)
+            logger.warning("{}: tg_bridge_exception chat_id={} err={}", log_ctx, chat_id, e)
+    else:
+        logger.warning("{}: no_tg_bot_for_bridge chat_id={}", log_ctx, chat_id)
+    logger.warning("{}: fallback_text_only chat_id={}", log_ctx, chat_id)
     await adapter.send_message(chat_id, caption, keyboard)
 
 
@@ -2249,7 +2276,12 @@ async def handle_motopair_list(
     text = _format_profile_max(profile)
     kb = get_motopair_profile_rows(str(profile.id), role, offset, has_more)
     await _max_send_photo_caption_keyboard(
-        adapter, chat_id, getattr(profile, "photo_file_id", None), text, kb
+        adapter,
+        chat_id,
+        getattr(profile, "photo_file_id", None),
+        text,
+        kb,
+        log_ctx="motopair_photo",
     )
 
 
@@ -2896,6 +2928,12 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
     season_price = (sub_settings.season_price_kopecks if sub_settings and sub_settings.season_price_kopecks else 79900)
 
     sub_required = await check_subscription_required(user)
+    logger.info(
+        "handle_profile: max_uid={} canon={} sub_required={}",
+        user.platform_user_id,
+        effective_user_id(user),
+        sub_required,
+    )
     if sub_required:
         # Offer both monthly and season subscription options
         monthly_payment = await create_payment(
@@ -2939,6 +2977,10 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         if _tg_pay:
             kb.append([Button("✏️ Редактировать анкету (Telegram)", type=ButtonType.URL, url=_tg_pay)])
         kb.append([Button("« Назад", payload="menu_main")])
+        logger.info(
+            "profile_photo: paywall branch (фото не отправляем — только текст оплаты) max_uid={}",
+            user.platform_user_id,
+        )
         await adapter.send_message(chat_id, text, kb)
     else:
         # Subscription active — show profile menu (с фото как в мотопаре)
@@ -2956,6 +2998,15 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             profile_text = "👤 Мой профиль\n\nПодписка активна."
             photo_ref = None
 
+        pr = photo_ref or ""
+        logger.info(
+            "profile_photo: after_display max_uid={} has_photo_ref={} ref_len={} ref_prefix={!r}",
+            user.platform_user_id,
+            bool(photo_ref),
+            len(pr),
+            pr[:20] if pr else "",
+        )
+
         sub_settings2 = await _get_sub_settings()
         raise_enabled = sub_settings2 and sub_settings2.raise_profile_enabled if sub_settings2 else False
         raise_price = (sub_settings2.raise_profile_price_kopecks if sub_settings2 and sub_settings2.raise_profile_price_kopecks else 0)
@@ -2971,7 +3022,9 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             kb.append([Button(label, payload="max_profile_raise")])
         kb.append([Button("« Назад", payload="menu_main")])
 
-        await _max_send_photo_caption_keyboard(adapter, chat_id, photo_ref, profile_text, kb)
+        await _max_send_photo_caption_keyboard(
+            adapter, chat_id, photo_ref, profile_text, kb, log_ctx="profile_photo"
+        )
 
 
 async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
