@@ -52,7 +52,7 @@ def get_max_documents_menu_rows() -> list[KeyboardRow]:
         [Button("✅ Согласие на обработку ПД", payload="doc_consent")],
         [Button("🗑 Удалить мои данные", payload="doc_delete")],
         [Button("📞 Поддержка", payload="doc_support")],
-        [Button("« Назад в меню", payload="menu_main")],
+        [Button("🏠 Главное меню", payload="menu_main")],
     ]
 
 
@@ -61,6 +61,16 @@ def get_max_delete_confirm_rows() -> list[KeyboardRow]:
         [Button("✅ Да, удалить", payload="confirm_delete_data")],
         [Button("❌ Отмена", payload="menu_documents")],
     ]
+
+
+def get_back_to_menu_rows() -> list[KeyboardRow]:
+    """В MAX нет системной menu-button — явный выход в корень."""
+    return [[Button("🏠 Главное меню", payload="menu_main")]]
+
+
+def get_main_menu_shortcut_row() -> KeyboardRow:
+    """Одна строка для добавления к вложенным клавиатурам."""
+    return [Button("🏠 Главное меню", payload="menu_main")]
 
 
 def get_match_max_rows(telegram_username: str | None) -> list[KeyboardRow]:
@@ -74,7 +84,8 @@ def get_match_max_rows(telegram_username: str | None) -> list[KeyboardRow]:
                 url=f"https://t.me/{telegram_username}",
             ),
         ])
-    rows.append([Button("« В меню", payload="menu_motopair")])
+    rows.append([Button("« Мотопара", payload="menu_motopair")])
+    rows.append(get_main_menu_shortcut_row())
     return rows
 
 
@@ -84,6 +95,8 @@ def get_like_notification_max_rows(from_user_internal_id: str) -> list[KeyboardR
             Button("💚 Взаимно!", payload=f"reply_like_{from_user_internal_id}"),
             Button("👎 Пропустить", payload=f"reply_skip_{from_user_internal_id}"),
         ],
+        [Button("« Мотопара", payload="menu_motopair")],
+        get_main_menu_shortcut_row(),
     ]
 
 
@@ -94,10 +107,6 @@ def get_role_select_rows() -> list[KeyboardRow]:
             Button("Я Двойка", payload="role_passenger"),
         ],
     ]
-
-
-def get_back_to_menu_rows() -> list[KeyboardRow]:
-    return [[Button("« Назад в меню", payload="menu_main")]]
 
 
 def get_contact_button_row() -> KeyboardRow:
@@ -116,7 +125,7 @@ def get_contacts_menu_rows() -> list[KeyboardRow]:
         [Button("МотоКлубы", payload="contacts_motoclubs")],
         [Button("МотоЭвакуатор", payload="contacts_motoevac")],
         [Button("Другое", payload="contacts_other")],
-        [Button("« Назад", payload="menu_main")],
+        get_main_menu_shortcut_row(),
     ]
 
 
@@ -127,7 +136,8 @@ def get_contacts_page_rows(category: str, offset: int, has_more: bool) -> list[K
         rows.append([Button("◀ Пред", payload=f"contacts_page_{category}_{prev_off}")])
     if has_more:
         rows.append([Button("След ▶", payload=f"contacts_page_{category}_{offset + 5}")])
-    rows.append([Button("« Назад", payload="menu_contacts")])
+    rows.append([Button("« К категориям", payload="menu_contacts")])
+    rows.append(get_main_menu_shortcut_row())
     return rows
 
 
@@ -141,7 +151,8 @@ def get_motopair_profile_rows(profile_id: str, role: str, offset: int, has_more:
     if has_more:
         rows.append([Button("➡️ Следующая", payload=f"motopair_next_{role}_{offset + 1}")])
     rows.append([Button("🚩 Пожаловаться", payload=f"motopair_report_{profile_id}_{role}")])
-    rows.append([Button("« В меню", payload="menu_motopair")])
+    rows.append([Button("« Мотопара", payload="menu_motopair")])
+    rows.append(get_main_menu_shortcut_row())
     return rows
 
 
@@ -149,7 +160,7 @@ def get_events_menu_rows() -> list[KeyboardRow]:
     return [
         [Button("Список мероприятий", payload="event_list")],
         [Button("📋 Мои мероприятия", payload="event_my")],
-        [Button("« Назад", payload="menu_main")],
+        get_main_menu_shortcut_row(),
     ]
 
 
@@ -159,6 +170,7 @@ def get_max_my_event_detail_rows(event_id: str) -> list[KeyboardRow]:
         [Button("✏️ Редактировать", payload=f"max_evedit_menu_{event_id}")],
         [Button("❌ Отменить мероприятие", payload=f"event_cancel_{event_id}")],
         [Button("« Мои мероприятия", payload="event_my")],
+        get_main_menu_shortcut_row(),
     ]
 
 
@@ -172,6 +184,7 @@ def get_max_event_edit_menu_rows(event_id: str) -> list[KeyboardRow]:
         [Button("🏁 Финиш", payload=f"max_evedit_f_pend_{event_id}")],
         [Button("📝 Описание", payload=f"max_evedit_f_desc_{event_id}")],
         [Button("« Готово", payload=f"event_my_detail_{event_id}")],
+        get_main_menu_shortcut_row(),
     ]
 
 
@@ -184,7 +197,8 @@ def get_event_list_rows() -> list[KeyboardRow]:
             Button("Мотопробег", payload="event_list_motorcade"),
             Button("Прохват", payload="event_list_run"),
         ],
-        [Button("« Назад", payload="menu_events")],
+        [Button("« Мероприятия", payload="menu_events")],
+        get_main_menu_shortcut_row(),
     ]
 
 
@@ -198,4 +212,5 @@ def get_event_detail_rows(event_id: str, is_registered: bool, can_report: bool =
     if can_report:
         rows.append([Button("🚩 Пожаловаться", payload=f"max_event_report_{event_id}")])
     rows.append([Button("« К списку", payload="event_list")])
+    rows.append(get_main_menu_shortcut_row())
     return rows

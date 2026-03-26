@@ -77,6 +77,7 @@ from src.keyboards.shared import (
     get_max_delete_confirm_rows,
     get_match_max_rows,
     get_like_notification_max_rows,
+    get_main_menu_shortcut_row,
 )
 from src.utils.progress import progress_prefix
 from src import texts
@@ -1723,6 +1724,11 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
 
     # ── Main menu ─────────────────────────────────────────────────────────────
     if data == "menu_main":
+        await reg_state.clear_state(ev.user_id)
+        try:
+            await _pay_clear(ev.user_id)
+        except Exception:
+            pass
         await adapter.send_message(
             chat_id,
             "С возвращением! 👋\nГлавное меню:",
@@ -1935,7 +1941,7 @@ def _sos_type_kb() -> list[KeyboardRow]:
     return [
         [Button("ДТП", payload="sos_accident"), Button("Сломался", payload="sos_broken")],
         [Button("Обсох", payload="sos_ran_out"), Button("Другое", payload="sos_other")],
-        [Button("« Назад", payload="menu_main")],
+        get_main_menu_shortcut_row(),
     ]
 
 
@@ -1952,7 +1958,7 @@ async def _handle_sos_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
         kb = [
             [Button(texts.SOS_CHECK_READY, payload="sos_check_ready")],
             [Button(texts.SOS_ALL_CLEAR_BTN, payload="sos_all_clear")],
-            [Button("« Назад", payload="menu_main")],
+            get_main_menu_shortcut_row(),
         ]
         await adapter.send_message(
             chat_id,
@@ -2036,7 +2042,7 @@ async def _handle_sos_send(
         kb = [
             [Button(texts.SOS_CHECK_READY, payload="sos_check_ready")],
             [Button(texts.SOS_ALL_CLEAR_BTN, payload="sos_all_clear")],
-            [Button("« Назад", payload="menu_main")],
+            get_main_menu_shortcut_row(),
         ]
         await adapter.send_message(chat_id, texts.SOS_READY_WAIT.format(mins=mins, secs=secs), kb)
         return
@@ -2106,7 +2112,7 @@ async def _handle_sos_send(
     kb = [
         [Button(texts.SOS_CHECK_READY, payload="sos_check_ready")],
         [Button(texts.SOS_ALL_CLEAR_BTN, payload="sos_all_clear")],
-        [Button("« Назад в меню", payload="menu_main")],
+        get_main_menu_shortcut_row(),
     ]
     await adapter.send_message(chat_id, texts.SOS_SENT.format(cooldown=cooldown_mins), kb)
 
@@ -2120,14 +2126,14 @@ async def _handle_sos_check_ready(adapter: MaxAdapter, chat_id: str, user_id: in
         return
     remaining = await check_sos_cooldown(effective_user_id(user))
     if remaining <= 0:
-        kb = [[Button("🚨 Отправить SOS", payload="menu_sos")], [Button("« Главное меню", payload="menu_main")]]
+        kb = [[Button("🚨 Отправить SOS", payload="menu_sos")], get_main_menu_shortcut_row()]
         await adapter.send_message(chat_id, texts.SOS_READY_NOW, kb)
     else:
         mins, secs = remaining // 60, remaining % 60
         kb = [
             [Button(texts.SOS_CHECK_READY, payload="sos_check_ready")],
             [Button(texts.SOS_ALL_CLEAR_BTN, payload="sos_all_clear")],
-            [Button("« Назад", payload="menu_main")],
+            get_main_menu_shortcut_row(),
         ]
         await adapter.send_message(chat_id, texts.SOS_READY_WAIT.format(mins=mins, secs=secs), kb)
 
@@ -2170,13 +2176,13 @@ async def handle_motopair_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
         await adapter.send_message(
             chat_id,
             await subscription_required_message("motopair_menu"),
-            [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_main")]],
+            [[Button("👤 Мой профиль", payload="menu_profile")], get_main_menu_shortcut_row()],
         )
         return
     kb = [
         [Button("Анкеты пилотов", payload="motopair_pilots")],
         [Button("Анкеты двоек", payload="motopair_passengers")],
-        [Button("« Назад", payload="menu_main")],
+        get_main_menu_shortcut_row(),
     ]
     await adapter.send_message(chat_id, "🏍 Мотопара\n\nВыбери категорию:", kb)
 
@@ -2261,7 +2267,8 @@ async def handle_motopair_list(
             await subscription_required_message("motopair_cards"),
             [
                 [Button("👤 Мой профиль", payload="menu_profile")],
-                [Button("« Назад", payload="menu_motopair")],
+                [Button("« Мотопара", payload="menu_motopair")],
+                get_main_menu_shortcut_row(),
             ],
         )
         return
@@ -2269,8 +2276,12 @@ async def handle_motopair_list(
     profile, has_more = await get_next_profile(effective_user_id(user), role, offset=offset)
     if not profile:
         await adapter.send_message(
-            chat_id, texts.MOTOPAIR_NO_PROFILES,
-            [[Button("« В меню", payload="menu_motopair")]],
+            chat_id,
+            texts.MOTOPAIR_NO_PROFILES,
+            [
+                [Button("« Мотопара", payload="menu_motopair")],
+                get_main_menu_shortcut_row(),
+            ],
         )
         return
     text = _format_profile_max(profile)
@@ -2571,7 +2582,7 @@ async def handle_event_my_max(adapter: MaxAdapter, chat_id: str, user) -> None:
             await subscription_required_message("events_menu"),
             [
                 [Button("👤 Мой профиль", payload="menu_profile")],
-                [Button("« Назад", payload="menu_main")],
+                get_main_menu_shortcut_row(),
             ],
         )
         return
@@ -2580,7 +2591,10 @@ async def handle_event_my_max(adapter: MaxAdapter, chat_id: str, user) -> None:
         await adapter.send_message(
             chat_id,
             "Ты ещё не создавал мероприятий.",
-            [[Button("« Назад", payload="menu_events")]],
+            [
+                [Button("« Мероприятия", payload="menu_events")],
+                get_main_menu_shortcut_row(),
+            ],
         )
         return
     lines = ["<b>Мои мероприятия</b>\n"]
@@ -2591,7 +2605,8 @@ async def handle_event_my_max(adapter: MaxAdapter, chat_id: str, user) -> None:
             f"• {truncate_smart(str(title), 55)} — {e.start_at.strftime('%d.%m.%Y %H:%M')}"
         )
         kb.append([Button(event_button_label(str(title)), payload=f"event_my_detail_{e.id}")])
-    kb.append([Button("« Назад", payload="menu_events")])
+    kb.append([Button("« Мероприятия", payload="menu_events")])
+    kb.append(get_main_menu_shortcut_row())
     text = "\n".join(lines)
     if len(text) > 4000:
         text = text[:3997] + "…"
@@ -2642,7 +2657,10 @@ async def handle_event_cancel_max(adapter: MaxAdapter, chat_id: str, user, event
     await adapter.send_message(
         chat_id,
         "Мероприятие отменено. Участники уведомлены (Telegram и MAX, где есть аккаунт).",
-        [[Button("« Мои мероприятия", payload="event_my")]],
+        [
+            [Button("« Мои мероприятия", payload="event_my")],
+            get_main_menu_shortcut_row(),
+        ],
     )
 
 
@@ -2727,7 +2745,7 @@ async def handle_events_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
             await subscription_required_message("events_menu"),
             [
                 [Button("👤 Мой профиль", payload="menu_profile")],
-                [Button("« Назад", payload="menu_main")],
+                get_main_menu_shortcut_row(),
             ],
         )
         return
@@ -2753,7 +2771,7 @@ async def handle_events_list(
         await adapter.send_message(
             chat_id,
             await subscription_required_message("events_menu"),
-            [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_main")]],
+            [[Button("👤 Мой профиль", payload="menu_profile")], get_main_menu_shortcut_row()],
         )
         return
     if not user.city_id:
@@ -2848,7 +2866,8 @@ async def handle_event_register(
             await subscription_required_message("events_register"),
             [
                 [Button("👤 Мой профиль", payload="menu_profile")],
-                [Button("« Назад", payload="menu_events")],
+                [Button("« Мероприятия", payload="menu_events")],
+                get_main_menu_shortcut_row(),
             ],
         )
         return
@@ -2976,7 +2995,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         _tg_pay = get_settings().telegram_return_url
         if _tg_pay:
             kb.append([Button("✏️ Редактировать анкету (Telegram)", type=ButtonType.URL, url=_tg_pay)])
-        kb.append([Button("« Назад", payload="menu_main")])
+        kb.append(get_main_menu_shortcut_row())
         logger.info(
             "profile_photo: paywall branch (фото не отправляем — только текст оплаты) max_uid={}",
             user.platform_user_id,
@@ -3020,7 +3039,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         if raise_enabled:
             label = f"⬆️ Поднять анкету — {raise_price // 100} ₽" if raise_price > 0 else "⬆️ Поднять анкету (бесплатно)"
             kb.append([Button(label, payload="max_profile_raise")])
-        kb.append([Button("« Назад", payload="menu_main")])
+        kb.append(get_main_menu_shortcut_row())
 
         await _max_send_photo_caption_keyboard(
             adapter, chat_id, photo_ref, profile_text, kb, log_ctx="profile_photo"
@@ -3037,7 +3056,7 @@ async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
     text += f"\n\n📧 {s.support_email}\n👤 @{s.support_username}"
     kb = [
         [Button("❤️ Поддержать проект", payload="max_donate")],
-        [Button("« Назад", payload="menu_main")],
+        get_main_menu_shortcut_row(),
     ]
     await adapter.send_message(chat_id, text, kb)
 
@@ -3150,7 +3169,7 @@ async def _handle_payment_callback(
                 chat_id,
                 "Платёж ещё не обработан. Подожди несколько секунд и нажми «Я оплатил — проверить» снова.",
                 [[Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")],
-                 [Button("« Назад", payload="menu_main")]],
+                 get_main_menu_shortcut_row()],
             )
         return True
 
@@ -3194,7 +3213,8 @@ async def _handle_payment_callback(
             kb.append([Button(f"💳 Год (365 дн.) — {season_price // 100} ₽", type=ButtonType.URL, url=season_payment["confirmation_url"])])
         if kb:
             kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
-        kb.append([Button("« Назад", payload="menu_profile")])
+        kb.append([Button("« Профиль", payload="menu_profile")])
+        kb.append(get_main_menu_shortcut_row())
         await adapter.send_message(chat_id, text, kb)
         return True
 
@@ -3239,7 +3259,8 @@ async def _handle_payment_callback(
         kb = [
             [Button(f"💳 Оплатить — {price // 100} ₽", type=ButtonType.URL, url=payment["confirmation_url"])],
             [Button("✅ Я оплатил — проверить", payload="max_pay_raise_check")],
-            [Button("« Назад", payload="menu_profile")],
+            [Button("« Профиль", payload="menu_profile")],
+            get_main_menu_shortcut_row(),
         ]
         await adapter.send_message(
             chat_id,
@@ -3277,7 +3298,8 @@ async def _handle_payment_callback(
                 chat_id,
                 "Платёж ещё не обработан. Подожди и попробуй снова.",
                 [[Button("✅ Я оплатил — проверить", payload="max_pay_raise_check")],
-                 [Button("« Назад", payload="menu_profile")]],
+                 [Button("« Профиль", payload="menu_profile")],
+                 get_main_menu_shortcut_row()],
             )
         return True
 
@@ -3285,7 +3307,8 @@ async def _handle_payment_callback(
     if data == "max_donate":
         DONATE_AMOUNTS = [(10000, "100 ₽"), (30000, "300 ₽"), (50000, "500 ₽"), (100000, "1000 ₽")]
         kb = [[Button(label, payload=f"max_donate_amount_{kop}")] for kop, label in DONATE_AMOUNTS]
-        kb.append([Button("« Назад", payload="menu_about")])
+        kb.append([Button("« О нас", payload="menu_about")])
+        kb.append(get_main_menu_shortcut_row())
         await adapter.send_message(chat_id, "❤️ Поддержать проект — выбери сумму:", kb)
         return True
 
@@ -3310,7 +3333,8 @@ async def _handle_payment_callback(
 
         kb = [
             [Button(f"💳 Оплатить — {amount_kop // 100} ₽", type=ButtonType.URL, url=payment["confirmation_url"])],
-            [Button("« Назад", payload="menu_about")],
+            [Button("« О нас", payload="menu_about")],
+            get_main_menu_shortcut_row(),
         ]
         await adapter.send_message(chat_id, "Спасибо за поддержку! Перейди по ссылке для оплаты:", kb)
         return True
@@ -3324,7 +3348,7 @@ async def _handle_payment_callback(
             await adapter.send_message(
                 chat_id,
                 await subscription_required_message("events_create"),
-                [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Назад", payload="menu_events")]],
+                [[Button("👤 Мой профиль", payload="menu_profile")], [Button("« Мероприятия", payload="menu_events")], get_main_menu_shortcut_row()],
             )
             return True
         if not user.city_id:
@@ -3334,7 +3358,8 @@ async def _handle_payment_callback(
             [Button("Масштабное", payload="max_evcreate_type_large")],
             [Button("Мотопробег", payload="max_evcreate_type_motorcade")],
             [Button("Прохват", payload="max_evcreate_type_run")],
-            [Button("« Отмена", payload="menu_events")],
+            [Button("« Мероприятия", payload="menu_events")],
+            get_main_menu_shortcut_row(),
         ]
         await adapter.send_message(chat_id, "Тип мероприятия:", kb)
         return True
@@ -3379,7 +3404,8 @@ async def _handle_payment_callback(
             kb = [
                 [Button(f"💳 Оплатить — {price // 100} ₽", type=ButtonType.URL, url=payment["confirmation_url"])],
                 [Button("✅ Я оплатил — проверить", payload="max_pay_event_check")],
-                [Button("« Отмена", payload="menu_events")],
+                [Button("« Мероприятия", payload="menu_events")],
+                get_main_menu_shortcut_row(),
             ]
             await adapter.send_message(
                 chat_id,
@@ -3416,7 +3442,8 @@ async def _handle_payment_callback(
                 chat_id,
                 "Платёж ещё не обработан. Подожди и попробуй снова.",
                 [[Button("✅ Я оплатил — проверить", payload="max_pay_event_check")],
-                 [Button("« Отмена", payload="menu_events")]],
+                 [Button("« Мероприятия", payload="menu_events")],
+                 get_main_menu_shortcut_row()],
             )
         return True
 
