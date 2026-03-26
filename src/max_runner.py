@@ -2924,15 +2924,20 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         kb.append([Button("« Назад", payload="menu_main")])
         await adapter.send_message(chat_id, text, kb)
     else:
-        # Subscription active — show profile menu
-        from src.services.profile_service import get_profile_text
+        # Subscription active — show profile menu (с фото как в мотопаре)
+        from src.services.profile_service import get_profile_display
         from src.services.admin_service import get_subscription_settings as _get_sub_settings
 
         try:
-            profile_text = await get_profile_text(user)
+            profile_text, tg_photo_id = await get_profile_display(user)
         except Exception as e:
-            logger.warning("handle_profile: get_profile_text failed for user_id=%s: %s", effective_user_id(user), e)
+            logger.warning(
+                "handle_profile: get_profile_display failed for user_id={}: {}",
+                effective_user_id(user),
+                e,
+            )
             profile_text = "👤 Мой профиль\n\nПодписка активна."
+            tg_photo_id = None
 
         sub_settings2 = await _get_sub_settings()
         raise_enabled = sub_settings2 and sub_settings2.raise_profile_enabled if sub_settings2 else False
@@ -2948,7 +2953,23 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             label = f"⬆️ Поднять анкету — {raise_price // 100} ₽" if raise_price > 0 else "⬆️ Поднять анкету (бесплатно)"
             kb.append([Button(label, payload="max_profile_raise")])
         kb.append([Button("« Назад", payload="menu_main")])
-        await adapter.send_message(chat_id, profile_text, kb)
+
+        max_token = None
+        if tg_photo_id:
+            tg_bot = _get_tg_bot()
+            if tg_bot:
+                try:
+                    max_token = await adapter.import_photo_from_telegram(tg_bot, tg_photo_id)
+                except Exception as e:
+                    logger.warning("handle_profile: import_photo_from_telegram: {}", e)
+        if max_token:
+            try:
+                await adapter.send_photo(chat_id, max_token, caption=profile_text, keyboard=kb)
+            except Exception as e:
+                logger.warning("handle_profile: send_photo failed, fallback text: {}", e)
+                await adapter.send_message(chat_id, profile_text, kb)
+        else:
+            await adapter.send_message(chat_id, profile_text, kb)
 
 
 async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
