@@ -21,6 +21,7 @@ from src.models.base import get_session_factory
 from src.keyboards.menu import get_main_menu_kb, get_back_to_menu_kb
 from src.config import get_settings
 from src import texts
+from src.utils.tg_callback_message import edit_text_or_send_new
 
 router = Router()
 
@@ -90,7 +91,8 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
                 photo_file_id=p.photo_file_id,
                 about=p.about,
             )
-            await callback.message.edit_text(
+            await edit_text_or_send_new(
+                callback,
                 f"✏️ Редактирование анкеты\n\n"
                 f"Текущее имя: <b>{p.name}</b>\n"
                 f"Введи новое или нажми «Пропустить»:",
@@ -117,7 +119,8 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
                 photo_file_id=p.photo_file_id,
                 about=p.about,
             )
-            await callback.message.edit_text(
+            await edit_text_or_send_new(
+                callback,
                 f"✏️ Редактирование анкеты\n\n"
                 f"Текущее имя: <b>{p.name}</b>\n"
                 f"Введи новое или нажми «Пропустить»:",

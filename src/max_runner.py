@@ -2341,7 +2341,7 @@ async def handle_event_register(
 
 async def handle_event_report(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
     """Report an event from MAX. Notifies city admins and superadmins via Telegram."""
-    from src.services.event_service import get_event_by_id, TYPE_LABELS
+    from src.services.event_service import get_event_by_id, format_event_report_admin_html
     from src.services.admin_service import get_city_admins
     from src.config import get_settings
     from src import texts
@@ -2361,14 +2361,8 @@ async def handle_event_report(adapter: MaxAdapter, chat_id: str, user, event_id:
         await adapter.send_message(chat_id, "Нельзя пожаловаться на своё мероприятие.", get_back_to_menu_rows())
         return
 
-    ev_title = ev.title or TYPE_LABELS.get(ev.type.value, ev.type.value)
     reporter = f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
-    admin_text = texts.EVENT_REPORT_ADMIN_TEXT.format(
-        reporter=reporter,
-        event_title=ev_title,
-        event_date=ev.start_at.strftime("%d.%m.%Y %H:%M"),
-        event_type=TYPE_LABELS.get(ev.type.value, ev.type.value),
-    )
+    admin_text = await format_event_report_admin_html(ev, reporter)
 
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[

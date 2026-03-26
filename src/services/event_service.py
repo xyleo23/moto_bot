@@ -183,6 +183,42 @@ async def get_event_by_id(event_id: UUID):
         return result.scalar_one_or_none()
 
 
+async def format_event_report_admin_html(ev: Event, reporter: str) -> str:
+    """HTML для admins по шаблону texts.EVENT_REPORT_ADMIN_TEXT (creator + event_text)."""
+    from html import escape
+
+    from src import texts
+    from src.services.admin_service import get_user_by_id
+
+    type_val = ev.type.value if hasattr(ev.type, "value") else str(ev.type)
+    ev_title_raw = ev.title or TYPE_LABELS.get(type_val, type_val)
+    cu = await get_user_by_id(ev.creator_id)
+    if cu and cu.platform_username:
+        un = cu.platform_username.lstrip("@")
+        creator = escape(f"@{un}")
+    elif cu:
+        creator = escape(str(cu.platform_user_id))
+    else:
+        creator = "—"
+    lines = [
+        f"📅 {ev.start_at.strftime('%d.%m.%Y %H:%M')}",
+        f"Тип: {escape(TYPE_LABELS.get(type_val, type_val))}",
+        f"Старт: {escape(ev.point_start)}",
+    ]
+    if ev.point_end:
+        lines.append(f"Финиш: {escape(ev.point_end)}")
+    if ev.description:
+        lines.append("")
+        lines.append(escape(ev.description))
+    event_text = "\n".join(lines)
+    return texts.EVENT_REPORT_ADMIN_TEXT.format(
+        reporter=escape(reporter),
+        event_title=escape(ev_title_raw),
+        creator=creator,
+        event_text=event_text,
+    )
+
+
 async def create_event(
     city_id: UUID,
     creator_id: UUID,

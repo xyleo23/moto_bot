@@ -4,6 +4,7 @@ from aiogram.types import CallbackQuery
 
 from src.services.payment import create_payment
 from src.config import get_settings
+from src.utils.tg_callback_message import edit_text_or_send_new
 
 router = Router()
 
@@ -43,7 +44,8 @@ async def cb_subscribe(callback: CallbackQuery, user=None, bot=None):
         return_url=get_settings().telegram_return_url or "https://t.me",
     )
     if not payment or not payment.get("confirmation_url"):
-        await callback.message.edit_text(
+        await edit_text_or_send_new(
+            callback,
             "Оплата временно недоступна. Попробуй позже.",
         )
         await callback.answer()
@@ -54,7 +56,8 @@ async def cb_subscribe(callback: CallbackQuery, user=None, bot=None):
         [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
     ])
-    await callback.message.edit_text(
+    await edit_text_or_send_new(
+        callback,
         "Перейди по ссылке для оплаты. После оплаты нажми /start для обновления статуса.",
         reply_markup=kb,
     )

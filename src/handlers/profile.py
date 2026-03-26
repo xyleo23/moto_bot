@@ -11,6 +11,7 @@ from aiogram.filters import StateFilter
 from src.keyboards.menu import get_back_to_menu_kb, get_city_select_kb
 from src import texts
 from src.models.user import effective_user_id
+from src.utils.tg_callback_message import edit_text_or_send_new
 
 router = Router()
 
@@ -41,7 +42,6 @@ class AdminPhoneApprovalStates(StatesGroup):
 @router.callback_query(F.data == "profile_city_change")
 async def cb_profile_city_change(callback: CallbackQuery, state: FSMContext, user=None):
     """Смена города из профиля: список городов, далее тот же callback city_* что и при /start."""
-    from aiogram.exceptions import TelegramBadRequest
     from src.services.admin_service import get_cities
 
     await callback.answer()
@@ -51,15 +51,7 @@ async def cb_profile_city_change(callback: CallbackQuery, state: FSMContext, use
     rows = list(base.inline_keyboard)
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="menu_profile")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    text = "Выбери новый город:"
-    try:
-        await callback.message.edit_text(text, reply_markup=kb)
-    except TelegramBadRequest:
-        try:
-            await callback.message.delete()
-        except TelegramBadRequest:
-            pass
-        await callback.bot.send_message(callback.message.chat.id, text, reply_markup=kb)
+    await edit_text_or_send_new(callback, "Выбери новый город:", reply_markup=kb)
 
 
 @router.callback_query(F.data == "menu_profile")
@@ -166,7 +158,8 @@ async def cb_profile_subscribe(callback: CallbackQuery, user=None):
     ])
     from src.services.subscription_messages import subscription_required_message
 
-    await callback.message.edit_text(
+    await edit_text_or_send_new(
+        callback,
         (await subscription_required_message("motopair_menu")) + "\n\nВыбери срок:",
         reply_markup=kb,
     )
@@ -191,8 +184,10 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
 
     # Feature disabled entirely — block (do NOT raise for free)
     if not settings_db or not settings_db.raise_profile_enabled:
-        await callback.message.edit_text(
-            "Поднятие анкеты сейчас недоступно.", reply_markup=get_back_to_menu_kb()
+        await edit_text_or_send_new(
+            callback,
+            "Поднятие анкеты сейчас недоступно.",
+            reply_markup=get_back_to_menu_kb(),
         )
         await callback.answer()
         return
@@ -203,13 +198,16 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
     if price <= 0:
         ok = await raise_profile(effective_user_id(user), role)
         if ok:
-            await callback.message.edit_text(
+            await edit_text_or_send_new(
+                callback,
                 "✅ Анкета поднята! Тебя будут видеть выше в поиске.",
                 reply_markup=get_back_to_menu_kb(),
             )
         else:
-            await callback.message.edit_text(
-                "Ошибка при поднятии анкеты.", reply_markup=get_back_to_menu_kb()
+            await edit_text_or_send_new(
+                callback,
+                "Ошибка при поднятии анкеты.",
+                reply_markup=get_back_to_menu_kb(),
             )
         await callback.answer()
         return
@@ -235,7 +233,8 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
             )],
             [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
         ])
-        await callback.message.edit_text(
+        await edit_text_or_send_new(
+            callback,
             f"💳 Поднятие анкеты платное: <b>{price_rub} ₽</b>\n\n"
             f"Оплати и нажми «Я оплатил — проверить».",
             reply_markup=kb,
@@ -244,7 +243,8 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
         return
 
     logger.warning("cb_profile_raise: payment service unavailable")
-    await callback.message.edit_text(
+    await edit_text_or_send_new(
+        callback,
         "Платёжный сервис временно недоступен. Попробуй позже.",
         reply_markup=get_back_to_menu_kb(),
     )
@@ -270,18 +270,22 @@ async def cb_raise_check_payment(callback: CallbackQuery, state: FSMContext, use
         await state.clear()
         ok = await raise_profile(effective_user_id(user), role)
         if ok:
-            await callback.message.edit_text(
+            await edit_text_or_send_new(
+                callback,
                 "✅ Оплата прошла! Анкета поднята — тебя увидят первым.",
                 reply_markup=get_back_to_menu_kb(),
             )
         else:
-            await callback.message.edit_text(
+            await edit_text_or_send_new(
+                callback,
                 "Оплата прошла, но поднять анкету не удалось. Обратись в поддержку.",
                 reply_markup=get_back_to_menu_kb(),
             )
     elif status == "canceled":
         await state.clear()
-        await callback.message.edit_text("❌ Платёж отменён.", reply_markup=get_back_to_menu_kb())
+        await edit_text_or_send_new(
+            callback, "❌ Платёж отменён.", reply_markup=get_back_to_menu_kb()
+        )
     else:
         await callback.answer(
             "Платёж ещё не обработан. Подожди несколько секунд и попробуй ещё раз.",
@@ -321,7 +325,8 @@ async def cb_phone_change_request(callback: CallbackQuery, state: FSMContext, us
             return
 
     await state.set_state(UserPhoneChangeStates.enter_new_phone)
-    await callback.message.edit_text(
+    await edit_text_or_send_new(
+        callback,
         "📱 Введи новый номер телефона в формате +79991234567:\n\n"
         "После ввода заявка будет отправлена администратору на подтверждение.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

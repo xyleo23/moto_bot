@@ -37,6 +37,7 @@ from src.services.event_service import (
     get_creator_events,
     cancel_event,
     get_profile_display,
+    format_event_report_admin_html,
     TYPE_LABELS,
     RIDE_LABELS,
 )
@@ -706,14 +707,8 @@ async def cb_event_report(callback: CallbackQuery, user=None):
         await callback.answer("Нельзя пожаловаться на своё мероприятие.", show_alert=True)
         return
 
-    ev_title = ev.title or TYPE_LABELS.get(ev.type.value, ev.type.value)
     reporter = f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
-    admin_text = texts.EVENT_REPORT_ADMIN_TEXT.format(
-        reporter=reporter,
-        event_title=ev_title,
-        event_date=ev.start_at.strftime("%d.%m.%Y %H:%M"),
-        event_type=TYPE_LABELS.get(ev.type.value, ev.type.value),
-    )
+    admin_text = await format_event_report_admin_html(ev, reporter)
 
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
