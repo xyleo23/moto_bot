@@ -349,6 +349,35 @@ def _format_profile_max(profile) -> str:
     )
 
 
+async def _max_send_photo_caption_keyboard(
+    adapter: MaxAdapter,
+    chat_id: str,
+    stored_photo_id: str | None,
+    caption: str,
+    keyboard,
+) -> None:
+    """Отправить фото в MAX: id может быть MAX token (регистрация в MAX) или Telegram file_id."""
+    if not stored_photo_id or not str(stored_photo_id).strip():
+        await adapter.send_message(chat_id, caption, keyboard)
+        return
+    pid = str(stored_photo_id).strip()
+    try:
+        await adapter.send_photo(chat_id, pid, caption=caption, keyboard=keyboard)
+        return
+    except Exception as e:
+        logger.debug("MAX direct photo send failed, try TG bridge: {}", e)
+    tg_bot = _get_tg_bot()
+    if tg_bot:
+        try:
+            max_token = await adapter.import_photo_from_telegram(tg_bot, pid)
+            if max_token:
+                await adapter.send_photo(chat_id, max_token, caption=caption, keyboard=keyboard)
+                return
+        except Exception as e:
+            logger.warning("MAX photo via Telegram import failed: {}", e)
+    await adapter.send_message(chat_id, caption, keyboard)
+
+
 # ── Registration FSM — step handlers ─────────────────────────────────────────
 
 async def _start_pilot_registration(
@@ -2219,21 +2248,9 @@ async def handle_motopair_list(
         return
     text = _format_profile_max(profile)
     kb = get_motopair_profile_rows(str(profile.id), role, offset, has_more)
-    max_token = None
-    if getattr(profile, "photo_file_id", None):
-        tg_bot = _get_tg_bot()
-        if tg_bot:
-            try:
-                max_token = await adapter.import_photo_from_telegram(tg_bot, profile.photo_file_id)
-            except Exception as e:
-                logger.warning("handle_motopair_list import_photo_from_telegram: %s", e)
-    if max_token:
-        try:
-            await adapter.send_photo(chat_id, max_token, caption=text, keyboard=kb)
-            return
-        except Exception as e:
-            logger.warning("handle_motopair_list send_photo failed, text only: %s", e)
-    await adapter.send_message(chat_id, text, kb)
+    await _max_send_photo_caption_keyboard(
+        adapter, chat_id, getattr(profile, "photo_file_id", None), text, kb
+    )
 
 
 async def handle_motopair_like(
@@ -2929,7 +2946,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         from src.services.admin_service import get_subscription_settings as _get_sub_settings
 
         try:
-            profile_text, tg_photo_id = await get_profile_display(user)
+            profile_text, photo_ref = await get_profile_display(user)
         except Exception as e:
             logger.warning(
                 "handle_profile: get_profile_display failed for user_id={}: {}",
@@ -2937,7 +2954,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
                 e,
             )
             profile_text = "👤 Мой профиль\n\nПодписка активна."
-            tg_photo_id = None
+            photo_ref = None
 
         sub_settings2 = await _get_sub_settings()
         raise_enabled = sub_settings2 and sub_settings2.raise_profile_enabled if sub_settings2 else False
@@ -2954,22 +2971,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             kb.append([Button(label, payload="max_profile_raise")])
         kb.append([Button("« Назад", payload="menu_main")])
 
-        max_token = None
-        if tg_photo_id:
-            tg_bot = _get_tg_bot()
-            if tg_bot:
-                try:
-                    max_token = await adapter.import_photo_from_telegram(tg_bot, tg_photo_id)
-                except Exception as e:
-                    logger.warning("handle_profile: import_photo_from_telegram: {}", e)
-        if max_token:
-            try:
-                await adapter.send_photo(chat_id, max_token, caption=profile_text, keyboard=kb)
-            except Exception as e:
-                logger.warning("handle_profile: send_photo failed, fallback text: {}", e)
-                await adapter.send_message(chat_id, profile_text, kb)
-        else:
-            await adapter.send_message(chat_id, profile_text, kb)
+        await _max_send_photo_caption_keyboard(adapter, chat_id, photo_ref, profile_text, kb)
 
 
 async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
