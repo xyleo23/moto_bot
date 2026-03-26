@@ -164,29 +164,47 @@ class MaxAdapter(PlatformAdapter):
         if not upload_url:
             logger.warning("MAX /uploads response missing url: %s", r1)
             return None
-        session = await self._get_session()
+
+        # Determine content-type by filename extension
+        ext = (filename or "").lower().rsplit(".", 1)[-1]
+        ct_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                  "gif": "image/gif", "webp": "image/webp"}
+        img_ct = ct_map.get(ext, "image/jpeg")
+
+        # MAX API expects field name "data" for multipart uploads.
         form = aiohttp.FormData()
-        form.add_field(
-            "data",
-            data,
-            filename=filename,
-            content_type="image/jpeg",
-        )
+        form.add_field("data", data, filename=filename, content_type=img_ct)
+
+        # IMPORTANT: do NOT pass Content-Type header manually — aiohttp sets
+        # multipart/form-data with the correct boundary automatically.
+        # Only pass the Authorization header; Content-Type must not be overridden.
+        upload_headers = {"Authorization": self._token}
         try:
-            async with session.post(upload_url, data=form, headers=self._headers()) as resp:
-                raw = await resp.text()
-                if resp.status >= 400:
-                    logger.warning("MAX image upload POST %s: %s", resp.status, raw[:400])
-                    return None
-                try:
-                    body = json.loads(raw) if raw.strip() else {}
-                except json.JSONDecodeError:
-                    logger.warning("MAX image upload non-JSON: %s", raw[:200])
-                    return None
-                token = body.get("token")
-                if not token:
-                    logger.warning("MAX image upload response without token: %s", raw[:300])
-                return token
+            async with aiohttp.ClientSession() as upload_session:
+                async with upload_session.post(upload_url, data=form, headers=upload_headers) as resp:
+                    raw = await resp.text()
+                    logger.debug("MAX image upload status=%s body=%s", resp.status, raw[:500])
+                    if resp.status >= 400:
+                        logger.warning(
+                            "MAX image upload HTTP %s: %s", resp.status, raw[:400]
+                        )
+                        return None
+                    try:
+                        body = json.loads(raw) if raw.strip() else {}
+                    except json.JSONDecodeError:
+                        logger.warning("MAX image upload non-JSON response: %s", raw[:300])
+                        return None
+                    # MAX upload endpoint returns {"token": "..."} for image uploads
+                    token = (
+                        body.get("token")
+                        or body.get("fileToken")
+                        or (body.get("photo") or {}).get("token")
+                    )
+                    if not token:
+                        logger.warning(
+                            "MAX image upload response has no token. body=%s", raw[:300]
+                        )
+                    return token
         except Exception as e:
             logger.warning("MAX multipart image upload failed: %s", e)
             return None
@@ -203,19 +221,29 @@ class MaxAdapter(PlatformAdapter):
         try:
             tg_file = await telegram_bot.get_file(tg_file_id)
             if not tg_file or not tg_file.file_path:
+                logger.warning("import_photo_from_telegram: get_file returned empty for %s", tg_file_id)
                 return None
             file_url = f"https://api.telegram.org/file/bot{token}/{tg_file.file_path}"
-            session = await self._get_session()
-            async with session.get(file_url) as resp:
-                if resp.status != 200:
-                    logger.warning("Telegram file download %s for MAX bridge", resp.status)
-                    return None
-                data = await resp.read()
-            ext = (tg_file.file_path or "").lower().split(".")[-1]
+            async with aiohttp.ClientSession() as dl_session:
+                async with dl_session.get(file_url) as resp:
+                    if resp.status != 200:
+                        logger.warning(
+                            "import_photo_from_telegram: TG download HTTP %s for file_id=%s",
+                            resp.status, tg_file_id,
+                        )
+                        return None
+                    img_data = await resp.read()
+            if not img_data:
+                logger.warning("import_photo_from_telegram: empty bytes for file_id=%s", tg_file_id)
+                return None
+            ext = (tg_file.file_path or "").lower().rsplit(".", 1)[-1]
             fname = f"photo.{ext}" if ext in ("jpg", "jpeg", "png", "gif", "webp") else "photo.jpg"
-            return await self.upload_image_bytes(data, filename=fname)
+            logger.debug(
+                "import_photo_from_telegram: downloaded %d bytes, fname=%s", len(img_data), fname
+            )
+            return await self.upload_image_bytes(img_data, filename=fname)
         except Exception as e:
-            logger.warning("import_photo_from_telegram: %s", e)
+            logger.warning("import_photo_from_telegram: exception for file_id=%s: %s", tg_file_id, e)
             return None
 
     async def send_photo(
@@ -225,7 +253,13 @@ class MaxAdapter(PlatformAdapter):
         caption: str | None = None,
         keyboard: list[KeyboardRow] | None = None,
     ):
-        """Send photo. photo_file_id is MAX attachment token (reused from received message)."""
+        """Send photo. photo_file_id is MAX attachment token.
+
+        MAX processes uploaded images asynchronously; retries with backoff on
+        'attachment.not.ready' as recommended in the MAX API docs.
+        """
+        import asyncio
+
         attachments: list[dict] = []
         if photo_file_id:
             attachments.append({
@@ -244,12 +278,27 @@ class MaxAdapter(PlatformAdapter):
         if caption:
             body["format"] = "html"
         params = _get_msg_params(chat_id)
-        return await self._request(
-            "POST",
-            "/messages",
-            params=params,
-            json_data=body,
-        )
+
+        delays = [1, 2, 4]  # seconds between retries for attachment.not.ready
+        last_exc = None
+        for attempt, delay in enumerate([0] + delays):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                return await self._request(
+                    "POST", "/messages", params=params, json_data=body
+                )
+            except RuntimeError as e:
+                err_str = str(e)
+                if "attachment.not.ready" in err_str or "not.processed" in err_str:
+                    logger.debug(
+                        "MAX send_photo: attachment not ready (attempt %d), retrying in %ss",
+                        attempt + 1, delays[attempt] if attempt < len(delays) else "—",
+                    )
+                    last_exc = e
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]
 
     async def send_photo_bytes(
         self,
