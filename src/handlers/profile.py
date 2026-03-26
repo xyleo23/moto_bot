@@ -151,7 +151,7 @@ async def cb_profile_subscribe(callback: CallbackQuery, user=None):
             callback_data="sub_monthly",
         )],
         [InlineKeyboardButton(
-            text=f"Сезон — {season_price} ₽",
+            text=f"Год (365 дн.) — {season_price} ₽",
             callback_data="sub_season",
         )],
         [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
@@ -160,7 +160,7 @@ async def cb_profile_subscribe(callback: CallbackQuery, user=None):
 
     await edit_text_or_send_new(
         callback,
-        (await subscription_required_message("motopair_menu")) + "\n\nВыбери срок:",
+        (await subscription_required_message("motopair_menu")) + "\n\nВыбери тариф:",
         reply_markup=kb,
     )
     await callback.answer()

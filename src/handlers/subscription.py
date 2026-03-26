@@ -15,7 +15,7 @@ async def cb_subscribe(callback: CallbackQuery, user=None, bot=None):
 
     if callback.data == "sub_monthly":
         period = "monthly"
-    elif callback.data == "sub_season":
+    elif callback.data in ("sub_season", "sub_year"):
         period = "season"
     else:
         await callback.answer("Неизвестный тип подписки.")

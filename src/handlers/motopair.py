@@ -303,13 +303,11 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
         await callback.answer("Ошибка.", show_alert=True)
         return
 
-    parts = callback.data.replace("motopair_report_", "").split("_")
-    if len(parts) < 2:
+    rest = callback.data.replace("motopair_report_", "", 1)
+    if "_" not in rest:
         await callback.answer()
         return
-
-    profile_id_str = parts[0]
-    role = parts[1]
+    profile_id_str, role = rest.rsplit("_", 1)
 
     try:
         profile_uuid = uuid.UUID(profile_id_str)

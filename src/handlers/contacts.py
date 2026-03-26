@@ -11,22 +11,14 @@ from src.services.useful_contacts_service import (
     get_contacts_by_category,
     CAT_LABELS,
     CONTACTS_PER_PAGE,
+    format_useful_contact_html,
 )
 
 router = Router()
 
 
 def _format_contact(c: dict) -> str:
-    parts = [f"• <b>{c['name']}</b>"]
-    if c.get("description"):
-        parts.append(c["description"])
-    if c.get("phone"):
-        parts.append(f"📞 {c['phone']}")
-    if c.get("link"):
-        parts.append(f"🔗 {c['link']}")
-    if c.get("address"):
-        parts.append(f"📍 {c['address']}")
-    return "\n".join(parts)
+    return format_useful_contact_html(c)
 
 
 @router.callback_query(F.data == "menu_contacts")

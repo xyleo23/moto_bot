@@ -1100,7 +1100,7 @@ def _settings_text(s) -> str:
         "⚙️ <b>Настройки подписки</b>\n\n"
         f"Подписка: {'✅ вкл' if s.subscription_enabled else '❌ выкл'}\n"
         f"Цена месяца: {s.monthly_price_kopecks / 100:.0f} ₽\n"
-        f"Цена сезона: {s.season_price_kopecks / 100:.0f} ₽\n"
+        f"Цена года (365 дн.): {s.season_price_kopecks / 100:.0f} ₽\n"
         f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}\n"
         f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}\n"
         f"Мотопробегов/мес (с подпиской): {limit}"
@@ -1205,7 +1205,7 @@ async def cb_admin_set_season(callback: CallbackQuery, state: FSMContext):
         return
     await state.set_state(AdminSettingsStates.season_price)
     await state.update_data(admin_set_key="season")
-    await callback.message.edit_text("Введи цену сезона в копейках (например 79900):")
+    await callback.message.edit_text("Введи цену годовой подписки в копейках (например 79900):")
     await callback.answer()
 
 

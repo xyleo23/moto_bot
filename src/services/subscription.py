@@ -44,7 +44,8 @@ async def activate_subscription(user_id, period: str, payment_id: str) -> bool:
         expires = today + timedelta(days=30)
         sub_type = SubscriptionType.MONTHLY
     else:
-        expires = today + timedelta(days=120)  # ~4 months season
+        # season | year — годовая подписка 365 дней (тип в БД SEASON)
+        expires = today + timedelta(days=365)
         sub_type = SubscriptionType.SEASON
 
     async with session_factory() as session:

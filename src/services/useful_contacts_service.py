@@ -26,6 +26,20 @@ CAT_LABELS = {
 CONTACTS_PER_PAGE = 5
 
 
+def format_useful_contact_html(c: dict) -> str:
+    """Один контакт в HTML (как в Telegram-боте) — для MAX и TG."""
+    parts = [f"• <b>{c['name']}</b>"]
+    if c.get("description"):
+        parts.append(c["description"])
+    if c.get("phone"):
+        parts.append(f"📞 {c['phone']}")
+    if c.get("link"):
+        parts.append(f"🔗 {c['link']}")
+    if c.get("address"):
+        parts.append(f"📍 {c['address']}")
+    return "\n".join(parts)
+
+
 async def can_manage_contacts(user_id: UUID, city_id: UUID | None, superadmin_ids: list[int]) -> bool:
     """True if user can add/edit contacts: superadmin or city admin."""
     from src.models.user import User

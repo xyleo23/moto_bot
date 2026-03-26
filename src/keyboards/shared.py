@@ -134,12 +134,13 @@ def get_contacts_page_rows(category: str, offset: int, has_more: bool) -> list[K
 def get_motopair_profile_rows(profile_id: str, role: str, offset: int, has_more: bool) -> list[KeyboardRow]:
     rows = [
         [
-            Button("👍 Лайк", payload=f"like_{profile_id}_{role}_{offset}"),
-            Button("👎 Дизлайк", payload=f"dislike_{profile_id}_{role}_{offset}"),
+            Button("❤️ Лайк", payload=f"like_{profile_id}_{role}_{offset}"),
+            Button("👎 Пропустить", payload=f"dislike_{profile_id}_{role}_{offset}"),
         ],
     ]
     if has_more:
-        rows.append([Button("Следующая ➡", payload=f"motopair_next_{role}_{offset + 1}")])
+        rows.append([Button("➡️ Следующая", payload=f"motopair_next_{role}_{offset + 1}")])
+    rows.append([Button("🚩 Пожаловаться", payload=f"motopair_report_{profile_id}_{role}")])
     rows.append([Button("« В меню", payload="menu_motopair")])
     return rows
 
@@ -147,8 +148,25 @@ def get_motopair_profile_rows(profile_id: str, role: str, offset: int, has_more:
 def get_events_menu_rows() -> list[KeyboardRow]:
     return [
         [Button("Список мероприятий", payload="event_list")],
+        [Button("📋 Мои мероприятия", payload="event_my")],
         [Button("« Назад", payload="menu_main")],
     ]
+
+
+def get_max_my_event_detail_rows(event_id: str, telegram_edit_url: str | None) -> list[KeyboardRow]:
+    """Карточка «моё мероприятие» в MAX: отмена + ссылка на редактирование в Telegram."""
+    rows: list[KeyboardRow] = []
+    if telegram_edit_url:
+        rows.append([
+            Button(
+                "✏️ Редактировать в Telegram",
+                type=ButtonType.URL,
+                url=telegram_edit_url,
+            ),
+        ])
+    rows.append([Button("❌ Отменить мероприятие", payload=f"event_cancel_{event_id}")])
+    rows.append([Button("« Мои мероприятия", payload="event_my")])
+    return rows
 
 
 def get_event_list_rows() -> list[KeyboardRow]:

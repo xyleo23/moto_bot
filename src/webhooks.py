@@ -206,7 +206,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
 
     user_id_str = metadata.get("user_id")
     period = metadata.get("period")
-    if not user_id_str or period not in ("monthly", "season"):
+    if not user_id_str or period not in ("monthly", "season", "year"):
         logger.warning("YooKassa webhook: missing user_id or period in metadata")
         return 200, {"status": "bad_metadata"}
 
@@ -214,6 +214,9 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
         user_id = uuid.UUID(user_id_str)
     except ValueError:
         return 200, {"status": "invalid_user_id"}
+
+    if period == "year":
+        period = "season"
 
     session_factory = get_session_factory()
     # Idempotency: skip if already processed
@@ -231,7 +234,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
 
     # Notify user via Telegram or MAX
     from src.services.notification_templates import get_template
-    period_label = "1 месяц" if period == "monthly" else "Сезон"
+    period_label = "1 месяц" if period == "monthly" else "год (365 дней)"
     msg = await get_template("template_subscription_activated", period=period_label)
     await _notify_user(user_id, msg, src_platform)
 

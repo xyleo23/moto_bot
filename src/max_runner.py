@@ -69,6 +69,7 @@ from src.keyboards.shared import (
     get_events_menu_rows,
     get_event_list_rows,
     get_event_detail_rows,
+    get_max_my_event_detail_rows,
     get_welcome_city_rows_for_cities,
     get_welcome_role_rows,
     get_max_documents_menu_rows,
@@ -1580,6 +1581,10 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         offset = int(parts[1]) if len(parts) > 1 else 0
         await handle_motopair_list(adapter, chat_id, user, role, offset)
         return
+    if data.startswith("motopair_report_"):
+        await handle_motopair_report_max(adapter, chat_id, user, data)
+        return
+
     if data.startswith("like_") or data.startswith("dislike_"):
         from src.services.motopair_service import parse_motopair_like_callback
 
@@ -1622,6 +1627,18 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         p = data.replace("event_register_", "").split("_")
         if len(p) >= 2:
             await handle_event_register(adapter, chat_id, user, p[0], p[1])
+        return
+
+    if data == "event_my":
+        await handle_event_my_max(adapter, chat_id, user)
+        return
+    if data.startswith("event_my_detail_"):
+        eid = data.replace("event_my_detail_", "", 1)
+        await handle_event_my_detail_max(adapter, chat_id, user, eid)
+        return
+    if data.startswith("event_cancel_"):
+        eid = data.replace("event_cancel_", "", 1)
+        await handle_event_cancel_max(adapter, chat_id, user, eid)
         return
 
     if data.startswith("max_event_report_"):
@@ -2047,6 +2064,20 @@ async def handle_motopair_list(
         return
     text = _format_profile_max(profile)
     kb = get_motopair_profile_rows(str(profile.id), role, offset, has_more)
+    max_token = None
+    if getattr(profile, "photo_file_id", None):
+        tg_bot = _get_tg_bot()
+        if tg_bot:
+            try:
+                max_token = await adapter.import_photo_from_telegram(tg_bot, profile.photo_file_id)
+            except Exception as e:
+                logger.warning("handle_motopair_list import_photo_from_telegram: %s", e)
+    if max_token:
+        try:
+            await adapter.send_photo(chat_id, max_token, caption=text, keyboard=kb)
+            return
+        except Exception as e:
+            logger.warning("handle_motopair_list send_photo failed, text only: %s", e)
     await adapter.send_message(chat_id, text, kb)
 
 
@@ -2169,7 +2200,11 @@ async def handle_contacts_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
 async def handle_contacts_list(
     adapter: MaxAdapter, chat_id: str, user, category: str, offset: int = 0
 ) -> None:
-    from src.services.useful_contacts_service import get_contacts_by_category, CAT_LABELS
+    from src.services.useful_contacts_service import (
+        get_contacts_by_category,
+        CAT_LABELS,
+        format_useful_contact_html,
+    )
 
     if not user.city_id:
         await adapter.send_message(chat_id, "Город не выбран. Нажми /start", get_back_to_menu_rows())
@@ -2177,19 +2212,179 @@ async def handle_contacts_list(
     contacts, total, has_more = await get_contacts_by_category(user.city_id, category, offset=offset)
     label = CAT_LABELS.get(category, category)
     if not contacts:
-        text = f"{label}\n\nКонтактов пока нет."
+        text = f"<b>{label}</b>\n\nКонтактов пока нет."
     else:
-        lines = [f"<b>{label}</b>\n"]
-        for c in contacts:
-            line = f"• {c['name']}"
-            if c.get("phone"):
-                line += f" — {c['phone']}"
-            if c.get("link"):
-                line += f"\n  {c['link']}"
-            lines.append(line)
-        text = "\n".join(lines)
+        blocks = [format_useful_contact_html(c) for c in contacts]
+        text = f"<b>{label}</b>\n\n" + "\n\n".join(blocks)
+    if len(text) > 4000:
+        text = text[:3997] + "…"
     kb = get_contacts_page_rows(category, offset, has_more)
     await adapter.send_message(chat_id, text, kb)
+
+
+async def handle_event_my_max(adapter: MaxAdapter, chat_id: str, user) -> None:
+    from src.services.event_service import get_creator_events, TYPE_LABELS
+    from src.services.subscription import check_subscription_required
+    from src.services.subscription_messages import subscription_required_message
+    from src.utils.text_format import truncate_smart, event_button_label
+
+    if await check_subscription_required(user):
+        await adapter.send_message(
+            chat_id,
+            await subscription_required_message("events_menu"),
+            [
+                [Button("👤 Мой профиль", payload="menu_profile")],
+                [Button("« Назад", payload="menu_main")],
+            ],
+        )
+        return
+    events = await get_creator_events(effective_user_id(user))
+    if not events:
+        await adapter.send_message(
+            chat_id,
+            "Ты ещё не создавал мероприятий.",
+            [[Button("« Назад", payload="menu_events")]],
+        )
+        return
+    lines = ["<b>Мои мероприятия</b>\n"]
+    kb: list = []
+    for e in events[:10]:
+        title = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
+        lines.append(
+            f"• {truncate_smart(str(title), 55)} — {e.start_at.strftime('%d.%m.%Y %H:%M')}"
+        )
+        kb.append([Button(event_button_label(str(title)), payload=f"event_my_detail_{e.id}")])
+    kb.append([Button("« Назад", payload="menu_events")])
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3997] + "…"
+    await adapter.send_message(chat_id, text, kb)
+
+
+async def handle_event_my_detail_max(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
+    from src.handlers.events import _format_event_card
+    from src.services.event_service import get_event_by_id
+    from src.config import get_settings
+
+    try:
+        ev_uuid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка ID.", get_back_to_menu_rows())
+        return
+    ev = await get_event_by_id(ev_uuid)
+    if not ev or ev.creator_id != effective_user_id(user):
+        await adapter.send_message(chat_id, "Мероприятие не найдено.", get_back_to_menu_rows())
+        return
+    s = get_settings()
+    edit_url = None
+    if s.telegram_bot_username:
+        edit_url = f"https://t.me/{s.telegram_bot_username.lstrip('@')}"
+    text = _format_event_card(ev)
+    kb = get_max_my_event_detail_rows(event_id, edit_url)
+    await adapter.send_message(chat_id, text, kb)
+
+
+async def handle_event_cancel_max(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
+    from src.services.event_service import cancel_event, get_event_by_id
+
+    try:
+        ev_uuid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка ID.", get_back_to_menu_rows())
+        return
+    ok, notify_ids = await cancel_event(ev_uuid, effective_user_id(user))
+    if not ok:
+        await adapter.send_message(chat_id, "Не удалось отменить.", get_back_to_menu_rows())
+        return
+    ev = await get_event_by_id(ev_uuid)
+    tg_bot = _get_tg_bot()
+    org_pid = user.platform_user_id
+    if tg_bot and ev:
+        for pid in notify_ids:
+            if pid != org_pid:
+                try:
+                    await tg_bot.send_message(
+                        pid,
+                        f"❌ Мероприятие «{ev.title or 'Мероприятие'}» отменено организатором.",
+                    )
+                except Exception as e:
+                    logger.warning("event_cancel_max: notify tg %s failed: %s", pid, e)
+    await adapter.send_message(
+        chat_id,
+        "Мероприятие отменено. Участники уведомлены (в Telegram).",
+        [[Button("« Мои мероприятия", payload="event_my")]],
+    )
+
+
+async def handle_motopair_report_max(
+    adapter: MaxAdapter, chat_id: str, user, data: str
+) -> None:
+    from src.services.motopair_service import get_user_for_profile, get_profile_info_text
+    from src.services.admin_service import get_city_admins
+    from src.config import get_settings
+    from src import texts
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    rest = data.replace("motopair_report_", "", 1)
+    if "_" not in rest:
+        await adapter.send_message(chat_id, "Ошибка.", get_back_to_menu_rows())
+        return
+    profile_id_str, role = rest.rsplit("_", 1)
+    try:
+        profile_uuid = uuid.UUID(profile_id_str)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка.", get_back_to_menu_rows())
+        return
+    target_user = await get_user_for_profile(profile_uuid, role)
+    if not target_user:
+        await adapter.send_message(chat_id, "Анкета не найдена.", get_back_to_menu_rows())
+        return
+    profile_text, _ = await get_profile_info_text(target_user.id)
+    reporter_display = (
+        f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
+    )
+    reported_display = (
+        f"@{target_user.platform_username}" if target_user.platform_username
+        else str(target_user.platform_user_id)
+    )
+    admin_text = texts.MOTOPAIR_REPORT_ADMIN_TEXT.format(
+        reporter=reporter_display,
+        reported=reported_display,
+        profile_text=profile_text,
+    )
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=texts.MOTOPAIR_REPORT_BTN_ACCEPT,
+            callback_data=f"admin_report_accept_{target_user.id}",
+        )],
+        [InlineKeyboardButton(
+            text=texts.MOTOPAIR_REPORT_BTN_BLOCK,
+            callback_data=f"admin_report_block_{target_user.id}",
+        )],
+        [InlineKeyboardButton(
+            text=texts.MOTOPAIR_REPORT_BTN_REJECT,
+            callback_data=f"admin_report_reject_{target_user.id}",
+        )],
+    ])
+    settings = get_settings()
+    tg_bot = _get_tg_bot()
+    if user.city_id:
+        admins = await get_city_admins(user.city_id)
+        for _, admin_user in admins:
+            try:
+                if tg_bot:
+                    await tg_bot.send_message(
+                        admin_user.platform_user_id, admin_text, reply_markup=admin_kb
+                    )
+            except Exception as e:
+                logger.warning("motopair_report_max: city admin %s: %s", admin_user.platform_user_id, e)
+    if tg_bot:
+        for admin_id in settings.superadmin_ids:
+            try:
+                await tg_bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
+            except Exception as e:
+                logger.warning("motopair_report_max: superadmin %s: %s", admin_id, e)
+    await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_SENT, get_back_to_menu_rows())
 
 
 async def handle_events_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
@@ -2413,7 +2608,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         )
         season_payment = await create_payment(
             amount_kopecks=season_price,
-            description="Подписка на сезон — мото-бот",
+            description="Подписка на год (365 дней) — мото-бот",
             metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "season", "platform": "max"},
             return_url=get_settings().max_return_url,
         )
@@ -2426,7 +2621,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             + paywall
             + "\n\n"
             f"• 1 месяц — {monthly_price // 100} ₽\n"
-            f"• Сезон — {season_price // 100} ₽\n\n"
+            f"• Год (365 дн.) — {season_price // 100} ₽\n\n"
             "Выбери тариф и оплати по ссылке. После оплаты нажми «Я оплатил — проверить»."
         )
         kb = []
@@ -2439,7 +2634,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
                 {"payment_id": monthly_payment["id"], "period": "monthly"},
             )
         if season_payment and season_payment.get("confirmation_url"):
-            kb.append([Button(f"💳 Сезон — {season_price // 100} ₽", type=ButtonType.URL, url=season_payment["confirmation_url"])])
+            kb.append([Button(f"💳 Год (365 дн.) — {season_price // 100} ₽", type=ButtonType.URL, url=season_payment["confirmation_url"])])
         if kb:
             kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
         _tg_pay = get_settings().telegram_return_url
@@ -2577,7 +2772,7 @@ async def _handle_payment_callback(
             await reg_state.clear_state(user.platform_user_id)
             await _pay_clear(user.platform_user_id)
             if ok:
-                period_label = "1 месяц" if period == "monthly" else "Сезон"
+                period_label = "1 месяц" if period == "monthly" else "год (365 дней)"
                 await adapter.send_message(
                     chat_id,
                     f"✅ Подписка активирована на {period_label}! Добро пожаловать.",
@@ -2619,7 +2814,7 @@ async def _handle_payment_callback(
         )
         season_payment = await create_payment(
             amount_kopecks=season_price,
-            description="Продление подписки на сезон — мото-бот",
+            description="Продление подписки на год (365 дней) — мото-бот",
             metadata={"type": "subscription", "user_id": str(effective_user_id(user)), "period": "season", "platform": "max"},
             return_url=get_settings().max_return_url,
         )
@@ -2627,7 +2822,7 @@ async def _handle_payment_callback(
         text = (
             "Продление подписки:\n\n"
             f"• 1 месяц — {monthly_price // 100} ₽\n"
-            f"• Сезон — {season_price // 100} ₽\n\n"
+            f"• Год (365 дн.) — {season_price // 100} ₽\n\n"
             "Оплати по ссылке и нажми «Я оплатил — проверить»."
         )
         kb = []
@@ -2639,7 +2834,7 @@ async def _handle_payment_callback(
                 {"payment_id": monthly_payment["id"], "period": "monthly"},
             )
         if season_payment and season_payment.get("confirmation_url"):
-            kb.append([Button(f"💳 Сезон — {season_price // 100} ₽", type=ButtonType.URL, url=season_payment["confirmation_url"])])
+            kb.append([Button(f"💳 Год (365 дн.) — {season_price // 100} ₽", type=ButtonType.URL, url=season_payment["confirmation_url"])])
         if kb:
             kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
         kb.append([Button("« Назад", payload="menu_profile")])
