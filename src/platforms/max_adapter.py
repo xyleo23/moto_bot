@@ -86,6 +86,23 @@ def _extract_max_upload_token(parsed: Any) -> str | None:
         v = parsed.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()
+    # MAX CDN multipart response: {"photos": {"<opaque_key>": {"token": "..."}}}
+    photos = parsed.get("photos")
+    if isinstance(photos, dict):
+        for entry in photos.values():
+            if isinstance(entry, dict):
+                tok = entry.get("token")
+                if isinstance(tok, str) and tok.strip():
+                    return tok.strip()
+                t = _extract_max_upload_token(entry)
+                if t:
+                    return t
+    elif isinstance(photos, list):
+        for item in photos:
+            if isinstance(item, dict):
+                t = _extract_max_upload_token(item)
+                if t:
+                    return t
     for nest in (
         "photo",
         "image",
@@ -95,7 +112,6 @@ def _extract_max_upload_token(parsed: Any) -> str | None:
         "payload",
         "response",
         "body",
-        "photos",
     ):
         sub = parsed.get(nest)
         if isinstance(sub, list) and sub:
