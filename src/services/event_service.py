@@ -446,8 +446,8 @@ async def get_creator_events(creator_id: UUID):
         return result.scalars().all()
 
 
-async def cancel_event(event_id: UUID, creator_id: UUID) -> tuple[bool, list[int]]:
-    """Cancel event, return list of platform_user_ids to notify."""
+async def cancel_event(event_id: UUID, creator_id: UUID) -> tuple[bool, list[UUID]]:
+    """Cancel event. Returns (ok, participant user ids — канонические UUID для рассылки)."""
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await session.execute(
@@ -459,14 +459,11 @@ async def cancel_event(event_id: UUID, creator_id: UUID) -> tuple[bool, list[int
         ev.is_cancelled = True
 
         regs = await session.execute(
-            select(User.platform_user_id).join(
-                EventRegistration,
-                EventRegistration.user_id == User.id,
-            ).where(EventRegistration.event_id == event_id)
+            select(EventRegistration.user_id).where(EventRegistration.event_id == event_id)
         )
-        notify_ids = [r[0] for r in regs.all()]
+        participant_ids = [r[0] for r in regs.all()]
         await session.commit()
-        return True, notify_ids
+        return True, participant_ids
 
 
 async def update_event(

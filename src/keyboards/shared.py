@@ -153,20 +153,26 @@ def get_events_menu_rows() -> list[KeyboardRow]:
     ]
 
 
-def get_max_my_event_detail_rows(event_id: str, telegram_edit_url: str | None) -> list[KeyboardRow]:
-    """Карточка «моё мероприятие» в MAX: отмена + ссылка на редактирование в Telegram."""
-    rows: list[KeyboardRow] = []
-    if telegram_edit_url:
-        rows.append([
-            Button(
-                "✏️ Редактировать в Telegram",
-                type=ButtonType.URL,
-                url=telegram_edit_url,
-            ),
-        ])
-    rows.append([Button("❌ Отменить мероприятие", payload=f"event_cancel_{event_id}")])
-    rows.append([Button("« Мои мероприятия", payload="event_my")])
-    return rows
+def get_max_my_event_detail_rows(event_id: str) -> list[KeyboardRow]:
+    """Карточка «моё мероприятие» в MAX: редактирование, отмена."""
+    return [
+        [Button("✏️ Редактировать", payload=f"max_evedit_menu_{event_id}")],
+        [Button("❌ Отменить мероприятие", payload=f"event_cancel_{event_id}")],
+        [Button("« Мои мероприятия", payload="event_my")],
+    ]
+
+
+def get_max_event_edit_menu_rows(event_id: str) -> list[KeyboardRow]:
+    """Пошаговое редактирование полей мероприятия в MAX."""
+    return [
+        [Button("✏️ Название", payload=f"max_evedit_f_title_{event_id}")],
+        [Button("📅 Дата", payload=f"max_evedit_f_date_{event_id}")],
+        [Button("⏰ Время", payload=f"max_evedit_f_time_{event_id}")],
+        [Button("📍 Старт", payload=f"max_evedit_f_pstart_{event_id}")],
+        [Button("🏁 Финиш", payload=f"max_evedit_f_pend_{event_id}")],
+        [Button("📝 Описание", payload=f"max_evedit_f_desc_{event_id}")],
+        [Button("« Готово", payload=f"event_my_detail_{event_id}")],
+    ]
 
 
 def get_event_list_rows() -> list[KeyboardRow]:

@@ -967,21 +967,22 @@ async def cb_event_cancel(callback: CallbackQuery, user=None, bot=None):
 
     eid = callback.data.replace("event_cancel_", "")
     ev_uuid = uuid.UUID(eid)
-    ok, notify_ids = await cancel_event(ev_uuid, effective_user_id(user))
+    ok, participant_ids = await cancel_event(ev_uuid, effective_user_id(user))
     if not ok:
         await callback.answer("Ошибка.", show_alert=True)
         return
     ev = await get_event_by_id(ev_uuid)
-    if bot and ev:
-        for pid in notify_ids:
-            if pid != callback.from_user.id:
-                try:
-                    await bot.send_message(
-                        pid,
-                        f"❌ Мероприятие «{ev.title or 'Мероприятие'}» отменено организатором.",
-                    )
-                except Exception as e:
-                    logger.warning(f"Cannot notify participant {pid} about event cancel: {e}")
+    if ev:
+        msg = f"❌ Мероприятие «{ev.title or 'Мероприятие'}» отменено организатором."
+        from src.services.event_participant_notify import notify_event_participants_cancelled
+        from src.services.broadcast import get_max_adapter
+
+        await notify_event_participants_cancelled(
+            participant_ids,
+            msg,
+            telegram_bot=bot,
+            max_adapter=get_max_adapter(),
+        )
     await callback.message.edit_text(
         "Мероприятие отменено. Участники уведомлены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

@@ -415,8 +415,8 @@ async def get_admin_events(superadmin: bool, city_id: UUID | None, limit: int = 
         return list(r.scalars().all())
 
 
-async def admin_cancel_event(event_id: UUID) -> tuple[bool, list[int]]:
-    """Cancel event by admin. Returns (ok, platform_user_ids to notify)."""
+async def admin_cancel_event(event_id: UUID) -> tuple[bool, list[UUID]]:
+    """Cancel event by admin. Returns (ok, participant canonical user ids)."""
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.execute(select(Event).where(Event.id == event_id))
@@ -425,13 +425,11 @@ async def admin_cancel_event(event_id: UUID) -> tuple[bool, list[int]]:
             return False, []
         ev.is_cancelled = True
         regs = await session.execute(
-            select(User.platform_user_id).join(
-                EventRegistration, EventRegistration.user_id == User.id
-            ).where(EventRegistration.event_id == event_id)
+            select(EventRegistration.user_id).where(EventRegistration.event_id == event_id)
         )
-        notify_ids = [row[0] for row in regs.all()]
+        participant_ids = [row[0] for row in regs.all()]
         await session.commit()
-        return True, notify_ids
+        return True, participant_ids
 
 
 async def set_event_recommended(event_id: UUID, recommended: bool) -> bool:

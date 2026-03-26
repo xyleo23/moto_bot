@@ -70,6 +70,7 @@ from src.keyboards.shared import (
     get_event_list_rows,
     get_event_detail_rows,
     get_max_my_event_detail_rows,
+    get_max_event_edit_menu_rows,
     get_welcome_city_rows_for_cities,
     get_welcome_role_rows,
     get_max_documents_menu_rows,
@@ -681,6 +682,127 @@ async def _handle_fsm_message(
         )
         return
 
+    # ── Event edit FSM (пошаговое редактирование в MAX) ───────────────────────
+    if state.startswith("event_edit:"):
+        from datetime import datetime as dt_cls
+        from src.services.event_service import get_event_by_id, update_event
+
+        user = await get_or_create_user(platform="max", platform_user_id=user_id)
+        if not user:
+            await adapter.send_message(chat_id, "Ошибка профиля.", get_back_to_menu_rows())
+            await reg_state.clear_state(user_id)
+            return
+        eid_str = str(data.get("event_id") or "")
+        try:
+            eid = uuid.UUID(eid_str)
+        except ValueError:
+            await adapter.send_message(chat_id, "Ошибка ID мероприятия.", get_back_to_menu_rows())
+            await reg_state.clear_state(user_id)
+            return
+        ev = await get_event_by_id(eid)
+        if not ev or ev.creator_id != effective_user_id(user):
+            await adapter.send_message(chat_id, "Нет доступа.", get_back_to_menu_rows())
+            await reg_state.clear_state(user_id)
+            return
+
+        sub = state.split(":", 1)[1]
+        canon = effective_user_id(user)
+
+        if sub == "title":
+            val = (text or "").strip()
+            ok = await update_event(eid, canon, title=(None if val == "-" else val))
+            if not ok:
+                await adapter.send_message(chat_id, "Ошибка сохранения.", _cancel_kb())
+                return
+            await reg_state.clear_state(user_id)
+            await _max_show_event_edit_menu(adapter, chat_id, eid_str, intro="✅ Изменено!")
+            return
+
+        if sub == "date":
+            try:
+                d = dt_cls.strptime((text or "").strip(), "%d.%m.%Y").date()
+                existing_time = ev.start_at.time() if ev else dt_cls.now().time()
+                new_dt = dt_cls.combine(d, existing_time)
+                ok = await update_event(eid, canon, start_at=new_dt)
+            except (ValueError, AttributeError):
+                await adapter.send_message(
+                    chat_id,
+                    "Формат: ДД.ММ.ГГГГ (например 15.06.2025)",
+                    _cancel_kb(),
+                )
+                return
+            if not ok:
+                await adapter.send_message(chat_id, "Ошибка сохранения.", _cancel_kb())
+                return
+            await reg_state.clear_state(user_id)
+            await _max_show_event_edit_menu(adapter, chat_id, eid_str, intro="✅ Изменено!")
+            return
+
+        if sub == "time":
+            try:
+                t = dt_cls.strptime((text or "").strip(), "%H:%M").time()
+                existing_date = ev.start_at.date() if ev else dt_cls.now().date()
+                new_dt = dt_cls.combine(existing_date, t)
+                ok = await update_event(eid, canon, start_at=new_dt)
+            except (ValueError, AttributeError):
+                await adapter.send_message(
+                    chat_id,
+                    "Формат: ЧЧ:ММ (например 14:00)",
+                    _cancel_kb(),
+                )
+                return
+            if not ok:
+                await adapter.send_message(chat_id, "Ошибка сохранения.", _cancel_kb())
+                return
+            await reg_state.clear_state(user_id)
+            await _max_show_event_edit_menu(adapter, chat_id, eid_str, intro="✅ Изменено!")
+            return
+
+        if sub == "point_start":
+            ps = (text or "").strip()[:500]
+            if not ps:
+                await adapter.send_message(chat_id, "Введи адрес старта:", _cancel_kb())
+                return
+            ok = await update_event(eid, canon, point_start=ps)
+            if not ok:
+                await adapter.send_message(chat_id, "Ошибка сохранения.", _cancel_kb())
+                return
+            await reg_state.clear_state(user_id)
+            await _max_show_event_edit_menu(adapter, chat_id, eid_str, intro="✅ Изменено!")
+            return
+
+        if sub == "point_end":
+            val = (text or "").strip()
+            if val.lower() in ("пропустить", "skip", "-", ""):
+                pe = None
+            else:
+                pe = val[:500]
+            ok = await update_event(eid, canon, point_end=pe)
+            if not ok:
+                await adapter.send_message(chat_id, "Ошибка сохранения.", _cancel_kb())
+                return
+            await reg_state.clear_state(user_id)
+            await _max_show_event_edit_menu(adapter, chat_id, eid_str, intro="✅ Изменено!")
+            return
+
+        if sub == "description":
+            val = (text or "").strip()
+            if val.lower() in ("пропустить", "skip", "-", ""):
+                desc = None
+            else:
+                desc = val
+            ok = await update_event(eid, canon, description=desc)
+            if not ok:
+                await adapter.send_message(chat_id, "Ошибка сохранения.", _cancel_kb())
+                return
+            await reg_state.clear_state(user_id)
+            await _max_show_event_edit_menu(adapter, chat_id, eid_str, intro="✅ Изменено!")
+            return
+
+        await reg_state.clear_state(user_id)
+        await adapter.send_message(chat_id, "Неизвестный шаг редактирования.", get_back_to_menu_rows())
+        return
+
     # ── Event create FSM steps ────────────────────────────────────────────────
     if state == "event_create:title":
         title = text.strip() if text else None
@@ -1027,6 +1149,21 @@ async def _handle_fsm_callback(
     if cb_data == "max_evcreate_skip_desc" and state == "event_create:description":
         data["description"] = None
         await _do_create_event(adapter, chat_id, user_id, data)
+        return True
+
+    # ── Event edit: пропуск финиша / описания (внутри FSM) ───────────────────
+    if cb_data.startswith("max_evedit_skpend_") and state == "event_edit:point_end":
+        eid = cb_data.replace("max_evedit_skpend_", "", 1)
+        u = await get_or_create_user(platform="max", platform_user_id=user_id)
+        if u:
+            await _max_event_edit_skip_end(adapter, chat_id, u, eid)
+        return True
+
+    if cb_data.startswith("max_evedit_skdesc_") and state == "event_edit:description":
+        eid = cb_data.replace("max_evedit_skdesc_", "", 1)
+        u = await get_or_create_user(platform="max", platform_user_id=user_id)
+        if u:
+            await _max_event_edit_skip_desc(adapter, chat_id, u, eid)
         return True
 
     return False
@@ -1641,6 +1778,24 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         await handle_event_cancel_max(adapter, chat_id, user, eid)
         return
 
+    if data.startswith("max_evedit_menu_"):
+        eid = data.replace("max_evedit_menu_", "", 1)
+        await handle_max_evedit_menu(adapter, chat_id, user, eid)
+        return
+    if data.startswith("max_evedit_skpend_"):
+        eid = data.replace("max_evedit_skpend_", "", 1)
+        await _max_event_edit_skip_end(adapter, chat_id, user, eid)
+        return
+    if data.startswith("max_evedit_skdesc_"):
+        eid = data.replace("max_evedit_skdesc_", "", 1)
+        await _max_event_edit_skip_desc(adapter, chat_id, user, eid)
+        return
+    ev_field = _parse_max_evedit_field_payload(data)
+    if ev_field:
+        fk, eid = ev_field
+        await handle_max_evedit_field_open(adapter, chat_id, user, fk, eid)
+        return
+
     if data.startswith("max_event_report_"):
         eid = data.replace("max_event_report_", "")
         await handle_event_report(adapter, chat_id, user, eid)
@@ -2222,6 +2377,139 @@ async def handle_contacts_list(
     await adapter.send_message(chat_id, text, kb)
 
 
+def _parse_max_evedit_field_payload(data: str) -> tuple[str, str] | None:
+    pfx = "max_evedit_f_"
+    if not data.startswith(pfx):
+        return None
+    rest = data[len(pfx) :]
+    for fk in ("title", "date", "time", "pstart", "pend", "desc"):
+        head = fk + "_"
+        if rest.startswith(head):
+            eid = rest[len(head) :]
+            try:
+                uuid.UUID(eid)
+            except ValueError:
+                return None
+            return fk, eid
+    return None
+
+
+async def _max_show_event_edit_menu(
+    adapter: MaxAdapter, chat_id: str, event_id: str, intro: str | None = None
+) -> None:
+    from src.handlers.events import _format_event_card
+    from src.services.event_service import get_event_by_id
+
+    ev = await get_event_by_id(uuid.UUID(event_id))
+    if not ev:
+        await adapter.send_message(chat_id, "Мероприятие не найдено.", get_back_to_menu_rows())
+        return
+    body = _format_event_card(ev)
+    lead = (intro + "\n\n") if intro else ""
+    await adapter.send_message(
+        chat_id,
+        f"{lead}{body}\n\nВыбери поле для изменения:",
+        get_max_event_edit_menu_rows(event_id),
+    )
+
+
+async def handle_max_evedit_menu(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
+    from src.services.event_service import get_event_by_id
+
+    try:
+        eid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка ID.", get_back_to_menu_rows())
+        return
+    ev = await get_event_by_id(eid)
+    if not ev or ev.creator_id != effective_user_id(user):
+        await adapter.send_message(chat_id, "Нет доступа.", get_back_to_menu_rows())
+        return
+    await _max_show_event_edit_menu(adapter, chat_id, event_id)
+
+
+async def _max_event_edit_skip_end(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
+    from src.services.event_service import get_event_by_id, update_event
+
+    try:
+        eid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка ID.", get_back_to_menu_rows())
+        return
+    ev = await get_event_by_id(eid)
+    if not ev or ev.creator_id != effective_user_id(user):
+        await adapter.send_message(chat_id, "Нет доступа.", get_back_to_menu_rows())
+        return
+    await update_event(eid, effective_user_id(user), point_end=None)
+    cur = await reg_state.get_state(user.platform_user_id)
+    if cur and str(cur.get("state", "")).startswith("event_edit"):
+        await reg_state.clear_state(user.platform_user_id)
+    await _max_show_event_edit_menu(adapter, chat_id, event_id, intro="✅ Финиш убран.")
+
+
+async def _max_event_edit_skip_desc(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
+    from src.services.event_service import get_event_by_id, update_event
+
+    try:
+        eid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка ID.", get_back_to_menu_rows())
+        return
+    ev = await get_event_by_id(eid)
+    if not ev or ev.creator_id != effective_user_id(user):
+        await adapter.send_message(chat_id, "Нет доступа.", get_back_to_menu_rows())
+        return
+    await update_event(eid, effective_user_id(user), description=None)
+    cur = await reg_state.get_state(user.platform_user_id)
+    if cur and str(cur.get("state", "")).startswith("event_edit"):
+        await reg_state.clear_state(user.platform_user_id)
+    await _max_show_event_edit_menu(adapter, chat_id, event_id, intro="✅ Описание убрано.")
+
+
+async def handle_max_evedit_field_open(
+    adapter: MaxAdapter, chat_id: str, user, field_key: str, event_id: str
+) -> None:
+    from src.services.event_service import get_event_by_id
+
+    try:
+        eid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка ID.", get_back_to_menu_rows())
+        return
+    ev = await get_event_by_id(eid)
+    if not ev or ev.creator_id != effective_user_id(user):
+        await adapter.send_message(chat_id, "Нет доступа.", get_back_to_menu_rows())
+        return
+
+    uid = user.platform_user_id
+    prompts = {
+        "title": ("event_edit:title", "Введи новое название (или «-» чтобы убрать):"),
+        "date": ("event_edit:date", "Введи новую дату начала (ДД.ММ.ГГГГ):"),
+        "time": ("event_edit:time", "Введи новое время начала (ЧЧ:ММ):"),
+        "pstart": ("event_edit:point_start", "Введи новый адрес старта:"),
+        "pend": ("event_edit:point_end", "Введи адрес финиша или нажми «Пропустить»:"),
+        "desc": ("event_edit:description", "Введи новое описание или нажми «Пропустить»:"),
+    }
+    st, prompt = prompts.get(field_key, (None, None))
+    if not st:
+        await adapter.send_message(chat_id, "Неизвестное поле.", get_back_to_menu_rows())
+        return
+    await reg_state.set_state(uid, st, {"event_id": event_id})
+    if field_key == "pend":
+        kb = [
+            [Button("Пропустить (убрать финиш)", payload=f"max_evedit_skpend_{event_id}")],
+            _cancel_kb()[0],
+        ]
+    elif field_key == "desc":
+        kb = [
+            [Button("Пропустить (убрать описание)", payload=f"max_evedit_skdesc_{event_id}")],
+            _cancel_kb()[0],
+        ]
+    else:
+        kb = _cancel_kb()
+    await adapter.send_message(chat_id, prompt, kb)
+
+
 async def handle_event_my_max(adapter: MaxAdapter, chat_id: str, user) -> None:
     from src.services.event_service import get_creator_events, TYPE_LABELS
     from src.services.subscription import check_subscription_required
@@ -2264,7 +2552,6 @@ async def handle_event_my_max(adapter: MaxAdapter, chat_id: str, user) -> None:
 async def handle_event_my_detail_max(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
     from src.handlers.events import _format_event_card
     from src.services.event_service import get_event_by_id
-    from src.config import get_settings
 
     try:
         ev_uuid = uuid.UUID(event_id)
@@ -2275,43 +2562,37 @@ async def handle_event_my_detail_max(adapter: MaxAdapter, chat_id: str, user, ev
     if not ev or ev.creator_id != effective_user_id(user):
         await adapter.send_message(chat_id, "Мероприятие не найдено.", get_back_to_menu_rows())
         return
-    s = get_settings()
-    edit_url = None
-    if s.telegram_bot_username:
-        edit_url = f"https://t.me/{s.telegram_bot_username.lstrip('@')}"
     text = _format_event_card(ev)
-    kb = get_max_my_event_detail_rows(event_id, edit_url)
+    kb = get_max_my_event_detail_rows(event_id)
     await adapter.send_message(chat_id, text, kb)
 
 
 async def handle_event_cancel_max(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
     from src.services.event_service import cancel_event, get_event_by_id
+    from src.services.event_participant_notify import notify_event_participants_cancelled
+    from src.services.broadcast import get_max_adapter
 
     try:
         ev_uuid = uuid.UUID(event_id)
     except ValueError:
         await adapter.send_message(chat_id, "Ошибка ID.", get_back_to_menu_rows())
         return
-    ok, notify_ids = await cancel_event(ev_uuid, effective_user_id(user))
+    ok, participant_ids = await cancel_event(ev_uuid, effective_user_id(user))
     if not ok:
         await adapter.send_message(chat_id, "Не удалось отменить.", get_back_to_menu_rows())
         return
     ev = await get_event_by_id(ev_uuid)
-    tg_bot = _get_tg_bot()
-    org_pid = user.platform_user_id
-    if tg_bot and ev:
-        for pid in notify_ids:
-            if pid != org_pid:
-                try:
-                    await tg_bot.send_message(
-                        pid,
-                        f"❌ Мероприятие «{ev.title or 'Мероприятие'}» отменено организатором.",
-                    )
-                except Exception as e:
-                    logger.warning("event_cancel_max: notify tg %s failed: %s", pid, e)
+    if ev:
+        msg = f"❌ Мероприятие «{ev.title or 'Мероприятие'}» отменено организатором."
+        await notify_event_participants_cancelled(
+            participant_ids,
+            msg,
+            telegram_bot=_get_tg_bot(),
+            max_adapter=get_max_adapter() or adapter,
+        )
     await adapter.send_message(
         chat_id,
-        "Мероприятие отменено. Участники уведомлены (в Telegram).",
+        "Мероприятие отменено. Участники уведомлены (Telegram и MAX, где есть аккаунт).",
         [[Button("« Мои мероприятия", payload="event_my")]],
     )
 

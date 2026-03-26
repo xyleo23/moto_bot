@@ -1017,16 +1017,20 @@ async def cb_admin_ev_cancel(callback: CallbackQuery, user=None):
     if not can_edit:
         await callback.answer("Нет доступа.")
         return
-    ok, notify_ids = await admin_cancel_event(ev.id)
+    ok, participant_ids = await admin_cancel_event(ev.id)
     if not ok:
         await callback.answer("Ошибка.")
         return
-    bot = callback.bot
-    for pid in notify_ids:
-        try:
-            await bot.send_message(pid, f"⚠️ Мероприятие «{ev.title or 'Мероприятие'}» отменено.")
-        except Exception as e:
-            logger.debug("cancel_event: could not notify participant {}: {}", pid, e)
+    msg = f"⚠️ Мероприятие «{ev.title or 'Мероприятие'}» отменено."
+    from src.services.event_participant_notify import notify_event_participants_cancelled
+    from src.services.broadcast import get_max_adapter
+
+    await notify_event_participants_cancelled(
+        participant_ids,
+        msg,
+        telegram_bot=callback.bot,
+        max_adapter=get_max_adapter(),
+    )
     await callback.answer("Мероприятие отменено. Участники уведомлены.")
     await callback.message.edit_text(
         "Мероприятие отменено.",
