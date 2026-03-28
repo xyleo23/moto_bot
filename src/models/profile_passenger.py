@@ -1,4 +1,5 @@
 """Passenger (Двойка) profile model."""
+
 import uuid
 import enum
 from datetime import datetime

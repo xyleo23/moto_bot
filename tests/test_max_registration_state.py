@@ -1,6 +1,6 @@
 """Tests for MAX FSM registration state store."""
+
 import pytest
-import importlib
 
 import src.services.max_registration_state as reg_state_module
 
@@ -16,6 +16,7 @@ def reset_state():
 
 
 # ── In-memory fallback tests ──────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_get_state_returns_none_when_empty():
@@ -67,6 +68,7 @@ async def test_multiple_users_independent():
 
 
 # ── Mock Redis tests ──────────────────────────────────────────────────────────
+
 
 class _MockRedis:
     """Minimal in-memory mock for redis.asyncio.Redis."""

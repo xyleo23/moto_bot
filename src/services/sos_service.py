@@ -1,8 +1,7 @@
 """SOS service — create alerts, Redis-based rate limiting, and broadcast helpers."""
-import asyncio
+
 from uuid import UUID
 
-from loguru import logger
 
 from src.models.base import get_session_factory
 from src.models.sos_alert import SosAlert, SosType
@@ -94,7 +93,6 @@ async def create_sos_alert(
         )
         session.add(alert)
         await session.commit()
-        alert_id = str(alert.id)
 
     # Set cooldown AFTER successful DB write
     await set_sos_cooldown(user_id)

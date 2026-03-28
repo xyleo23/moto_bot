@@ -1,4 +1,5 @@
 """CRUD service for BotSettings — single-row settings table."""
+
 from loguru import logger
 from sqlalchemy import select
 

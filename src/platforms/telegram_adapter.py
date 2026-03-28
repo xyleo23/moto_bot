@@ -1,4 +1,5 @@
 """Telegram platform adapter using aiogram."""
+
 from aiogram import Bot
 from aiogram.types import (
     InlineKeyboardMarkup,
@@ -10,7 +11,6 @@ from aiogram.enums import ParseMode
 
 from src.platforms.base import (
     PlatformAdapter,
-    Button,
     KeyboardRow,
     ButtonType,
 )
@@ -29,9 +29,7 @@ def _build_inline_keyboard(rows: list[KeyboardRow]) -> InlineKeyboardMarkup | No
                     InlineKeyboardButton(text=btn.text, callback_data=btn.payload or btn.text)
                 )
             elif btn.type == ButtonType.URL:
-                kb_buttons.append(
-                    InlineKeyboardButton(text=btn.text, url=btn.url or "")
-                )
+                kb_buttons.append(InlineKeyboardButton(text=btn.text, url=btn.url or ""))
         if kb_buttons:
             kb_rows.append(kb_buttons)
     return InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
@@ -91,6 +89,7 @@ class TelegramAdapter(PlatformAdapter):
     ):
         kb = _build_inline_keyboard(keyboard) if keyboard else None
         from aiogram.types import BufferedInputFile
+
         return await self._bot.send_photo(
             chat_id=int(chat_id),
             photo=BufferedInputFile(photo_bytes, filename="photo.jpg"),
@@ -116,9 +115,7 @@ class TelegramAdapter(PlatformAdapter):
 
     async def request_contact(self, chat_id: str, text: str):
         kb = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="Отправить мой номер", request_contact=True)]
-            ],
+            keyboard=[[KeyboardButton(text="Отправить мой номер", request_contact=True)]],
             resize_keyboard=True,
             one_time_keyboard=True,
         )
@@ -130,9 +127,7 @@ class TelegramAdapter(PlatformAdapter):
 
     async def request_location(self, chat_id: str, text: str):
         kb = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="Отправить геолокацию", request_location=True)]
-            ],
+            keyboard=[[KeyboardButton(text="Отправить геолокацию", request_location=True)]],
             resize_keyboard=True,
             one_time_keyboard=True,
         )
@@ -143,7 +138,6 @@ class TelegramAdapter(PlatformAdapter):
         )
 
     async def answer_callback(self, callback_id: str, text: str | None = None):
-        from aiogram.types import CallbackQuery
         # callback_id in Telegram is the callback_query id
         await self._bot.answer_callback_query(
             callback_query_id=callback_id,

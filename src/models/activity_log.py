@@ -1,4 +1,5 @@
 """Activity log — journal of user actions for admin statistics."""
+
 import uuid
 import enum
 from datetime import datetime
@@ -10,6 +11,7 @@ from src.models.base import Base, generate_uuid
 
 class ActivityEventType(str, enum.Enum):
     """Types of logged events."""
+
     SOS = "sos"
     SUBSCRIPTION = "subscription"
     BLOCK = "block"

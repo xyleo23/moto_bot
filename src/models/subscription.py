@@ -1,8 +1,9 @@
 """Subscription and subscription settings models."""
+
 import uuid
 import enum
 from datetime import datetime, date
-from sqlalchemy import Boolean, Integer, DateTime, Date, ForeignKey, String, Enum
+from sqlalchemy import Integer, DateTime, Date, ForeignKey, String, Enum
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, generate_uuid
@@ -30,6 +31,7 @@ class Subscription(Base):
 
 class SubscriptionSettings(Base):
     """Global subscription settings (managed by superadmin)."""
+
     __tablename__ = "subscription_settings"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)
@@ -41,4 +43,6 @@ class SubscriptionSettings(Base):
     event_motorcade_limit_per_month: Mapped[int] = mapped_column(Integer, default=2)
     raise_profile_enabled: Mapped[bool] = mapped_column(default=True)
     raise_profile_price_kopecks: Mapped[int] = mapped_column(Integer, default=4900)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

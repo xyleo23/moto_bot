@@ -1,6 +1,30 @@
 """Truncation helpers for button labels and long message bodies."""
 
 
+def split_plain_text_chunks(text: str, max_len: int = 3800) -> list[str]:
+    """
+    Split long plain-text (or light HTML) for Telegram/MAX limits.
+    Prefers breaking at newlines.
+    """
+    t = (text or "").strip()
+    if len(t) <= max_len:
+        return [t] if t else [""]
+    out: list[str] = []
+    i = 0
+    n = len(t)
+    while i < n:
+        end = min(i + max_len, n)
+        if end < n:
+            br = t.rfind("\n", i, end)
+            if br > i + max_len // 3:
+                end = br + 1
+        chunk = t[i:end].strip()
+        if chunk:
+            out.append(chunk)
+        i = end
+    return out if out else [""]
+
+
 def truncate_smart(text: str, max_len: int, suffix: str = "…") -> str:
     """
     Shorten text to max_len, preferring a word boundary; adds suffix if trimmed.

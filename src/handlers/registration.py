@@ -1,4 +1,5 @@
 """Registration and profile filling with FSM."""
+
 import uuid
 from datetime import datetime
 
@@ -77,17 +78,13 @@ async def _process_telegram_reg_after_phone(
         registering_as=role,
     )
     if chk.kind == MaxCrossLinkKind.NONE:
-        await _advance_telegram_reg_past_phone(
-            message, state, data=data, is_pilot=is_pilot
-        )
+        await _advance_telegram_reg_past_phone(message, state, data=data, is_pilot=is_pilot)
         return
     if chk.kind == MaxCrossLinkKind.ROLE_MISMATCH:
         clean = _strip_tg_cross_link_keys(dict(data))
         clean.pop("phone", None)
         await state.set_data(clean)
-        await state.set_state(
-            PilotRegistration.phone if is_pilot else PassengerRegistration.phone
-        )
+        await state.set_state(PilotRegistration.phone if is_pilot else PassengerRegistration.phone)
         await message.answer(
             texts.REG_CROSS_LINK_ROLE_MISMATCH.format(
                 platform=chk.platform_label,
@@ -146,8 +143,8 @@ async def _process_telegram_reg_after_phone(
 
 
 # ── Step counts for progress bar ──────────────────────────────────────────────
-PILOT_TOTAL_STEPS = 11      # name, phone, age, gender, brand, model, cc, since, style, photo, about
-PASSENGER_TOTAL_STEPS = 9   # name, phone, age, gender, weight, height, style, photo, about
+PILOT_TOTAL_STEPS = 11  # name, phone, age, gender, brand, model, cc, since, style, photo, about
+PASSENGER_TOTAL_STEPS = 9  # name, phone, age, gender, weight, height, style, photo, about
 
 
 class PilotRegistration(StatesGroup):
@@ -184,6 +181,7 @@ class PassengerRegistration(StatesGroup):
 
 # ── /cancel handler — works in any FSM state ─────────────────────────────────
 
+
 @router.message(Command("cancel"), StateFilter("*"))
 async def cmd_cancel(message: Message, state: FSMContext, user=None):
     """Cancel current FSM flow and return to main menu."""
@@ -202,23 +200,21 @@ async def cmd_cancel(message: Message, state: FSMContext, user=None):
 
 # ── Entry point called from start.py ──────────────────────────────────────────
 
+
 async def start_registration(message: Message, state: FSMContext, role: UserRole):
     """Start registration flow after role selection."""
     if role == UserRole.PILOT:
         await state.set_state(PilotRegistration.name)
-        await message.answer(
-            progress_prefix(1, PILOT_TOTAL_STEPS) + texts.REG_ASK_NAME
-        )
+        await message.answer(progress_prefix(1, PILOT_TOTAL_STEPS) + texts.REG_ASK_NAME)
     else:
         await state.set_state(PassengerRegistration.name)
-        await message.answer(
-            progress_prefix(1, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_NAME
-        )
+        await message.answer(progress_prefix(1, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_NAME)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PILOT REGISTRATION
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.message(PilotRegistration.name, F.text)
 async def pilot_name(message: Message, state: FSMContext, user=None):
@@ -333,10 +329,14 @@ async def pilot_age(message: Message, state: FSMContext, user=None):
             await state.set_state(PilotRegistration.gender)
             await message.answer(
                 progress_prefix(4, PILOT_TOTAL_STEPS) + texts.REG_ASK_GENDER,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="Муж", callback_data="gender_male"),
-                    InlineKeyboardButton(text="Жен", callback_data="gender_female"),
-                ]]),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="Муж", callback_data="gender_male"),
+                            InlineKeyboardButton(text="Жен", callback_data="gender_female"),
+                        ]
+                    ]
+                ),
             )
         else:
             await message.answer(texts.REG_ERROR_AGE)
@@ -406,14 +406,25 @@ async def pilot_engine_cc_fallback(message: Message, state: FSMContext):
 
 
 RUSSIAN_MONTHS = {
-    "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
-    "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+    "января": 1,
+    "февраля": 2,
+    "марта": 3,
+    "апреля": 4,
+    "мая": 5,
+    "июня": 6,
+    "июля": 7,
+    "августа": 8,
+    "сентября": 9,
+    "октября": 10,
+    "ноября": 11,
+    "декабря": 12,
 }
 
 
 def _parse_russian_date(text: str):
     """Parse date in format 'DD месяц YYYY' (e.g. '26 июня 2006'). Returns date or None."""
     import re
+
     text = (text or "").strip()
     # Match: число (1-31) + месяц + год (4 digits)
     m = re.search(r"(\d{1,2})\s+(\S+)\s+(\d{4})", text, re.IGNORECASE)
@@ -432,6 +443,7 @@ def _parse_russian_date(text: str):
 def _parse_date(text: str):
     """Parse date from year, month/year, or full date. Returns date or None."""
     import re
+
     text = (text or "").strip()
     # Только год: ГГГГ (1970–2030)
     m_year = re.match(r"^(\d{4})$", text)
@@ -477,11 +489,13 @@ async def pilot_driving_since(message: Message, state: FSMContext):
         if dt:
             await state.update_data(driving_since=dt.isoformat())
             await state.set_state(PilotRegistration.driving_style)
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Спокойный", callback_data="style_calm")],
-                [InlineKeyboardButton(text="Динамичный", callback_data="style_aggressive")],
-                [InlineKeyboardButton(text="Смешанный", callback_data="style_mixed")],
-            ])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="Спокойный", callback_data="style_calm")],
+                    [InlineKeyboardButton(text="Динамичный", callback_data="style_aggressive")],
+                    [InlineKeyboardButton(text="Смешанный", callback_data="style_mixed")],
+                ]
+            )
             await message.answer(
                 progress_prefix(9, PILOT_TOTAL_STEPS) + texts.REG_ASK_STYLE,
                 reply_markup=kb,
@@ -499,9 +513,11 @@ async def pilot_driving_style(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PilotRegistration.photo)
     await callback.message.edit_text(
         progress_prefix(10, PILOT_TOTAL_STEPS) + texts.REG_ASK_PHOTO,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_photo")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_photo")],
+            ]
+        ),
     )
     await callback.answer()
 
@@ -513,9 +529,11 @@ async def pilot_photo(message: Message, state: FSMContext):
     await state.set_state(PilotRegistration.about)
     await message.answer(
         progress_prefix(11, PILOT_TOTAL_STEPS) + texts.REG_ASK_ABOUT,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_about")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_about")],
+            ]
+        ),
     )
 
 
@@ -523,9 +541,11 @@ async def pilot_photo(message: Message, state: FSMContext):
 async def pilot_photo_fallback(message: Message, state: FSMContext):
     await message.answer(
         "Отправь фото или нажми «Пропустить».",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_photo")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_photo")],
+            ]
+        ),
     )
 
 
@@ -535,9 +555,11 @@ async def pilot_skip_photo(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PilotRegistration.about)
     await callback.message.edit_text(
         progress_prefix(11, PILOT_TOTAL_STEPS) + texts.REG_ASK_ABOUT,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_about")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_about")],
+            ]
+        ),
     )
     await callback.answer()
 
@@ -569,9 +591,11 @@ async def pilot_about(message: Message, state: FSMContext, user=None):
 async def pilot_about_fallback(message: Message, state: FSMContext):
     await message.answer(
         texts.REG_ERROR_NOT_TEXT,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_about")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="skip_about")],
+            ]
+        ),
     )
 
 
@@ -591,10 +615,12 @@ async def _show_pilot_preview(message: Message, state: FSMContext):
         + f"О себе: {data.get('about') or '—'}\n\n"
         + texts.PROFILE_PREVIEW_CONFIRM
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=texts.PROFILE_BTN_SAVE, callback_data="pilot_preview_save")],
-        [InlineKeyboardButton(text=texts.PROFILE_BTN_EDIT, callback_data="pilot_preview_edit")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=texts.PROFILE_BTN_SAVE, callback_data="pilot_preview_save")],
+            [InlineKeyboardButton(text=texts.PROFILE_BTN_EDIT, callback_data="pilot_preview_edit")],
+        ]
+    )
     if data.get("photo_file_id"):
         try:
             await message.answer_photo(
@@ -612,7 +638,9 @@ async def _show_pilot_preview(message: Message, state: FSMContext):
 async def pilot_preview_save(callback: CallbackQuery, state: FSMContext, user=None):
     await callback.answer()
     try:
-        await _finish_pilot_registration(callback.message, state, user, platform_user_id=callback.from_user.id)
+        await _finish_pilot_registration(
+            callback.message, state, user, platform_user_id=callback.from_user.id
+        )
     except Exception as e:
         logger.exception("_finish_pilot_registration error: %s", e)
         try:
@@ -627,9 +655,7 @@ async def pilot_preview_edit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     await state.set_state(PilotRegistration.name)
-    await callback.message.answer(
-        progress_prefix(1, PILOT_TOTAL_STEPS) + texts.REG_ASK_NAME
-    )
+    await callback.message.answer(progress_prefix(1, PILOT_TOTAL_STEPS) + texts.REG_ASK_NAME)
 
 
 async def _finish_pilot_registration(
@@ -644,7 +670,9 @@ async def _finish_pilot_registration(
     data = await state.get_data()
     await state.clear()
     pid = platform_user_id or (message.from_user.id if message.from_user else None)
-    logger.info("_finish_pilot_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys()))
+    logger.info(
+        "_finish_pilot_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys())
+    )
 
     if not pid:
         await message.answer(texts.REG_ERROR_SAVE)
@@ -672,6 +700,7 @@ async def _finish_pilot_registration(
 # ─────────────────────────────────────────────────────────────────────────────
 # PASSENGER REGISTRATION
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.message(PassengerRegistration.name, F.text)
 async def passenger_name(message: Message, state: FSMContext):
@@ -722,10 +751,14 @@ async def passenger_age(message: Message, state: FSMContext):
             await state.set_state(PassengerRegistration.gender)
             await message.answer(
                 progress_prefix(4, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_GENDER,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="Муж", callback_data="pax_gender_male"),
-                    InlineKeyboardButton(text="Жен", callback_data="pax_gender_female"),
-                ]]),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="Муж", callback_data="pax_gender_male"),
+                            InlineKeyboardButton(text="Жен", callback_data="pax_gender_female"),
+                        ]
+                    ]
+                ),
             )
         else:
             await message.answer(texts.REG_ERROR_AGE)
@@ -755,9 +788,7 @@ async def passenger_weight(message: Message, state: FSMContext):
         if 30 <= w <= 200:
             await state.update_data(weight=w)
             await state.set_state(PassengerRegistration.height)
-            await message.answer(
-                progress_prefix(6, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_HEIGHT
-            )
+            await message.answer(progress_prefix(6, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_HEIGHT)
         else:
             await message.answer(texts.REG_ERROR_WEIGHT)
     except ValueError:
@@ -778,11 +809,17 @@ async def passenger_height(message: Message, state: FSMContext):
             await state.set_state(PassengerRegistration.preferred_style)
             await message.answer(
                 progress_prefix(7, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_PREFERRED_STYLE,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="Спокойный", callback_data="pax_style_calm")],
-                    [InlineKeyboardButton(text="Динамичный", callback_data="pax_style_dynamic")],
-                    [InlineKeyboardButton(text="Смешанный", callback_data="pax_style_mixed")],
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="Спокойный", callback_data="pax_style_calm")],
+                        [
+                            InlineKeyboardButton(
+                                text="Динамичный", callback_data="pax_style_dynamic"
+                            )
+                        ],
+                        [InlineKeyboardButton(text="Смешанный", callback_data="pax_style_mixed")],
+                    ]
+                ),
             )
         else:
             await message.answer(texts.REG_ERROR_HEIGHT)
@@ -801,9 +838,11 @@ async def passenger_preferred_style(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PassengerRegistration.photo)
     await callback.message.edit_text(
         progress_prefix(8, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_PHOTO,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_photo")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_photo")],
+            ]
+        ),
     )
     await callback.answer()
 
@@ -814,9 +853,11 @@ async def passenger_photo(message: Message, state: FSMContext):
     await state.set_state(PassengerRegistration.about)
     await message.answer(
         progress_prefix(9, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_ABOUT,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_about")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_about")],
+            ]
+        ),
     )
 
 
@@ -824,9 +865,11 @@ async def passenger_photo(message: Message, state: FSMContext):
 async def passenger_photo_fallback(message: Message, state: FSMContext):
     await message.answer(
         "Отправь фото или нажми «Пропустить».",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_photo")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_photo")],
+            ]
+        ),
     )
 
 
@@ -836,9 +879,11 @@ async def passenger_skip_photo(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PassengerRegistration.about)
     await callback.message.edit_text(
         progress_prefix(9, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_ABOUT,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_about")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_about")],
+            ]
+        ),
     )
     await callback.answer()
 
@@ -870,9 +915,11 @@ async def passenger_about(message: Message, state: FSMContext, user=None):
 async def passenger_about_fallback(message: Message, state: FSMContext):
     await message.answer(
         texts.REG_ERROR_NOT_TEXT,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_about")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="pax_skip_about")],
+            ]
+        ),
     )
 
 
@@ -892,10 +939,12 @@ async def _show_passenger_preview(message: Message, state: FSMContext):
         + f"О себе: {data.get('about') or '—'}\n\n"
         + texts.PROFILE_PREVIEW_CONFIRM
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=texts.PROFILE_BTN_SAVE, callback_data="pax_preview_save")],
-        [InlineKeyboardButton(text=texts.PROFILE_BTN_EDIT, callback_data="pax_preview_edit")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=texts.PROFILE_BTN_SAVE, callback_data="pax_preview_save")],
+            [InlineKeyboardButton(text=texts.PROFILE_BTN_EDIT, callback_data="pax_preview_edit")],
+        ]
+    )
     if data.get("photo_file_id"):
         try:
             await message.answer_photo(
@@ -905,7 +954,9 @@ async def _show_passenger_preview(message: Message, state: FSMContext):
             )
             return
         except Exception as e:
-            logger.warning("passenger_preview_show: answer_photo failed, falling back to text: %s", e)
+            logger.warning(
+                "passenger_preview_show: answer_photo failed, falling back to text: %s", e
+            )
     await message.answer(text, reply_markup=kb)
 
 
@@ -913,7 +964,9 @@ async def _show_passenger_preview(message: Message, state: FSMContext):
 async def passenger_preview_save(callback: CallbackQuery, state: FSMContext, user=None):
     await callback.answer()
     try:
-        await _finish_passenger_registration(callback.message, state, user, platform_user_id=callback.from_user.id)
+        await _finish_passenger_registration(
+            callback.message, state, user, platform_user_id=callback.from_user.id
+        )
     except Exception as e:
         logger.exception("_finish_passenger_registration error: %s", e)
         try:
@@ -928,9 +981,7 @@ async def passenger_preview_edit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     await state.set_state(PassengerRegistration.name)
-    await callback.message.answer(
-        progress_prefix(1, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_NAME
-    )
+    await callback.message.answer(progress_prefix(1, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_NAME)
 
 
 async def _finish_passenger_registration(
@@ -945,7 +996,9 @@ async def _finish_passenger_registration(
     data = await state.get_data()
     await state.clear()
     pid = platform_user_id or (message.from_user.id if message.from_user else None)
-    logger.info("_finish_passenger_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys()))
+    logger.info(
+        "_finish_passenger_registration: platform_user_id=%s data_keys=%s", pid, list(data.keys())
+    )
 
     if not pid:
         await message.answer(texts.REG_ERROR_SAVE)

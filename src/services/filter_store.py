@@ -1,4 +1,5 @@
 """Store motopair filter per user+role. Uses Redis when available."""
+
 from uuid import UUID
 import json
 
@@ -19,6 +20,7 @@ def _get_redis():
     if _redis_client is None:
         try:
             from redis.asyncio import Redis
+
             _redis_client = Redis.from_url(get_settings().redis_url)
         except Exception as e:
             logger.warning("filter_store: Redis init failed: %s", e)

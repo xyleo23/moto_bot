@@ -1,4 +1,5 @@
 """Tests for registration_service — finish_pilot/passenger_registration."""
+
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
@@ -7,6 +8,7 @@ from src.models.user import Platform
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_pilot_data(**overrides) -> dict:
     data = {
@@ -44,6 +46,7 @@ def _make_passenger_data(**overrides) -> dict:
 
 def _mock_user(uid: uuid.UUID | None = None, role=None):
     from src.models.user import UserRole
+
     u = MagicMock()
     u.id = uid or uuid.uuid4()
     u.role = role or UserRole.PILOT
@@ -58,6 +61,7 @@ def _scalar_none_result():
 
 
 # ── finish_pilot_registration ─────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_pilot_returns_user_not_found_when_no_user():
@@ -199,6 +203,7 @@ async def test_pilot_returns_db_error_on_commit_failure():
 
 # ── finish_passenger_registration ─────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_passenger_returns_user_not_found():
     from src.services.registration_service import finish_passenger_registration
@@ -212,9 +217,7 @@ async def test_passenger_returns_user_not_found():
     mock_factory = MagicMock(return_value=mock_session)
 
     with patch("src.services.registration_service.get_session_factory", return_value=mock_factory):
-        result = await finish_passenger_registration(
-            Platform.MAX, 888, _make_passenger_data()
-        )
+        result = await finish_passenger_registration(Platform.MAX, 888, _make_passenger_data())
 
     assert result == "user_not_found"
 
@@ -233,9 +236,7 @@ async def test_passenger_returns_missing_fields_for_incomplete_data():
 async def test_passenger_returns_invalid_phone():
     from src.services.registration_service import finish_passenger_registration
 
-    result = await finish_passenger_registration(
-        Platform.MAX, 1, _make_passenger_data(phone="12")
-    )
+    result = await finish_passenger_registration(Platform.MAX, 1, _make_passenger_data(phone="12"))
     assert result == "invalid_phone"
 
 
@@ -266,9 +267,7 @@ async def test_passenger_returns_none_on_success():
     mock_factory = MagicMock(return_value=mock_session)
 
     with patch("src.services.registration_service.get_session_factory", return_value=mock_factory):
-        result = await finish_passenger_registration(
-            Platform.MAX, user.id, _make_passenger_data()
-        )
+        result = await finish_passenger_registration(Platform.MAX, user.id, _make_passenger_data())
 
     assert result is None
     mock_session.commit.assert_awaited_once()

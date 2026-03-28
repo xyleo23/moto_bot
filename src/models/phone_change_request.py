@@ -1,4 +1,5 @@
 """Phone change request model."""
+
 import uuid
 import enum
 from datetime import datetime

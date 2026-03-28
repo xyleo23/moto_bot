@@ -1,4 +1,5 @@
 """Event pair request (Ищу двойку / Ищу мотоциклиста)."""
+
 import uuid
 import enum
 from datetime import datetime

@@ -4,6 +4,7 @@ Background scheduler for periodic tasks.
 Runs as an asyncio task in the bot process. Current tasks:
 - Daily check for subscriptions expiring within 3 days → push reminder
 """
+
 import asyncio
 from datetime import datetime, timedelta
 
@@ -60,9 +61,15 @@ async def _check_expiring_subscriptions(bot) -> None:
             days_left = (sub.expires_at - now).days
             days_word = _days_word(days_left)
             text = texts.SUB_EXPIRY_REMINDER.format(days=days_left, days_word=days_word)
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=texts.SUB_RENEW_BTN, callback_data="profile_subscribe")],
-            ])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=texts.SUB_RENEW_BTN, callback_data="profile_subscribe"
+                        )
+                    ],
+                ]
+            )
             try:
                 await bot.send_message(user.platform_user_id, text, reply_markup=kb)
                 sent += 1

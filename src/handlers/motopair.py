@@ -1,27 +1,30 @@
 """MotoPair block — find pilot/passenger."""
+
 import uuid
 
 from loguru import logger
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from src.keyboards.menu import get_back_to_menu_kb
 from src.keyboards.motopair import (
-    get_profile_view_kb,
     get_like_notification_kb,
     get_match_kb,
     get_filter_kb,
 )
 from src.models.user import effective_user_id
 from src import texts
+from src import ui_copy as uc
 
 router = Router()
 
 
 class CityAdminBlockStates(StatesGroup):
     """FSM for city admin entering a block reason."""
+
     reason = State()
 
 
@@ -34,19 +37,31 @@ async def cb_motopair_menu(callback: CallbackQuery, user=None):
 
         await callback.message.edit_text(
             await subscription_required_message("motopair_menu"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
-                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-            ]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Оформить подписку", callback_data="profile_subscribe"
+                        )
+                    ],
+                    [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+                ]
+            ),
         )
         await callback.answer()
         return
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Анкеты Пилотов", callback_data="motopair_pilots")],
-        [InlineKeyboardButton(text="Анкеты Двоек", callback_data="motopair_passengers")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=uc.MOTOPAIR_PILOTS, callback_data="motopair_pilots")],
+            [
+                InlineKeyboardButton(
+                    text=uc.MOTOPAIR_PASSENGERS, callback_data="motopair_passengers"
+                )
+            ],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ]
+    )
     await callback.message.edit_text("🏍 Мотопара\n\nВыбери категорию:", reply_markup=kb)
     await callback.answer()
 
@@ -54,13 +69,23 @@ async def cb_motopair_menu(callback: CallbackQuery, user=None):
 @router.callback_query(F.data.in_(["motopair_pilots", "motopair_passengers"]))
 async def cb_motopair_category(callback: CallbackQuery, user=None):
     role = "pilot" if callback.data == "motopair_pilots" else "passenger"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Все анкеты", callback_data=f"motopair_list_{role}")],
-        [InlineKeyboardButton(text="Фильтр", callback_data=f"motopair_filter_{role}")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_motopair")],
-    ])
-    label = "Пилотов" if role == "pilot" else "Двоек"
-    await callback.message.edit_text(f"Анкеты {label}:", reply_markup=kb)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=uc.MOTOPAIR_ALL_CARDS, callback_data=f"motopair_list_{role}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=uc.MOTOPAIR_FILTER, callback_data=f"motopair_filter_{role}"
+                )
+            ],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_motopair")],
+        ]
+    )
+    cat_title = uc.MOTOPAIR_PILOTS if role == "pilot" else uc.MOTOPAIR_PASSENGERS
+    await callback.message.edit_text(f"{cat_title}:", reply_markup=kb)
     await callback.answer()
 
 
@@ -73,7 +98,7 @@ async def cb_motopair_filter_open(callback: CallbackQuery, user=None):
         return
     role = "pilot" if "pilot" in callback.data else "passenger"
     current = await get_filter(user.id, role)
-    label = "Пилотов" if role == "pilot" else "Двоек"
+    label = "пилотов" if role == "pilot" else "двоек"
     await callback.message.edit_text(
         f"Фильтр для анкет {label}:\n\nВыбери параметры:",
         reply_markup=get_filter_kb(role, current),
@@ -99,32 +124,58 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
     value = parts[2] if len(parts) > 2 else None
 
     current = await get_filter(user.id, role)
-    label = "Пилотов" if role == "pilot" else "Двоек"
+    label = "пилотов" if role == "pilot" else "двоек"
 
     if param == "apply":
-        await callback.message.edit_text(
-            f"Фильтр применён. Просматривай анкеты {label}.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Смотреть анкеты", callback_data=f"motopair_list_{role}")],
-                [InlineKeyboardButton(
-                    text="« Назад",
-                    callback_data=f"motopair_{'pilots' if role == 'pilot' else 'passengers'}",
-                )],
-            ]),
-        )
+        try:
+            await callback.message.edit_text(
+                f"Фильтр применён. Просматривай анкеты {label}.",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=uc.MOTOPAIR_VIEW_CARDS, callback_data=f"motopair_list_{role}"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="« Назад",
+                                callback_data=f"motopair_{'pilots' if role == 'pilot' else 'passengers'}",
+                            )
+                        ],
+                    ]
+                ),
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                raise
         await callback.answer()
         return
 
     if param == "reset":
         await clear_filter(user.id, role)
-        await callback.message.edit_text(
-            f"Фильтр сброшен. Анкеты {label}:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Все анкеты", callback_data=f"motopair_list_{role}")],
-                [InlineKeyboardButton(text="Фильтр", callback_data=f"motopair_filter_{role}")],
-                [InlineKeyboardButton(text="« Назад", callback_data="menu_motopair")],
-            ]),
-        )
+        try:
+            await callback.message.edit_text(
+                f"Фильтр сброшен. Анкеты {label}:",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=uc.MOTOPAIR_ALL_CARDS, callback_data=f"motopair_list_{role}"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text=uc.MOTOPAIR_FILTER, callback_data=f"motopair_filter_{role}"
+                            )
+                        ],
+                        [InlineKeyboardButton(text="« Назад", callback_data="menu_motopair")],
+                    ]
+                ),
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                raise
         await callback.answer()
         return
 
@@ -138,10 +189,14 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
         current["height_max"] = int(value) if value and value != "0" else None
 
     await set_filter(user.id, role, current)
-    await callback.message.edit_text(
-        f"Фильтр для анкет {label}:\n\nВыбери параметры:",
-        reply_markup=get_filter_kb(role, current),
-    )
+    try:
+        await callback.message.edit_text(
+            f"Фильтр для анкет {label}:\n\nВыбери параметры:",
+            reply_markup=get_filter_kb(role, current),
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            raise
     await callback.answer()
 
 
@@ -180,13 +235,17 @@ async def _show_motopair_card_at(message: Message, user, role: str, offset: int)
     filters = await get_filter(eff_id, role)
     profile, has_more = await get_next_profile(eff_id, role, offset=offset, filters=filters)
 
-    empty_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=texts.MOTOPAIR_RAISE_BTN,
-            callback_data="profile_raise",
-        )],
-        [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-    ])
+    empty_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.MOTOPAIR_RAISE_BTN,
+                    callback_data="profile_raise",
+                )
+            ],
+            [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+        ]
+    )
 
     if not profile:
         try:
@@ -243,10 +302,16 @@ async def cb_motopair_list(callback: CallbackQuery, user=None):
 
         await callback.message.edit_text(
             await subscription_required_message("motopair_cards"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe"),
-                InlineKeyboardButton(text="◀️ Назад", callback_data="menu_motopair"),
-            ]]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Оформить подписку", callback_data="profile_subscribe"
+                        ),
+                        InlineKeyboardButton(text="◀️ Назад", callback_data="menu_motopair"),
+                    ]
+                ]
+            ),
         )
         await callback.answer()
         return
@@ -276,18 +341,22 @@ def _profile_kb_with_report(
         ],
     ]
     if has_more:
-        rows.append([
-            InlineKeyboardButton(
-                text="➡️ Следующая",
-                callback_data=f"motopair_next_{role}_{offset + 1}",
-            )
-        ])
-    rows.append([
-        InlineKeyboardButton(
-            text=texts.MOTOPAIR_REPORT_BTN,
-            callback_data=f"motopair_report_{profile_id}_{role}",
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="➡️ Следующая",
+                    callback_data=f"motopair_next_{role}_{offset + 1}",
+                )
+            ]
         )
-    ])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=texts.MOTOPAIR_REPORT_BTN,
+                callback_data=f"motopair_report_{profile_id}_{role}",
+            )
+        ]
+    )
     rows.append([InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -322,11 +391,11 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
 
     profile_text, _ = await get_profile_info_text(target_user.id)
     reporter_display = (
-        f"@{user.platform_username}" if user.platform_username
-        else str(user.platform_user_id)
+        f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
     )
     reported_display = (
-        f"@{target_user.platform_username}" if target_user.platform_username
+        f"@{target_user.platform_username}"
+        if target_user.platform_username
         else str(target_user.platform_user_id)
     )
 
@@ -335,25 +404,32 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
         reported=reported_display,
         profile_text=profile_text,
     )
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=texts.MOTOPAIR_REPORT_BTN_ACCEPT,
-            callback_data=f"admin_report_accept_{target_user.id}",
-        )],
-        [InlineKeyboardButton(
-            text=texts.MOTOPAIR_REPORT_BTN_BLOCK,
-            callback_data=f"admin_report_block_{target_user.id}",
-        )],
-        [InlineKeyboardButton(
-            text=texts.MOTOPAIR_REPORT_BTN_REJECT,
-            callback_data=f"admin_report_reject_{target_user.id}",
-        )],
-    ])
+    admin_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.MOTOPAIR_REPORT_BTN_ACCEPT,
+                    callback_data=f"admin_report_accept_{target_user.id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.MOTOPAIR_REPORT_BTN_BLOCK,
+                    callback_data=f"admin_report_block_{target_user.id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.MOTOPAIR_REPORT_BTN_REJECT,
+                    callback_data=f"admin_report_reject_{target_user.id}",
+                )
+            ],
+        ]
+    )
 
     # Send to city admins + superadmins
     settings = get_settings()
     bot = callback.bot
-    notified = False
 
     if user.city_id:
         admins = await get_city_admins(user.city_id)
@@ -362,20 +438,30 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
                 await bot.send_message(
                     admin_user.platform_user_id, admin_text, reply_markup=admin_kb
                 )
-                notified = True
             except Exception as e:
                 logger.warning("Cannot notify city admin %s: %s", admin_user.platform_user_id, e)
 
     for admin_id in settings.superadmin_ids:
         try:
             await bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
-            notified = True
         except Exception as e:
             logger.warning("Cannot notify superadmin %s: %s", admin_id, e)
 
-    await callback.message.edit_text(
-        texts.MOTOPAIR_REPORT_SENT, reply_markup=get_back_to_menu_kb()
-    )
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption=texts.MOTOPAIR_REPORT_SENT,
+                reply_markup=get_back_to_menu_kb(),
+            )
+        else:
+            await callback.message.edit_text(
+                texts.MOTOPAIR_REPORT_SENT, reply_markup=get_back_to_menu_kb()
+            )
+    except Exception as e:
+        logger.warning("motopair_report: edit failed: %s", e)
+        await callback.message.answer(
+            texts.MOTOPAIR_REPORT_SENT, reply_markup=get_back_to_menu_kb()
+        )
     await callback.answer()
 
 
@@ -463,7 +549,7 @@ async def cb_admin_report_block(callback: CallbackQuery, state: FSMContext, user
 async def city_admin_block_reason(message: Message, state: FSMContext, user=None):
     """Admin entered block reason — block the user and notify superadmin."""
     from src.config import get_settings
-    from src.services.admin_service import is_city_admin, block_user, get_user_by_id
+    from src.services.admin_service import is_city_admin, block_user
     from src.models.base import get_session_factory
     from src.models.user import User
     from sqlalchemy import select
@@ -505,11 +591,13 @@ async def city_admin_block_reason(message: Message, state: FSMContext, user=None
 
     if target:
         admin_display = (
-            f"@{user.platform_username}" if user and user.platform_username
+            f"@{user.platform_username}"
+            if user and user.platform_username
             else str(message.from_user.id)
         )
         target_display = (
-            f"@{target.platform_username}" if target.platform_username
+            f"@{target.platform_username}"
+            if target.platform_username
             else str(target.platform_user_id)
         )
 
@@ -545,6 +633,7 @@ async def city_admin_block_reason(message: Message, state: FSMContext, user=None
 
 # ── Like / Dislike handlers ───────────────────────────────────────────────────
 
+
 @router.callback_query(F.data.startswith("like_"))
 async def cb_like(callback: CallbackQuery, user=None, bot=None):
     from src.services.motopair_service import (
@@ -575,6 +664,7 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
     if result["matched"]:
         from src.services.activity_log_service import log_event
         from src.models.activity_log import ActivityEventType
+
         await log_event(
             ActivityEventType.MUTUAL_LIKE,
             user_id=eff_from,
@@ -605,14 +695,24 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
             )
 
         from src.services.notification_templates import get_template
+
         msg_self = await get_template("template_mutual_like_self", profile=from_text)
-        await callback.message.edit_text(
-            msg_self,
-            reply_markup=get_match_kb(
-                target_user.platform_username,
-                target_user.platform_user_id,
-            ),
+        mk = get_match_kb(
+            target_user.platform_username,
+            target_user.platform_user_id,
         )
+        try:
+            if callback.message.photo:
+                await callback.message.edit_caption(
+                    caption=msg_self,
+                    reply_markup=mk,
+                    parse_mode="HTML",
+                )
+            else:
+                await callback.message.edit_text(msg_self, reply_markup=mk)
+        except Exception as e:
+            logger.warning("cb_like mutual: edit failed: %s", e)
+            await callback.message.answer(msg_self, reply_markup=mk)
     else:
         if bot:
             from_text, from_photo = await get_profile_info_text(eff_from)
@@ -687,6 +787,7 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
         return
 
     from src.models.base import get_session_factory
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         res = await session.execute(select(User).where(User.id == from_user_uuid))
@@ -697,7 +798,7 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
         return
 
     from_canon = effective_user_id(from_user)
-    result = await process_like(effective_user_id(user), from_canon, is_like=True)
+    await process_like(effective_user_id(user), from_canon, is_like=True)
     from_text, _ = await get_profile_info_text(from_canon)
 
     match_kb_target = get_match_kb(user.platform_username, user.platform_user_id)
@@ -725,6 +826,7 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
         )
 
     from src.services.notification_templates import get_template
+
     text_self = await get_template("template_mutual_like_self", profile=from_text)
     try:
         if callback.message.photo:
@@ -737,10 +839,18 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
             await callback.message.edit_text(
                 text_self,
                 reply_markup=match_kb_self,
+                parse_mode="HTML",
             )
     except Exception as e:
         logger.warning("cb_reply_like: edit failed, sending new message: %s", e)
-        await callback.message.answer(text_self, reply_markup=match_kb_self)
+        try:
+            await callback.message.answer(text_self, reply_markup=match_kb_self, parse_mode="HTML")
+        except TelegramBadRequest as e2:
+            desc = (e2.message or "") if hasattr(e2, "message") else str(e2)
+            if "BUTTON_USER_PRIVACY_RESTRICTED" in desc:
+                await callback.message.answer(text_self, parse_mode="HTML")
+            else:
+                raise
     await callback.answer()
 
 

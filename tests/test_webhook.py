@@ -1,4 +1,5 @@
 """Webhook handler tests (unit, mocked)."""
+
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -73,10 +74,14 @@ async def test_webhook_ignores_non_succeeded():
     from src.webhooks import handle_yookassa_webhook
 
     request = AsyncMock()
-    request.read = AsyncMock(return_value=json.dumps({
-        "event": "payment.canceled",
-        "object": {"id": "pay_123"},
-    }).encode())
+    request.read = AsyncMock(
+        return_value=json.dumps(
+            {
+                "event": "payment.canceled",
+                "object": {"id": "pay_123"},
+            }
+        ).encode()
+    )
     request.headers = {}
     request.remote = "185.71.76.1"  # YooKassa IP
 
@@ -92,10 +97,14 @@ async def test_webhook_trust_proxy_x_real_ip():
     from src.webhooks import handle_yookassa_webhook
 
     request = AsyncMock()
-    request.read = AsyncMock(return_value=json.dumps({
-        "event": "payment.canceled",
-        "object": {"id": "pay_123"},
-    }).encode())
+    request.read = AsyncMock(
+        return_value=json.dumps(
+            {
+                "event": "payment.canceled",
+                "object": {"id": "pay_123"},
+            }
+        ).encode()
+    )
     request.headers = {"X-Real-IP": "185.71.76.1"}
     request.remote = "127.0.0.1"
 

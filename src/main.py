@@ -1,4 +1,5 @@
 """Main entry point for the bot."""
+
 import asyncio
 import sys
 
@@ -89,12 +90,15 @@ async def run_telegram(shared_bot=None):
         _redis = redis
         # Inject Redis client into SOS service and MAX registration FSM
         from src.services.sos_service import set_redis_client
+
         set_redis_client(redis)
         from src.services import max_registration_state
+
         max_registration_state.set_redis_client(redis)
     except Exception as e:
         logger.warning(f"Redis unavailable ({e}), using MemoryStorage")
         from aiogram.fsm.storage.memory import MemoryStorage
+
         storage = MemoryStorage()
         _redis = None
 
@@ -105,6 +109,7 @@ async def run_telegram(shared_bot=None):
 
     # Inject the Telegram bot into MAX runner for cross-platform SOS broadcasts.
     from src.max_runner import set_tg_bot
+
     set_tg_bot(bot)
 
     # Сразу снимаем webhook — иначе polling не получит обновления
@@ -134,9 +139,13 @@ async def run_telegram(shared_bot=None):
 
     async def log_updates(handler, event, data):
         if hasattr(event, "text") and event.text:
-            logger.info(f"INCOMING: user={getattr(event.from_user, 'id', None)} text={event.text[:80]!r}")
+            logger.info(
+                f"INCOMING: user={getattr(event.from_user, 'id', None)} text={event.text[:80]!r}"
+            )
         elif hasattr(event, "data") and event.data:
-            logger.info(f"INCOMING: callback user={getattr(event.from_user, 'id', None)} data={event.data[:80]!r}")
+            logger.info(
+                f"INCOMING: callback user={getattr(event.from_user, 'id', None)} data={event.data[:80]!r}"
+            )
         return await handler(event, data)
 
     dp.message.middleware(log_updates)
@@ -158,6 +167,7 @@ async def run_telegram(shared_bot=None):
     dp.include_router(legal.router)
     dp.include_router(admin.router)
     from src.handlers import admin_contacts, subscription
+
     dp.include_router(admin_contacts.router)
     dp.include_router(subscription.router)
 
@@ -166,8 +176,10 @@ async def run_telegram(shared_bot=None):
         logger.exception(f"Update {event.update} caused error: {event.exception}")
 
     from src.services.notification_templates import ensure_default_templates
+
     await ensure_default_templates()
     from src.services.bot_settings_service import get_bot_settings
+
     await get_bot_settings()
 
     from src.webhooks import run_webhook_server
@@ -178,20 +190,21 @@ async def run_telegram(shared_bot=None):
 
     # Команды для всех пользователей
     from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
+
     user_commands = [
-        BotCommand(command="start",    description="🏠 Главное меню"),
-        BotCommand(command="admin",    description="⚙️ Панель администратора"),
-        BotCommand(command="cancel",   description="❌ Отменить текущее действие"),
-        BotCommand(command="sos",      description="🚨 Экстренный SOS"),
-        BotCommand(command="profile",  description="👤 Мой профиль"),
+        BotCommand(command="start", description="🏠 Главное меню"),
+        BotCommand(command="admin", description="⚙️ Панель администратора"),
+        BotCommand(command="cancel", description="❌ Отменить текущее действие"),
+        BotCommand(command="sos", description="🚨 Экстренный SOS"),
+        BotCommand(command="profile", description="👤 Мой профиль"),
         BotCommand(command="motopair", description="🏍 Поиск мотопары"),
-        BotCommand(command="events",   description="📅 Мероприятия"),
+        BotCommand(command="events", description="📅 Мероприятия"),
         BotCommand(command="contacts", description="📞 Полезные контакты"),
-        BotCommand(command="about",    description="ℹ️ О нас"),
-        BotCommand(command="privacy",  description="🔒 Политика конфиденциальности"),
-        BotCommand(command="consent",  description="✅ Согласие на обработку ПД"),
+        BotCommand(command="about", description="ℹ️ О нас"),
+        BotCommand(command="privacy", description="🔒 Политика конфиденциальности"),
+        BotCommand(command="consent", description="✅ Согласие на обработку ПД"),
         BotCommand(command="delete_data", description="🗑 Удалить мои данные"),
-        BotCommand(command="support",  description="📞 Поддержка"),
+        BotCommand(command="support", description="📞 Поддержка"),
     ]
     await bot.set_my_commands(commands=user_commands, scope=BotCommandScopeDefault())
 
@@ -247,8 +260,10 @@ async def run_max(shared_adapter=None):
         redis = Redis.from_url(settings.redis_url)
         await redis.ping()
         from src.services import max_registration_state
+
         max_registration_state.set_redis_client(redis)
         from src.services.sos_service import set_redis_client
+
         set_redis_client(redis)
     except Exception as e:
         logger.warning("Redis unavailable for MAX reg state (%s), using in-memory fallback", e)
@@ -259,6 +274,7 @@ async def run_max(shared_adapter=None):
 
     # Register MAX adapter for cross-platform SOS broadcasts from Telegram handler.
     from src.services.broadcast import set_max_adapter
+
     set_max_adapter(adapter)
 
     # Лёгкий клиент Telegram Bot API без polling (только при PLATFORM=max в отдельном процессе).
@@ -294,26 +310,28 @@ async def run_max(shared_adapter=None):
         try:
             await adapter.poll_updates(marker=None, timeout=1)
             logger.info("MAX bot connected (API reachable via /updates)")
-        except Exception as e2:
+        except Exception:
             logger.warning(f"MAX bot CANNOT connect: {e1}")
             # Continue in retry mode
 
     # Register bot commands (shows slash-menu in MAX app)
     try:
-        await adapter.set_my_commands([
-            {"name": "start", "description": "🏠 Главное меню"},
-            {"name": "cancel", "description": "❌ Отменить"},
-            {"name": "sos", "description": "🚨 SOS"},
-            {"name": "motopair", "description": "🏍 Мотопара"},
-            {"name": "contacts", "description": "📇 Полезные контакты"},
-            {"name": "events", "description": "📅 Мероприятия"},
-            {"name": "profile", "description": "👤 Мой профиль"},
-            {"name": "about", "description": "ℹ️ О нас"},
-            {"name": "privacy", "description": "🔒 Политика конфиденциальности"},
-            {"name": "consent", "description": "✅ Согласие на обработку ПД"},
-            {"name": "delete_data", "description": "🗑 Удалить мои данные"},
-            {"name": "support", "description": "📞 Поддержка"},
-        ])
+        await adapter.set_my_commands(
+            [
+                {"name": "start", "description": "🏠 Главное меню"},
+                {"name": "cancel", "description": "❌ Отменить"},
+                {"name": "sos", "description": "🚨 SOS"},
+                {"name": "motopair", "description": "🏍 Мотопара"},
+                {"name": "contacts", "description": "📇 Полезные контакты"},
+                {"name": "events", "description": "📅 Мероприятия"},
+                {"name": "profile", "description": "👤 Мой профиль"},
+                {"name": "about", "description": "ℹ️ О нас"},
+                {"name": "privacy", "description": "🔒 Политика конфиденциальности"},
+                {"name": "consent", "description": "✅ Согласие на обработку ПД"},
+                {"name": "delete_data", "description": "🗑 Удалить мои данные"},
+                {"name": "support", "description": "📞 Поддержка"},
+            ]
+        )
         logger.info("MAX bot commands registered")
     except Exception as e:
         logger.warning(f"Failed to set MAX bot commands: {e}")
@@ -347,20 +365,25 @@ def main():
     platform = settings.platform.lower()
 
     if platform == "telegram":
+
         async def _telegram_only():
             init_db()
             await ensure_cities()
             await ensure_subscription_settings()
             await run_telegram()
+
         asyncio.run(_telegram_only())
     elif platform == "max":
+
         async def _max_only():
             init_db()
             await ensure_cities()
             await ensure_subscription_settings()
             await run_max()
+
         asyncio.run(_max_only())
     elif platform == "both":
+
         async def run_both():
             # Init DB and shared state ONCE before starting both bots concurrently
             init_db()
@@ -383,14 +406,17 @@ def main():
 
             # Register cross-platform references before starting the loops.
             from src.max_runner import set_tg_bot
+
             set_tg_bot(tg_bot)
             from src.services.broadcast import set_max_adapter
+
             set_max_adapter(max_adapter)
 
             await asyncio.gather(
                 run_telegram(shared_bot=tg_bot),
                 run_max(shared_adapter=max_adapter),
             )
+
         asyncio.run(run_both())
     else:
         raise ValueError(f"Unknown platform: {platform}")

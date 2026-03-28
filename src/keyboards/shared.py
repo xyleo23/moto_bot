@@ -1,10 +1,24 @@
 """Platform-agnostic keyboard builders (for MAX and future platforms)."""
+
+import uuid
+
 from src.platforms.base import Button, ButtonType, KeyboardRow
+from src.ui_copy import (
+    EVENT_REGISTER_PASSENGER,
+    EVENT_REGISTER_PILOT,
+    EVENT_SEEK_PAIR,
+    ROLE_PASSENGER_BTN,
+    ROLE_PILOT_BTN,
+    SEEK_CONFIRM_PASSENGER,
+    SEEK_CONFIRM_PILOT,
+    SEEK_DECLINE,
+)
+from src.utils.callback_short import put_pair_callback
 
 
-def get_main_menu_rows() -> list[KeyboardRow]:
+def get_main_menu_rows(*, show_admin: bool = False) -> list[KeyboardRow]:
     """MAX: use message-buttons so taps send text to the bot (always available under last bot message)."""
-    return [
+    rows: list[KeyboardRow] = [
         [Button("🚨 SOS", type=ButtonType.MESSAGE)],
         [Button("🏍 Мотопара", type=ButtonType.MESSAGE)],
         [Button("📇 Полезные контакты", type=ButtonType.MESSAGE)],
@@ -13,6 +27,9 @@ def get_main_menu_rows() -> list[KeyboardRow]:
         [Button("ℹ️ О нас", type=ButtonType.MESSAGE)],
         [Button("📄 Документы", payload="menu_documents")],
     ]
+    if show_admin:
+        rows.append([Button("⚙️ Админ-панель", payload="menu_admin")])
+    return rows
 
 
 def get_city_select_rows() -> list[KeyboardRow]:
@@ -22,10 +39,12 @@ def get_city_select_rows() -> list[KeyboardRow]:
 def get_welcome_city_rows_for_cities(cities: list) -> list[KeyboardRow]:
     """Города + юридические кнопки (как в Telegram welcome_with_city)."""
     rows: list[KeyboardRow] = [[Button(c.name, payload=f"city_{c.id}")] for c in cities]
-    rows.append([
-        Button("🔒 Политика", payload="doc_privacy"),
-        Button("📄 Соглашение", payload="doc_agreement"),
-    ])
+    rows.append(
+        [
+            Button("🔒 Политика", payload="doc_privacy"),
+            Button("📄 Соглашение", payload="doc_agreement"),
+        ]
+    )
     rows.append([Button("✅ Согласие на ПД", payload="doc_consent")])
     return rows
 
@@ -34,8 +53,8 @@ def get_welcome_role_rows() -> list[KeyboardRow]:
     """Роль + юридические кнопки."""
     return [
         [
-            Button("Я Пилот", payload="role_pilot"),
-            Button("Я Двойка", payload="role_passenger"),
+            Button(ROLE_PILOT_BTN, payload="role_pilot"),
+            Button(ROLE_PASSENGER_BTN, payload="role_passenger"),
         ],
         [
             Button("🔒 Политика", payload="doc_privacy"),
@@ -77,13 +96,15 @@ def get_match_max_rows(telegram_username: str | None) -> list[KeyboardRow]:
     """Кнопка «Написать» для MAX после взаимного лайка (только t.me)."""
     rows: list[KeyboardRow] = []
     if telegram_username:
-        rows.append([
-            Button(
-                "💬 Написать в Telegram",
-                type=ButtonType.URL,
-                url=f"https://t.me/{telegram_username}",
-            ),
-        ])
+        rows.append(
+            [
+                Button(
+                    "💬 Написать в Telegram",
+                    type=ButtonType.URL,
+                    url=f"https://t.me/{telegram_username}",
+                ),
+            ]
+        )
     rows.append([Button("« Мотопара", payload="menu_motopair")])
     rows.append(get_main_menu_shortcut_row())
     return rows
@@ -103,8 +124,8 @@ def get_like_notification_max_rows(from_user_internal_id: str) -> list[KeyboardR
 def get_role_select_rows() -> list[KeyboardRow]:
     return [
         [
-            Button("Я Пилот", payload="role_pilot"),
-            Button("Я Двойка", payload="role_passenger"),
+            Button(ROLE_PILOT_BTN, payload="role_pilot"),
+            Button(ROLE_PASSENGER_BTN, payload="role_passenger"),
         ],
     ]
 
@@ -141,7 +162,9 @@ def get_contacts_page_rows(category: str, offset: int, has_more: bool) -> list[K
     return rows
 
 
-def get_motopair_profile_rows(profile_id: str, role: str, offset: int, has_more: bool) -> list[KeyboardRow]:
+def get_motopair_profile_rows(
+    profile_id: str, role: str, offset: int, has_more: bool
+) -> list[KeyboardRow]:
     rows = [
         [
             Button("❤️ Лайк", payload=f"like_{profile_id}_{role}_{offset}"),
@@ -202,13 +225,53 @@ def get_event_list_rows() -> list[KeyboardRow]:
     ]
 
 
-def get_event_detail_rows(event_id: str, is_registered: bool, can_report: bool = True) -> list[KeyboardRow]:
+def _event_id_hex(event_id: str) -> str:
+    return uuid.UUID(event_id).hex
+
+
+def get_max_seeking_confirm_rows(event_id: str) -> list[KeyboardRow]:
+    """Подтверждение «ищу пару» в MAX; в payload только hex(id) без дефисов (короче и проще парсить)."""
+    h = _event_id_hex(event_id)
+    return [
+        [
+            Button(SEEK_CONFIRM_PASSENGER, payload=f"seeky_{h}_pax"),
+            Button(SEEK_CONFIRM_PILOT, payload=f"seeky_{h}_plt"),
+        ],
+        [Button(SEEK_DECLINE, payload=f"seekn_{h}")],
+        [Button("« К мероприятию", payload=f"event_detail_{event_id}")],
+    ]
+
+
+def get_pair_request_max_rows(event_id: str, from_user_id: str) -> list[KeyboardRow]:
+    """Кнопки ответа на заявку «пара» в MAX (те же короткие коды, что и в Telegram)."""
+    eid = uuid.UUID(event_id)
+    from_uid = uuid.UUID(from_user_id)
+    code = put_pair_callback(eid, from_uid)
+    return [
+        [
+            Button("Принять", payload=f"epa{code}"),
+            Button("Отклонить", payload=f"epj{code}"),
+        ],
+    ]
+
+
+def get_event_detail_rows(
+    event_id: str,
+    is_registered: bool,
+    can_report: bool = True,
+    *,
+    user_role: str | None = None,
+) -> list[KeyboardRow]:
     rows = []
     if not is_registered:
-        rows.append([
-            Button("Я Пилот", payload=f"event_register_{event_id}_pilot"),
-            Button("Я Двойка", payload=f"event_register_{event_id}_passenger"),
-        ])
+        rows.append(
+            [
+                Button(EVENT_REGISTER_PILOT, payload=f"event_register_{event_id}_pilot"),
+                Button(EVENT_REGISTER_PASSENGER, payload=f"event_register_{event_id}_passenger"),
+            ]
+        )
+    elif user_role in ("pilot", "passenger"):
+        rows.append([Button(EVENT_SEEK_PAIR, payload=f"max_evt_seek_{event_id}")])
     if can_report:
         rows.append([Button("🚩 Пожаловаться", payload=f"max_event_report_{event_id}")])
     rows.append([Button("« К списку", payload="event_list")])

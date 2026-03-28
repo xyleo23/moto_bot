@@ -1,11 +1,12 @@
 """Юридические документы: политика конфиденциальности, обработка ПД, удаление данных."""
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 
 from src import texts
 from src.config import get_settings
-from src.keyboards.menu import get_main_menu_kb, get_back_to_menu_kb
+from src.keyboards.menu import get_main_menu_kb
 from src.services.user import get_or_create_user, delete_user_data
 
 router = Router()
@@ -34,17 +35,28 @@ def _format_legal(template: str) -> str:
 
 def get_documents_menu_kb() -> InlineKeyboardMarkup:
     """Клавиатура меню документов."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔒 Политика конфиденциальности", callback_data="doc_privacy")],
-        [InlineKeyboardButton(text="📄 Пользовательское соглашение", callback_data="doc_agreement")],
-        [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
-        [InlineKeyboardButton(text="🗑 Удалить мои данные", callback_data="doc_delete")],
-        [InlineKeyboardButton(text="📞 Поддержка", callback_data="doc_support")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔒 Политика конфиденциальности", callback_data="doc_privacy"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📄 Пользовательское соглашение", callback_data="doc_agreement"
+                )
+            ],
+            [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
+            [InlineKeyboardButton(text="🗑 Удалить мои данные", callback_data="doc_delete")],
+            [InlineKeyboardButton(text="📞 Поддержка", callback_data="doc_support")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ]
+    )
 
 
 # ---- Команды ----
+
 
 @router.message(Command("privacy"))
 async def cmd_privacy(message: Message, user=None):
@@ -65,10 +77,12 @@ async def cmd_consent(message: Message, user=None):
 @router.message(Command("delete_data"))
 async def cmd_delete_data(message: Message, user=None):
     """Запрос на удаление персональных данных."""
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete_data")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="doc_cancel_delete")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete_data")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="doc_cancel_delete")],
+        ]
+    )
     await message.answer(texts.LEGAL_DELETE_CONFIRM, reply_markup=kb)
 
 
@@ -87,6 +101,7 @@ async def cmd_support(message: Message):
 
 
 # ---- Callbacks: меню документов ----
+
 
 @router.callback_query(F.data == "menu_documents")
 async def cb_menu_documents(callback: CallbackQuery):
@@ -133,10 +148,12 @@ async def cb_doc_agreement(callback: CallbackQuery):
 @router.callback_query(F.data == "doc_delete")
 async def cb_doc_delete(callback: CallbackQuery):
     """Подтверждение удаления данных."""
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete_data")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_documents")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete_data")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_documents")],
+        ]
+    )
     await callback.message.edit_text(texts.LEGAL_DELETE_CONFIRM, reply_markup=kb)
     await callback.answer()
 
@@ -144,7 +161,9 @@ async def cb_doc_delete(callback: CallbackQuery):
 @router.callback_query(F.data == "doc_cancel_delete")
 async def cb_doc_cancel_delete(callback: CallbackQuery):
     """Отмена удаления."""
-    await callback.message.edit_text(texts.LEGAL_DELETE_CANCELLED, reply_markup=get_documents_menu_kb())
+    await callback.message.edit_text(
+        texts.LEGAL_DELETE_CANCELLED, reply_markup=get_documents_menu_kb()
+    )
     await callback.answer()
 
 

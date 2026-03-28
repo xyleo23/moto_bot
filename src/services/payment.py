@@ -1,4 +1,5 @@
 """YooKassa payment service."""
+
 import asyncio
 from loguru import logger
 from src.config import get_settings
@@ -9,6 +10,7 @@ def _configure_yookassa():
     settings = get_settings()
     if settings.yookassa_shop_id and settings.yookassa_secret_key:
         from yookassa import Configuration
+
         Configuration.configure(settings.yookassa_shop_id, settings.yookassa_secret_key)
 
 
@@ -27,20 +29,25 @@ async def create_payment(
 
     def _create():
         from yookassa import Payment
-        return Payment.create({
-            "amount": {"value": f"{amount_kopecks / 100:.2f}", "currency": "RUB"},
-            "confirmation": {"type": "redirect", "return_url": return_url or "https://t.me"},
-            "capture": True,
-            "description": description[:250],
-            "metadata": metadata,
-        })
+
+        return Payment.create(
+            {
+                "amount": {"value": f"{amount_kopecks / 100:.2f}", "currency": "RUB"},
+                "confirmation": {"type": "redirect", "return_url": return_url or "https://t.me"},
+                "capture": True,
+                "description": description[:250],
+                "metadata": metadata,
+            }
+        )
 
     try:
         payment = await asyncio.to_thread(_create)
         return {
             "id": payment.id,
             "status": payment.status,
-            "confirmation_url": payment.confirmation.confirmation_url if payment.confirmation else None,
+            "confirmation_url": payment.confirmation.confirmation_url
+            if payment.confirmation
+            else None,
         }
     except Exception as e:
         logger.exception("YooKassa create_payment failed: %s", e)
@@ -57,6 +64,7 @@ async def check_payment_status(payment_id: str) -> str | None:
 
     def _find():
         from yookassa import Payment
+
         return Payment.find_one(payment_id)
 
     try:

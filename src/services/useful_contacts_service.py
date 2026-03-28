@@ -1,4 +1,5 @@
 """Useful contacts service."""
+
 from uuid import UUID
 
 from sqlalchemy import select
@@ -40,14 +41,15 @@ def format_useful_contact_html(c: dict) -> str:
     return "\n".join(parts)
 
 
-async def can_manage_contacts(user_id: UUID, city_id: UUID | None, superadmin_ids: list[int]) -> bool:
+async def can_manage_contacts(
+    user_id: UUID, city_id: UUID | None, superadmin_ids: list[int]
+) -> bool:
     """True if user can add/edit contacts: superadmin or city admin."""
     from src.models.user import User
+
     session_factory = get_session_factory()
     async with session_factory() as session:
-        user_r = await session.execute(
-            select(User).where(User.id == user_id)
-        )
+        user_r = await session.execute(select(User).where(User.id == user_id))
         u = user_r.scalar_one_or_none()
         if not u:
             return False
@@ -80,12 +82,18 @@ async def get_contacts_by_category(
     session_factory = get_session_factory()
     async with session_factory() as session:
         from sqlalchemy import func
-        total = await session.scalar(
-            select(func.count()).select_from(UsefulContact).where(
-                UsefulContact.city_id == city_id,
-                UsefulContact.category == cat,
+
+        total = (
+            await session.scalar(
+                select(func.count())
+                .select_from(UsefulContact)
+                .where(
+                    UsefulContact.city_id == city_id,
+                    UsefulContact.category == cat,
+                )
             )
-        ) or 0
+            or 0
+        )
         result = await session.execute(
             select(UsefulContact)
             .where(
@@ -99,10 +107,21 @@ async def get_contacts_by_category(
         has_more = len(rows) > limit
         if has_more:
             rows = rows[:limit]
-        return [
-            {"id": str(r.id), "name": r.name, "phone": r.phone, "link": r.link, "address": r.address, "description": r.description}
-            for r in rows
-        ], total, has_more
+        return (
+            [
+                {
+                    "id": str(r.id),
+                    "name": r.name,
+                    "phone": r.phone,
+                    "link": r.link,
+                    "address": r.address,
+                    "description": r.description,
+                }
+                for r in rows
+            ],
+            total,
+            has_more,
+        )
 
 
 async def get_contact_by_id(contact_id: UUID) -> UsefulContact | None:

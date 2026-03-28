@@ -1,4 +1,5 @@
 """Platform adapters for Telegram and MAX."""
+
 from src.platforms.base import (
     PlatformAdapter,
     IncomingMessage,

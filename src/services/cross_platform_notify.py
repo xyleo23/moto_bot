@@ -1,4 +1,5 @@
 """Доставка уведомлений на все привязанные аккаунты пользователя (TG + MAX)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -90,9 +91,7 @@ async def send_text_to_all_identities(
                         parse_mode=parse_mode,
                     )
             except Exception as e:
-                logger.warning(
-                    "cross_notify TG uid=%s: %s", u.platform_user_id, e
-                )
+                logger.warning("cross_notify TG uid=%s: %s", u.platform_user_id, e)
         elif u.platform == Platform.MAX and max_adapter:
             try:
                 await max_send_message_with_optional_profile_photo(
@@ -104,9 +103,7 @@ async def send_text_to_all_identities(
                     telegram_bot,
                 )
             except Exception as e:
-                logger.warning(
-                    "cross_notify MAX uid=%s: %s", u.platform_user_id, e
-                )
+                logger.warning("cross_notify MAX uid=%s: %s", u.platform_user_id, e)
 
 
 async def notify_like_received_cross_platform(
@@ -142,9 +139,7 @@ async def notify_like_received_cross_platform(
                         parse_mode="HTML",
                     )
             except Exception as e:
-                logger.warning(
-                    "like_received TG uid=%s: %s", u.platform_user_id, e
-                )
+                logger.warning("like_received TG uid=%s: %s", u.platform_user_id, e)
         elif u.platform == Platform.MAX and max_adapter:
             try:
                 await max_send_message_with_optional_profile_photo(
@@ -156,6 +151,4 @@ async def notify_like_received_cross_platform(
                     telegram_bot,
                 )
             except Exception as e:
-                logger.warning(
-                    "like_received MAX uid=%s: %s", u.platform_user_id, e
-                )
+                logger.warning("like_received MAX uid=%s: %s", u.platform_user_id, e)

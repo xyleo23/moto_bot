@@ -1,4 +1,5 @@
 """MotoPair service - profiles, likes, matches."""
+
 import re
 from uuid import UUID
 
@@ -9,13 +10,14 @@ from src.models.base import get_session_factory
 from src.models.profile_pilot import ProfilePilot
 from src.models.profile_passenger import ProfilePassenger
 from src.models.like import Like, LikeBlacklist
-from src.models.user import User, effective_user_id as _eff_id
+from src.models.user import User
 
 
 def _like_pair_lock_key(a: int, b: int) -> int:
     """Deterministic lock key for a user pair — same for A→B and B→A."""
     lo, hi = min(a, b), max(a, b)
     return (lo * 1_000_000_007 + hi) & 0x7FFFFFFFFFFFFFFF
+
 
 DISLIKE_BLACKLIST_THRESHOLD = 3
 
@@ -54,6 +56,7 @@ def parse_motopair_like_callback(data: str) -> tuple[UUID, str, int, bool] | Non
 def _apply_filter_pilot(stmt, f: dict):
     """Apply filter conditions for pilot profile query."""
     from sqlalchemy import and_
+
     conds = []
     if f.get("gender") and f["gender"] in ("male", "female"):
         conds.append(ProfilePilot.gender == f["gender"])
@@ -67,6 +70,7 @@ def _apply_filter_pilot(stmt, f: dict):
 def _apply_filter_passenger(stmt, f: dict):
     """Apply filter conditions for passenger profile query."""
     from sqlalchemy import and_
+
     conds = []
     if f.get("gender") and f["gender"] in ("male", "female"):
         conds.append(ProfilePassenger.gender == f["gender"])
@@ -202,8 +206,7 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
         )
 
         existing = await session.execute(
-            select(Like)
-            .where(
+            select(Like).where(
                 Like.from_user_id == from_user_id,
                 Like.to_user_id == to_user_id,
             )
@@ -253,11 +256,13 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
                 # INSERT ... ON CONFLICT DO NOTHING prevents duplicates even
                 # under concurrent requests (race-condition safe).
                 for uid, bid in [(from_user_id, to_user_id), (to_user_id, from_user_id)]:
-                    stmt = pg_insert(LikeBlacklist).values(
-                        user_id=uid,
-                        blocked_user_id=bid,
-                    ).on_conflict_do_nothing(
-                        constraint="uq_like_blacklist"
+                    stmt = (
+                        pg_insert(LikeBlacklist)
+                        .values(
+                            user_id=uid,
+                            blocked_user_id=bid,
+                        )
+                        .on_conflict_do_nothing(constraint="uq_like_blacklist")
                     )
                     await session.execute(stmt)
                 blacklisted = True
@@ -265,9 +270,7 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
         await session.commit()
 
         # Fetch target user's platform_user_id for notification (after commit)
-        target_result = await session.execute(
-            select(User).where(User.id == to_user_id)
-        )
+        target_result = await session.execute(select(User).where(User.id == to_user_id))
         target_user = target_result.scalar_one_or_none()
 
         return {
@@ -284,9 +287,7 @@ async def hide_profile(user_id: UUID) -> bool:
     """Set is_hidden=True on user's profile (soft-ban)."""
     session_factory = get_session_factory()
     async with session_factory() as session:
-        pilot = await session.execute(
-            select(ProfilePilot).where(ProfilePilot.user_id == user_id)
-        )
+        pilot = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == user_id))
         p = pilot.scalar_one_or_none()
         if p:
             p.is_hidden = True
@@ -306,6 +307,7 @@ async def hide_profile(user_id: UUID) -> bool:
 async def raise_profile(user_id: UUID, role: str) -> bool:
     """Update raised_at to now. Returns True on success."""
     from datetime import datetime
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         if role == "pilot":
@@ -332,9 +334,7 @@ async def get_profile_info_text(user_id: UUID) -> tuple[str, str | None]:
     """
     session_factory = get_session_factory()
     async with session_factory() as session:
-        pilot = await session.execute(
-            select(ProfilePilot).where(ProfilePilot.user_id == user_id)
-        )
+        pilot = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == user_id))
         p = pilot.scalar_one_or_none()
         if p:
             text = (
@@ -396,9 +396,7 @@ async def contact_footer_html_for_max_notifications(canonical_user_id: UUID) -> 
     )
     if tg_u and tg_u.platform_username:
         un = tg_u.platform_username.lstrip("@")
-        lines.append(
-            f'✈️ Telegram: <a href="https://t.me/{escape(un)}">@{escape(un)}</a>'
-        )
+        lines.append(f'✈️ Telegram: <a href="https://t.me/{escape(un)}">@{escape(un)}</a>')
 
     if not lines:
         return ""

@@ -8,6 +8,7 @@ Real MAX API payload structure (reverse-engineered, Feb 2026):
 - Callback user: update['callback']['user']['user_id']
 - Callback data: update['callback']['payload']
 """
+
 from src.platforms.base import (
     IncomingMessage,
     IncomingCallback,
@@ -106,7 +107,10 @@ def _extract_coords_from_max_location_attachment(att: dict) -> tuple[float, floa
                 got = _coords_from_mapping(sub)
                 if got:
                     return got
-                if isinstance(sub.get("coordinates"), (list, tuple)) and len(sub["coordinates"]) >= 2:
+                if (
+                    isinstance(sub.get("coordinates"), (list, tuple))
+                    and len(sub["coordinates"]) >= 2
+                ):
                     a = _floatish(sub["coordinates"][0])
                     b = _floatish(sub["coordinates"][1])
                     if a is not None and b is not None:
@@ -258,12 +262,13 @@ def parse_update(raw: dict):
 
     # Contact attachment
     attachments = body.get("attachments") or []
-    for att in (attachments if isinstance(attachments, list) else []):
+    for att in attachments if isinstance(attachments, list) else []:
         if not isinstance(att, dict):
             continue
         if att.get("type") == "contact":
             import logging as _logging
             import re as _re
+
             _log = _logging.getLogger("max_parser")
             _log.debug("MAX contact attachment: %r", att)
 

@@ -1,8 +1,9 @@
 """SOS alert model."""
+
 import uuid
 import enum
 from datetime import datetime
-from sqlalchemy import String, Float, DateTime, ForeignKey, Text, Enum
+from sqlalchemy import Float, DateTime, ForeignKey, Text, Enum
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, generate_uuid

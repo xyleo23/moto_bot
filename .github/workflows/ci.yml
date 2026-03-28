@@ -53,7 +53,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: "test"
           YOOKASSA_SHOP_ID: ""
           YOOKASSA_SECRET_KEY: ""
-        run: uv run alembic upgrade head || true
+        run: uv run alembic upgrade head
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/moto_bot_test
@@ -62,4 +62,4 @@ jobs:
           YOOKASSA_SHOP_ID: ""
           YOOKASSA_SECRET_KEY: ""
           PLATFORM: telegram
-        run: uv run pytest tests/ -v --tb=short || true
+        run: uv run pytest tests/ -v --tb=short

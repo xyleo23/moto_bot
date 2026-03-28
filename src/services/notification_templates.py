@@ -1,4 +1,5 @@
 """Notification templates (global_texts). Placeholders: {profile}, {period}."""
+
 from sqlalchemy import select
 
 from src.models.base import get_session_factory

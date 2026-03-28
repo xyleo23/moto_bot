@@ -1,8 +1,9 @@
 """Base model and database setup."""
+
 import uuid
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 from src.config import get_settings

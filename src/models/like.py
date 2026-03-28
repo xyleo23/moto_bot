@@ -1,4 +1,5 @@
 """Like and blacklist models for MotoPair."""
+
 import uuid
 from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, UniqueConstraint
@@ -22,6 +23,7 @@ class Like(Base):
 
 class LikeBlacklist(Base):
     """Mutual hide: user A disliked B 3 times -> both hidden from each other."""
+
     __tablename__ = "like_blacklist"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)

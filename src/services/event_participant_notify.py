@@ -1,4 +1,5 @@
 """Уведомления участников мероприятия на всех платформах (TG + MAX)."""
+
 import uuid
 
 from loguru import logger

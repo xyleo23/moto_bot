@@ -1,4 +1,5 @@
 """Subscription service."""
+
 from datetime import date, timedelta
 
 from sqlalchemy import select
@@ -60,6 +61,7 @@ async def activate_subscription(user_id, period: str, payment_id: str) -> bool:
 
     from src.services.activity_log_service import log_event
     from src.models.activity_log import ActivityEventType
+
     await log_event(
         ActivityEventType.SUBSCRIPTION,
         user_id=user_id,

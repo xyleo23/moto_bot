@@ -1,4 +1,5 @@
 """Event and event registration models."""
+
 import uuid
 import enum
 from datetime import datetime

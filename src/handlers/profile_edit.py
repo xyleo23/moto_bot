@@ -1,24 +1,20 @@
 """Profile editing FSM — allows users to update their existing pilot/passenger profile."""
-from loguru import logger
+
 from aiogram import Router, F
 from aiogram.types import (
     Message,
     CallbackQuery,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardRemove,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import Command, StateFilter
 
 from src.models.user import UserRole, effective_user_id
-from src.models.profile_pilot import ProfilePilot, DrivingStyle, Gender
+from src.models.profile_pilot import ProfilePilot, DrivingStyle
 from src.models.profile_passenger import ProfilePassenger, PreferredStyle
 from src.models.base import get_session_factory
-from src.keyboards.menu import get_main_menu_kb, get_back_to_menu_kb
+from src.keyboards.menu import get_main_menu_kb
 from src.config import get_settings
 from src import texts
 from src.utils.tg_callback_message import edit_text_or_send_new
@@ -32,6 +28,7 @@ _SKIP_CB = "edit_skip_field"
 # ─────────────────────────────────────────────────────────────────────────────
 # FSM States
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class PilotEdit(StatesGroup):
     name = State()
@@ -58,6 +55,7 @@ class PassengerEdit(StatesGroup):
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.callback_query(F.data == "profile_edit")
 async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user=None):
     """Begin profile edit flow. Pre-fills FSM data with existing profile values."""
@@ -71,9 +69,7 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
     session_factory = get_session_factory()
     async with session_factory() as session:
         if user.role == UserRole.PILOT:
-            r = await session.execute(
-                select(ProfilePilot).where(ProfilePilot.user_id == uid)
-            )
+            r = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == uid))
             p = r.scalar_one_or_none()
             if not p:
                 await callback.answer("Анкета не найдена. Пройди регистрацию.", show_alert=True)
@@ -96,9 +92,11 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
                 f"✏️ Редактирование анкеты\n\n"
                 f"Текущее имя: <b>{p.name}</b>\n"
                 f"Введи новое или нажми «Пропустить»:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+                    ]
+                ),
             )
         else:
             r = await session.execute(
@@ -124,9 +122,11 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
                 f"✏️ Редактирование анкеты\n\n"
                 f"Текущее имя: <b>{p.name}</b>\n"
                 f"Введи новое или нажми «Пропустить»:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+                    ]
+                ),
             )
     await callback.answer()
 
@@ -134,6 +134,7 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
 # ─────────────────────────────────────────────────────────────────────────────
 # PILOT EDIT
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.message(PilotEdit.name, F.text)
 async def pilot_edit_name(message: Message, state: FSMContext):
@@ -152,9 +153,11 @@ async def _pilot_edit_ask_age(message: Message, state: FSMContext):
     await state.set_state(PilotEdit.age)
     await message.answer(
         f"Текущий возраст: <b>{data.get('age')}</b>\nВведи новый или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -182,9 +185,11 @@ async def _pilot_edit_ask_brand(message: Message, state: FSMContext):
     await state.set_state(PilotEdit.bike_brand)
     await message.answer(
         f"Текущая марка: <b>{data.get('bike_brand')}</b>\nВведи новую или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -205,9 +210,11 @@ async def _pilot_edit_ask_model(message: Message, state: FSMContext):
     await state.set_state(PilotEdit.bike_model)
     await message.answer(
         f"Текущая модель: <b>{data.get('bike_model')}</b>\nВведи новую или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -228,9 +235,11 @@ async def _pilot_edit_ask_cc(message: Message, state: FSMContext):
     await state.set_state(PilotEdit.engine_cc)
     await message.answer(
         f"Текущий объём: <b>{data.get('engine_cc')} см³</b>\nВведи новый или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -260,14 +269,16 @@ async def _pilot_edit_ask_style(message: Message, state: FSMContext):
     await state.set_state(PilotEdit.driving_style)
     await message.answer(
         f"Текущий стиль: <b>{current}</b>\nВыбери новый или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Спокойный", callback_data="edit_style_calm"),
-                InlineKeyboardButton(text="Динамичный", callback_data="edit_style_aggressive"),
-                InlineKeyboardButton(text="Смешанный", callback_data="edit_style_mixed"),
-            ],
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Спокойный", callback_data="edit_style_calm"),
+                    InlineKeyboardButton(text="Динамичный", callback_data="edit_style_aggressive"),
+                    InlineKeyboardButton(text="Смешанный", callback_data="edit_style_mixed"),
+                ],
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -289,9 +300,11 @@ async def _pilot_edit_ask_photo(message: Message, state: FSMContext):
     await state.set_state(PilotEdit.photo)
     await message.answer(
         "Отправь новое фото или пропусти (текущее будет сохранено):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -311,9 +324,11 @@ async def pilot_edit_photo_skip(callback: CallbackQuery, state: FSMContext):
 async def pilot_edit_photo_fallback(message: Message, state: FSMContext):
     await message.answer(
         "Отправь фото или нажми «Пропустить».",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -323,9 +338,11 @@ async def _pilot_edit_ask_about(message: Message, state: FSMContext):
     await state.set_state(PilotEdit.about)
     await message.answer(
         f"Текущее «О себе»: {current}\n\nВведи новый текст или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -365,9 +382,7 @@ async def _finish_pilot_edit(message: Message, state: FSMContext, user):
     uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
-        r = await session.execute(
-            select(ProfilePilot).where(ProfilePilot.user_id == uid)
-        )
+        r = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == uid))
         p = r.scalar_one_or_none()
         if not p:
             await message.answer(texts.REG_ERROR_SAVE)
@@ -396,6 +411,7 @@ async def _finish_pilot_edit(message: Message, state: FSMContext, user):
 # PASSENGER EDIT
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.message(PassengerEdit.name, F.text)
 async def passenger_edit_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
@@ -413,9 +429,11 @@ async def _pax_edit_ask_age(message: Message, state: FSMContext):
     await state.set_state(PassengerEdit.age)
     await message.answer(
         f"Текущий возраст: <b>{data.get('age')}</b>\nВведи новый или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -443,9 +461,11 @@ async def _pax_edit_ask_weight(message: Message, state: FSMContext):
     await state.set_state(PassengerEdit.weight)
     await message.answer(
         f"Текущий вес: <b>{data.get('weight')} кг</b>\nВведи новый или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -473,9 +493,11 @@ async def _pax_edit_ask_height(message: Message, state: FSMContext):
     await state.set_state(PassengerEdit.height)
     await message.answer(
         f"Текущий рост: <b>{data.get('height')} см</b>\nВведи новый или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -505,14 +527,16 @@ async def _pax_edit_ask_style(message: Message, state: FSMContext):
     await state.set_state(PassengerEdit.preferred_style)
     await message.answer(
         f"Текущий желаемый стиль: <b>{current}</b>\nВыбери новый или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Спокойный", callback_data="edit_pax_style_calm"),
-                InlineKeyboardButton(text="Динамичный", callback_data="edit_pax_style_dynamic"),
-                InlineKeyboardButton(text="Смешанный", callback_data="edit_pax_style_mixed"),
-            ],
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Спокойный", callback_data="edit_pax_style_calm"),
+                    InlineKeyboardButton(text="Динамичный", callback_data="edit_pax_style_dynamic"),
+                    InlineKeyboardButton(text="Смешанный", callback_data="edit_pax_style_mixed"),
+                ],
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -536,9 +560,11 @@ async def _pax_edit_ask_photo(message: Message, state: FSMContext):
     await state.set_state(PassengerEdit.photo)
     await message.answer(
         "Отправь новое фото или пропусти (текущее сохранится):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -558,9 +584,11 @@ async def passenger_edit_photo_skip(callback: CallbackQuery, state: FSMContext):
 async def passenger_edit_photo_fallback(message: Message, state: FSMContext):
     await message.answer(
         "Отправь фото или нажми «Пропустить».",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -570,9 +598,11 @@ async def _pax_edit_ask_about(message: Message, state: FSMContext):
     await state.set_state(PassengerEdit.about)
     await message.answer(
         f"Текущее «О себе»: {current}\n\nВведи новый текст или пропусти:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data=_SKIP_CB)],
+            ]
+        ),
     )
 
 
@@ -613,9 +643,7 @@ async def _finish_passenger_edit(message: Message, state: FSMContext, user):
     uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
-        r = await session.execute(
-            select(ProfilePassenger).where(ProfilePassenger.user_id == uid)
-        )
+        r = await session.execute(select(ProfilePassenger).where(ProfilePassenger.user_id == uid))
         p = r.scalar_one_or_none()
         if not p:
             await message.answer(texts.REG_ERROR_SAVE)

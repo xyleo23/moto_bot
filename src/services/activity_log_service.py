@@ -1,6 +1,7 @@
 """Activity log service — write and query logs for admin panel."""
+
 from uuid import UUID
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import select, func, and_
 

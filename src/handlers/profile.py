@@ -1,4 +1,5 @@
 """Profile and subscription block, including phone change workflow."""
+
 import uuid
 
 from loguru import logger
@@ -6,7 +7,6 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import StateFilter
 
 from src.keyboards.menu import get_back_to_menu_kb, get_city_select_kb
 from src import texts
@@ -18,26 +18,32 @@ router = Router()
 
 # ── Profile raise FSM ─────────────────────────────────────────────────────────
 
+
 class ProfileRaiseStates(StatesGroup):
     """Waiting for raise-profile payment to be confirmed."""
+
     awaiting_payment = State()
 
 
 # ── Phone change FSM ──────────────────────────────────────────────────────────
 
+
 class UserPhoneChangeStates(StatesGroup):
     """User enters new phone number before submitting a change request."""
+
     enter_new_phone = State()
 
 
 class AdminPhoneApprovalStates(StatesGroup):
     """Admin approves or rejects a phone change request (no longer enters phone)."""
+
     enter_phone = State()  # kept for backward compatibility
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Profile menu
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.callback_query(F.data == "profile_city_change")
 async def cb_profile_city_change(callback: CallbackQuery, state: FSMContext, user=None):
@@ -58,14 +64,12 @@ async def cb_profile_city_change(callback: CallbackQuery, state: FSMContext, use
 async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.profile_service import get_profile_display
-    from src.services.subscription import check_subscription_required
     from src.models.subscription import Subscription
     from src.models.base import get_session_factory
     from sqlalchemy import select
 
     await state.clear()
     display_text, photo_id = await get_profile_display(user)
-    sub_required = await check_subscription_required(user)
 
     # Check if user has an active subscription to decide which button to show
     sub_active = False
@@ -74,10 +78,12 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
         session_factory = get_session_factory()
         async with session_factory() as session:
             sub_r = await session.execute(
-                select(Subscription).where(
+                select(Subscription)
+                .where(
                     Subscription.user_id == uid,
                     Subscription.is_active.is_(True),
-                ).limit(1)
+                )
+                .limit(1)
             )
             sub_active = sub_r.scalar_one_or_none() is not None
 
@@ -92,12 +98,18 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
         kb_rows.append(
             [InlineKeyboardButton(text="💳 Оформить подписку", callback_data="profile_subscribe")]
         )
-    kb_rows.extend([
-        [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
-        [InlineKeyboardButton(text=texts.PHONE_CHANGE_BTN, callback_data="profile_phone_change")],
-        [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
+    kb_rows.extend(
+        [
+            [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
+            [
+                InlineKeyboardButton(
+                    text=texts.PHONE_CHANGE_BTN, callback_data="profile_phone_change"
+                )
+            ],
+            [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ]
+    )
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
     await callback.answer()
@@ -123,7 +135,6 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
         await callback.message.answer(display_text, reply_markup=kb)
 
 
-
 @router.callback_query(F.data == "profile_subscribe")
 async def cb_profile_subscribe(callback: CallbackQuery, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -145,17 +156,23 @@ async def cb_profile_subscribe(callback: CallbackQuery, user=None):
         else s.subscription_season_price // 100
     )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"1 месяц — {monthly_price} ₽",
-            callback_data="sub_monthly",
-        )],
-        [InlineKeyboardButton(
-            text=f"Год (365 дн.) — {season_price} ₽",
-            callback_data="sub_season",
-        )],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"1 месяц — {monthly_price} ₽",
+                    callback_data="sub_monthly",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"Год (365 дн.) — {season_price} ₽",
+                    callback_data="sub_season",
+                )
+            ],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
+        ]
+    )
     from src.services.subscription_messages import subscription_required_message
 
     await edit_text_or_send_new(
@@ -214,6 +231,7 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
 
     # Paid raise
     from src.config import get_settings
+
     s = get_settings()
     payment = await create_payment(
         amount_kopecks=price,
@@ -225,14 +243,18 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
         await state.set_state(ProfileRaiseStates.awaiting_payment)
         await state.update_data(raise_payment_id=payment["id"], raise_role=role)
         price_rub = price // 100
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
-            [InlineKeyboardButton(
-                text="✅ Я оплатил — проверить",
-                callback_data="raise_checkpay",
-            )],
-            [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
-        ])
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
+                [
+                    InlineKeyboardButton(
+                        text="✅ Я оплатил — проверить",
+                        callback_data="raise_checkpay",
+                    )
+                ],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
+            ]
+        )
         await edit_text_or_send_new(
             callback,
             f"💳 Поднятие анкеты платное: <b>{price_rub} ₽</b>\n\n"
@@ -298,6 +320,7 @@ async def cb_raise_check_payment(callback: CallbackQuery, state: FSMContext, use
 # Phone change: user → request → admin approve/reject → confirm
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.callback_query(F.data == "profile_phone_change")
 async def cb_phone_change_request(callback: CallbackQuery, state: FSMContext, user=None):
     """Step 1: Ask user to enter new phone number."""
@@ -310,11 +333,12 @@ async def cb_phone_change_request(callback: CallbackQuery, state: FSMContext, us
         await callback.answer("Ошибка.", show_alert=True)
         return
 
+    canon_uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         existing = await session.execute(
             select(PhoneChangeRequest).where(
-                PhoneChangeRequest.user_id == user.id,
+                PhoneChangeRequest.user_id == canon_uid,
                 PhoneChangeRequest.status == PhoneChangeStatus.PENDING,
             )
         )
@@ -329,9 +353,11 @@ async def cb_phone_change_request(callback: CallbackQuery, state: FSMContext, us
         callback,
         "📱 Введи новый номер телефона в формате +79991234567:\n\n"
         "После ввода заявка будет отправлена администратору на подтверждение.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="« Отмена", callback_data="menu_profile")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« Отмена", callback_data="menu_profile")],
+            ]
+        ),
     )
     await callback.answer()
 
@@ -341,7 +367,7 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
     """Step 2: User entered new phone — validate and create request for admin."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.models.base import get_session_factory
-    from src.models.phone_change_request import PhoneChangeRequest, PhoneChangeStatus
+    from src.models.phone_change_request import PhoneChangeRequest
     from src.models.profile_pilot import ProfilePilot
     from src.models.profile_passenger import ProfilePassenger
     from src.config import get_settings
@@ -351,9 +377,11 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
     if not new_phone.startswith("+") or len(new_phone) < 10:
         await message.answer(
             "Введи номер в формате +79991234567.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="« Отмена", callback_data="menu_profile")],
-            ]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="« Отмена", callback_data="menu_profile")],
+                ]
+            ),
         )
         return
 
@@ -363,23 +391,22 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
         await message.answer("Ошибка. Попробуй снова.", reply_markup=get_back_to_menu_kb())
         return
 
+    canon_uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
         # Get current phone
-        pilot = await session.execute(
-            select(ProfilePilot).where(ProfilePilot.user_id == user.id)
-        )
+        pilot = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == canon_uid))
         p = pilot.scalar_one_or_none()
         old_phone = p.phone if p else None
         if not old_phone:
             pax = await session.execute(
-                select(ProfilePassenger).where(ProfilePassenger.user_id == user.id)
+                select(ProfilePassenger).where(ProfilePassenger.user_id == canon_uid)
             )
             pp = pax.scalar_one_or_none()
             old_phone = pp.phone if pp else "—"
 
-        # Create pending request with new_phone stored
-        req = PhoneChangeRequest(user_id=user.id, new_phone=new_phone[:20])
+        # Create pending request with new_phone stored (канонический user_id для профиля)
+        req = PhoneChangeRequest(user_id=canon_uid, new_phone=new_phone[:20])
         session.add(req)
         await session.commit()
         req_id = str(req.id)
@@ -388,8 +415,7 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
     settings = get_settings()
     bot = message.bot
     user_display = (
-        f"@{user.platform_username}" if user.platform_username
-        else str(user.platform_user_id)
+        f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
     )
     admin_text = (
         f"📱 <b>Запрос на смену телефона</b>\n\n"
@@ -398,25 +424,29 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
         f"Новый номер: <b>{new_phone}</b>\n\n"
         f"Подтвердить смену?"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=texts.PHONE_CHANGE_BTN_CONFIRM,
-            callback_data=f"admin_phone_approve_{req_id}",
-        )],
-        [InlineKeyboardButton(
-            text=texts.PHONE_CHANGE_BTN_REJECT,
-            callback_data=f"admin_phone_reject_{req_id}",
-        )],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.PHONE_CHANGE_BTN_CONFIRM,
+                    callback_data=f"admin_phone_approve_{req_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.PHONE_CHANGE_BTN_REJECT,
+                    callback_data=f"admin_phone_reject_{req_id}",
+                )
+            ],
+        ]
+    )
     for admin_id in settings.superadmin_ids:
         try:
             await bot.send_message(admin_id, admin_text, reply_markup=kb)
         except Exception as e:
             logger.warning("Cannot notify admin %s about phone change: %s", admin_id, e)
 
-    await message.answer(
-        texts.PHONE_CHANGE_REQUEST_SENT, reply_markup=get_back_to_menu_kb()
-    )
+    await message.answer(texts.PHONE_CHANGE_REQUEST_SENT, reply_markup=get_back_to_menu_kb())
 
 
 @router.callback_query(F.data.startswith("admin_phone_approve_"))

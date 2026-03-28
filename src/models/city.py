@@ -1,4 +1,5 @@
 """City and city admin models."""
+
 import uuid
 from datetime import datetime
 from sqlalchemy import String, Boolean, DateTime, ForeignKey

@@ -14,10 +14,7 @@ def yandex_maps_point_url(lat: float, lon: float, *, zoom: int = 18) -> str:
     """
     lon_s = f"{float(lon):.7f}".rstrip("0").rstrip(".")
     lat_s = f"{float(lat):.7f}".rstrip("0").rstrip(".")
-    return (
-        f"https://yandex.ru/maps/?ll={lon_s},{lat_s}"
-        f"&pt={lon_s},{lat_s}&z={int(zoom)}&l=map"
-    )
+    return f"https://yandex.ru/maps/?ll={lon_s},{lat_s}&pt={lon_s},{lat_s}&z={int(zoom)}&l=map"
 
 
 def yandex_maps_href_for_html(lat: float, lon: float, *, zoom: int = 18) -> str:

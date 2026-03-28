@@ -1,4 +1,5 @@
 """Редактирование текста по callback: если сообщение с фото, edit_text недоступен."""
+
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
 
@@ -8,9 +9,10 @@ async def edit_text_or_send_new(
     text: str,
     *,
     reply_markup=None,
+    parse_mode=None,
 ) -> None:
     try:
-        await callback.message.edit_text(text, reply_markup=reply_markup)
+        await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
     except TelegramBadRequest:
         try:
             await callback.message.delete()
@@ -20,4 +22,5 @@ async def edit_text_or_send_new(
             callback.message.chat.id,
             text,
             reply_markup=reply_markup,
+            parse_mode=parse_mode,
         )

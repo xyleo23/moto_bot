@@ -1,4 +1,5 @@
 """Useful contacts model."""
+
 import uuid
 import enum
 from datetime import datetime

@@ -1,10 +1,19 @@
 """MAX messenger platform adapter."""
+
 import contextvars
 import json
 from typing import Any
 
 import aiohttp
 from loguru import logger
+
+from src.config import get_settings
+from src.platforms.base import (
+    PlatformAdapter,
+    Button,
+    KeyboardRow,
+    ButtonType,
+)
 
 # When True, send_message uses chat_id param instead of user_id (for dialogs).
 _max_use_chat_id_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
@@ -27,15 +36,6 @@ def _get_msg_params(target: str) -> dict[str, int | str]:
     return {"user_id": val}
 
 
-from src.platforms.base import (
-    PlatformAdapter,
-    Button,
-    KeyboardRow,
-    ButtonType,
-)
-from src.config import get_settings
-
-
 def _build_max_keyboard(rows: list[KeyboardRow]) -> list | None:
     if not rows:
         return None
@@ -44,33 +44,43 @@ def _build_max_keyboard(rows: list[KeyboardRow]) -> list | None:
         max_buttons = []
         for btn in row:
             if btn.type == ButtonType.CALLBACK:
-                max_buttons.append({
-                    "type": "callback",
-                    "text": btn.text,
-                    "payload": btn.payload or btn.text,
-                })
+                max_buttons.append(
+                    {
+                        "type": "callback",
+                        "text": btn.text,
+                        "payload": btn.payload or btn.text,
+                    }
+                )
             elif btn.type == ButtonType.URL:
-                max_buttons.append({
-                    "type": "link",
-                    "text": btn.text,
-                    "url": btn.url or "",
-                })
+                max_buttons.append(
+                    {
+                        "type": "link",
+                        "text": btn.text,
+                        "url": btn.url or "",
+                    }
+                )
             elif btn.type == ButtonType.REQUEST_CONTACT:
-                max_buttons.append({
-                    "type": "request_contact",
-                    "text": btn.text,
-                })
+                max_buttons.append(
+                    {
+                        "type": "request_contact",
+                        "text": btn.text,
+                    }
+                )
             elif btn.type == ButtonType.REQUEST_LOCATION:
-                max_buttons.append({
-                    "type": "request_geo_location",
-                    "text": btn.text,
-                })
+                max_buttons.append(
+                    {
+                        "type": "request_geo_location",
+                        "text": btn.text,
+                    }
+                )
             elif btn.type == ButtonType.MESSAGE:
                 # MAX: same field as label; client sends this text to the bot as a message
-                max_buttons.append({
-                    "type": "message",
-                    "text": btn.text,
-                })
+                max_buttons.append(
+                    {
+                        "type": "message",
+                        "text": btn.text,
+                    }
+                )
         if max_buttons:
             max_rows.append(max_buttons)
     return max_rows if max_rows else None
@@ -165,6 +175,7 @@ class MaxAdapter(PlatformAdapter):
             if resp.status >= 400:
                 text = await resp.text()
                 from loguru import logger
+
                 logger.warning(f"MAX API error {resp.status}: {text[:500]}")
                 raise RuntimeError(f"MAX API error {resp.status}: {text}")
             if resp.status == 204:
@@ -181,10 +192,12 @@ class MaxAdapter(PlatformAdapter):
         attachments = []
         max_kb = _build_max_keyboard(keyboard) if keyboard else None
         if max_kb:
-            attachments.append({
-                "type": "inline_keyboard",
-                "payload": {"buttons": max_kb},
-            })
+            attachments.append(
+                {
+                    "type": "inline_keyboard",
+                    "payload": {"buttons": max_kb},
+                }
+            )
         body = {"text": text}
         if attachments:
             body["attachments"] = attachments
@@ -214,8 +227,13 @@ class MaxAdapter(PlatformAdapter):
 
         # Determine content-type by filename extension
         ext = (filename or "").lower().rsplit(".", 1)[-1]
-        ct_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-                  "gif": "image/gif", "webp": "image/webp"}
+        ct_map = {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "webp": "image/webp",
+        }
         img_ct = ct_map.get(ext, "image/jpeg")
 
         # MAX API expects field name "data" for multipart uploads.
@@ -228,13 +246,13 @@ class MaxAdapter(PlatformAdapter):
         upload_headers = {"Authorization": self._token}
         try:
             async with aiohttp.ClientSession() as upload_session:
-                async with upload_session.post(upload_url, data=form, headers=upload_headers) as resp:
+                async with upload_session.post(
+                    upload_url, data=form, headers=upload_headers
+                ) as resp:
                     raw = await resp.text()
                     logger.debug("MAX image upload status={} body={}", resp.status, raw[:500])
                     if resp.status >= 400:
-                        logger.warning(
-                            "MAX image upload HTTP {}: {}", resp.status, raw[:400]
-                        )
+                        logger.warning("MAX image upload HTTP {}: {}", resp.status, raw[:400])
                         return None
                     try:
                         parsed = json.loads(raw) if raw.strip() else {}
@@ -267,7 +285,9 @@ class MaxAdapter(PlatformAdapter):
         try:
             tg_file = await telegram_bot.get_file(tg_file_id)
             if not tg_file or not tg_file.file_path:
-                logger.warning("import_photo_from_telegram: get_file returned empty for {}", tg_file_id)
+                logger.warning(
+                    "import_photo_from_telegram: get_file returned empty for {}", tg_file_id
+                )
                 return None
             file_url = f"https://api.telegram.org/file/bot{token}/{tg_file.file_path}"
             async with aiohttp.ClientSession() as dl_session:
@@ -275,7 +295,8 @@ class MaxAdapter(PlatformAdapter):
                     if resp.status != 200:
                         logger.warning(
                             "import_photo_from_telegram: TG download HTTP {} for file_id={}",
-                            resp.status, tg_file_id,
+                            resp.status,
+                            tg_file_id,
                         )
                         return None
                     img_data = await resp.read()
@@ -289,7 +310,9 @@ class MaxAdapter(PlatformAdapter):
             )
             return await self.upload_image_bytes(img_data, filename=fname)
         except Exception as e:
-            logger.warning("import_photo_from_telegram: exception for file_id=%s: %s", tg_file_id, e)
+            logger.warning(
+                "import_photo_from_telegram: exception for file_id=%s: %s", tg_file_id, e
+            )
             return None
 
     async def send_photo(
@@ -308,16 +331,20 @@ class MaxAdapter(PlatformAdapter):
 
         attachments: list[dict] = []
         if photo_file_id:
-            attachments.append({
-                "type": "image",
-                "payload": {"token": photo_file_id},
-            })
+            attachments.append(
+                {
+                    "type": "image",
+                    "payload": {"token": photo_file_id},
+                }
+            )
         max_kb = _build_max_keyboard(keyboard) if keyboard else None
         if max_kb:
-            attachments.append({
-                "type": "inline_keyboard",
-                "payload": {"buttons": max_kb},
-            })
+            attachments.append(
+                {
+                    "type": "inline_keyboard",
+                    "payload": {"buttons": max_kb},
+                }
+            )
         body: dict = {"text": caption or ""}
         if attachments:
             body["attachments"] = attachments
@@ -331,16 +358,15 @@ class MaxAdapter(PlatformAdapter):
             if delay:
                 await asyncio.sleep(delay)
             try:
-                return await self._request(
-                    "POST", "/messages", params=params, json_data=body
-                )
+                return await self._request("POST", "/messages", params=params, json_data=body)
             except RuntimeError as e:
                 err_str = str(e)
                 if "attachment.not.ready" in err_str or "not.processed" in err_str:
                     nxt = delays[attempt] if attempt < len(delays) else None
                     logger.debug(
                         "MAX send_photo: attachment not ready (attempt {}), next_sleep={}",
-                        attempt + 1, nxt,
+                        attempt + 1,
+                        nxt,
                     )
                     last_exc = e
                     continue
@@ -371,10 +397,12 @@ class MaxAdapter(PlatformAdapter):
         if keyboard:
             max_kb = _build_max_keyboard(keyboard)
             if max_kb:
-                attachments.append({
-                    "type": "inline_keyboard",
-                    "payload": {"buttons": max_kb},
-                })
+                attachments.append(
+                    {
+                        "type": "inline_keyboard",
+                        "payload": {"buttons": max_kb},
+                    }
+                )
         body: dict = {"text": text}
         if attachments:
             body["attachments"] = attachments
@@ -400,10 +428,12 @@ class MaxAdapter(PlatformAdapter):
         if keyboard:
             max_kb = _build_max_keyboard(keyboard)
             if max_kb:
-                attachments.append({
-                    "type": "inline_keyboard",
-                    "payload": {"buttons": max_kb},
-                })
+                attachments.append(
+                    {
+                        "type": "inline_keyboard",
+                        "payload": {"buttons": max_kb},
+                    }
+                )
         msg_body: dict = {"text": text}
         if attachments:
             msg_body["attachments"] = attachments

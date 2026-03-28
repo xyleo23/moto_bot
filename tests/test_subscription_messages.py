@@ -1,4 +1,5 @@
 """subscription_messages: unified paywall texts."""
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 

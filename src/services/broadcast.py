@@ -6,6 +6,7 @@ Broadcasts are executed as asyncio background tasks (non-blocking) with a
 
 MAX broadcasts use the MAX adapter's send_message API.
 """
+
 import asyncio
 
 from loguru import logger
@@ -80,9 +81,11 @@ def broadcast_background(
         _do_broadcast(bot, user_ids, text, exclude_id=exclude_id, reply_markup=reply_markup)
     )
     task.add_done_callback(
-        lambda t: logger.warning("broadcast task error: %s", t.exception())
-        if not t.cancelled() and t.exception()
-        else None
+        lambda t: (
+            logger.warning("broadcast task error: %s", t.exception())
+            if not t.cancelled() and t.exception()
+            else None
+        )
     )
     return task
 
@@ -124,8 +127,10 @@ def broadcast_max_background(
         _do_max_broadcast(adapter, user_ids, text, exclude_id=exclude_id, kb_rows=kb_rows)
     )
     task.add_done_callback(
-        lambda t: logger.warning("max_broadcast task error: %s", t.exception())
-        if not t.cancelled() and t.exception()
-        else None
+        lambda t: (
+            logger.warning("max_broadcast task error: %s", t.exception())
+            if not t.cancelled() and t.exception()
+            else None
+        )
     )
     return task

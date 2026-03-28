@@ -1,4 +1,5 @@
 """Start command, main menu, /cancel."""
+
 from uuid import UUID
 
 from loguru import logger
@@ -12,9 +13,7 @@ from src.keyboards.menu import (
     get_main_menu_kb,
     get_main_menu_kb_for_user,
     get_city_select_kb,
-    get_role_select_kb,
     get_reply_keyboard_for_user,
-    get_welcome_legal_kb,
     get_welcome_with_city_kb,
     get_welcome_with_role_kb,
 )
@@ -38,6 +37,7 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
 
         if not user or not user.city_id:
             from src.services.admin_service import get_cities
+
             cities = await get_cities()
             welcome_text = f"{texts.WELCOME_NEW}\n\n{texts.WELCOME_CITY_PROMPT}"
             await message.answer(welcome_text, reply_markup=get_welcome_with_city_kb(cities))
@@ -57,7 +57,7 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
             reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
         )
         await message.answer(
-            texts.WELCOME_RETURNING,
+            f"{texts.WELCOME_RETURNING}{texts.MENU_INLINE_HINT}",
             reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
         )
     except Exception as e:
@@ -101,13 +101,16 @@ async def cmd_cancel(message: Message, state: FSMContext, user=None):
 async def cmd_sos(message: Message, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.handlers.sos import SosStates
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
-        [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
-        [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
-        [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
+            [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
+            [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
+            [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ]
+    )
     await state.set_state(SosStates.choose_type)
     await message.answer("🚨 Выбери тип SOS:", reply_markup=kb)
 
@@ -117,20 +120,28 @@ async def cmd_profile(message: Message, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.profile_service import get_profile_display
     from src.services.subscription import check_subscription_required
+
     if not user:
-        await message.answer(texts.WELCOME_RETURNING, reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id))
+        await message.answer(
+            texts.WELCOME_RETURNING,
+            reply_markup=get_main_menu_kb(platform_user_id=message.from_user.id),
+        )
         return
     display_text, photo_id = await get_profile_display(user)
     sub_required = await check_subscription_required(user)
     kb_rows = [[InlineKeyboardButton(text="Редактировать анкету", callback_data="profile_edit")]]
     if sub_required:
-        kb_rows.append([InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")])
-    kb_rows.extend([
-        [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
-        [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
-        [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
+        kb_rows.append(
+            [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")]
+        )
+    kb_rows.extend(
+        [
+            [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
+            [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
+            [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ]
+    )
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     if photo_id:
         try:
@@ -145,22 +156,34 @@ async def cmd_profile(message: Message, state: FSMContext, user=None):
 async def cmd_motopair(message: Message, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.subscription import check_subscription_required
+
     if user and await check_subscription_required(user):
         from src.services.subscription_messages import subscription_required_message
 
         await message.answer(
             await subscription_required_message("motopair_menu"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
-                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-            ]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Оформить подписку", callback_data="profile_subscribe"
+                        )
+                    ],
+                    [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+                ]
+            ),
         )
         return
-    await message.answer("🏍 Мотопара\n\nВыбери категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Анкеты Пилотов", callback_data="motopair_pilots")],
-        [InlineKeyboardButton(text="Анкеты Двоек", callback_data="motopair_passengers")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ]))
+    await message.answer(
+        "🏍 Мотопара\n\nВыбери категорию:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Анкеты Пилотов", callback_data="motopair_pilots")],
+                [InlineKeyboardButton(text="Анкеты Двоек", callback_data="motopair_passengers")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+            ]
+        ),
+    )
 
 
 @router.message(Command("events"))
@@ -169,6 +192,7 @@ async def cmd_events(message: Message, state: FSMContext, user=None):
     from src.config import get_settings
     from src.services.admin_service import is_city_admin
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
     is_sa = message.from_user.id in get_settings().superadmin_ids
     is_ca = user and user.city_id and await is_city_admin(message.from_user.id, user.city_id)
     if not (is_sa or is_ca) and user and await check_subscription_required(user):
@@ -176,19 +200,27 @@ async def cmd_events(message: Message, state: FSMContext, user=None):
 
         await message.answer(
             await subscription_required_message("events_menu"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
-                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-            ]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Оформить подписку", callback_data="profile_subscribe"
+                        )
+                    ],
+                    [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+                ]
+            ),
         )
         return
     from src.keyboards.events import get_events_menu_kb
+
     await message.answer("📅 Мероприятия", reply_markup=get_events_menu_kb())
 
 
 @router.message(Command("contacts"))
 async def cmd_contacts(message: Message, state: FSMContext, user=None):
     from src.keyboards.contacts import get_contacts_menu_kb
+
     await message.answer("📇 Полезные контакты", reply_markup=get_contacts_menu_kb())
 
 
@@ -198,6 +230,7 @@ async def cmd_about(message: Message, state: FSMContext, user=None):
     from src.handlers.about import DEFAULT_ABOUT
     from src.keyboards.menu import get_back_to_menu_kb
     from src.config import get_settings
+
     s = get_settings()
     text_db = await get_global_text("about_us")
     about_text = (text_db or DEFAULT_ABOUT).strip()
@@ -208,21 +241,25 @@ async def cmd_about(message: Message, state: FSMContext, user=None):
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext, user=None):
     from src.config import get_settings
+
     if message.from_user.id not in get_settings().superadmin_ids:
         return
     from src.keyboards.admin import get_admin_main_kb
+
     await message.answer("⚙️ Панель администратора", reply_markup=get_admin_main_kb())
 
 
 @router.callback_query(F.data == "menu_main")
 async def cb_menu_main(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.exceptions import TelegramBadRequest
+
     await state.clear()
     menu_kb = await get_main_menu_kb_for_user(callback.from_user.id, user)
+    body = f"{texts.WELCOME_RETURNING}{texts.MENU_INLINE_HINT}"
     try:
-        await callback.message.edit_text(texts.WELCOME_RETURNING, reply_markup=menu_kb)
+        await callback.message.edit_text(body, reply_markup=menu_kb)
     except TelegramBadRequest:
-        await callback.message.answer(texts.WELCOME_RETURNING, reply_markup=menu_kb)
+        await callback.message.answer(body, reply_markup=menu_kb)
     await callback.answer()
 
 
@@ -230,7 +267,6 @@ async def cb_menu_main(callback: CallbackQuery, state: FSMContext, user=None):
 @router.callback_query(F.data.startswith("city_"))
 async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
     from src.services.admin_service import get_cities
-    from src.keyboards.menu import get_city_select_kb
 
     try:
         await callback.answer()
@@ -279,7 +315,11 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
     if changing_profile_city:
         await state.update_data(profile_city_change=False)
         if user:
-            from src.services.user import has_profile, effective_user_id, sync_city_across_linked_identities
+            from src.services.user import (
+                has_profile,
+                effective_user_id,
+                sync_city_across_linked_identities,
+            )
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             from src.models.base import get_session_factory
             from sqlalchemy import select
@@ -296,7 +336,11 @@ async def cb_city_select(callback: CallbackQuery, state: FSMContext, user=None):
                     f"✅ Город изменён на «{city_name}».",
                     reply_markup=InlineKeyboardMarkup(
                         inline_keyboard=[
-                            [InlineKeyboardButton(text="👤 К профилю", callback_data="menu_profile")],
+                            [
+                                InlineKeyboardButton(
+                                    text="👤 К профилю", callback_data="menu_profile"
+                                )
+                            ],
                         ]
                     ),
                 )
@@ -367,23 +411,29 @@ async def cb_role_select(callback: CallbackQuery, state: FSMContext, user=None):
     await callback.message.edit_text(text)
     await callback.answer()
     from src.handlers import registration
+
     await registration.start_registration(callback.message, state, role)
 
 
 # ── Persistent keyboard button handlers ──────────────────────────────────────
 
+
 @router.message(F.text == "🚨 SOS")
 async def kb_sos(message: Message, state: FSMContext, user=None):
     """Handle SOS quick button from persistent keyboard."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
-        [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
-        [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
-        [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
+            [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
+            [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
+            [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ]
+    )
     from src.handlers.sos import SosStates
+
     await state.set_state(SosStates.choose_type)
     await message.answer("🚨 Выбери тип SOS:", reply_markup=kb)
 
@@ -399,18 +449,26 @@ async def kb_motopair(message: Message, state: FSMContext, user=None):
 
         await message.answer(
             await subscription_required_message("motopair_menu"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
-                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-            ]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Оформить подписку", callback_data="profile_subscribe"
+                        )
+                    ],
+                    [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+                ]
+            ),
         )
         return
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Анкеты Пилотов", callback_data="motopair_pilots")],
-        [InlineKeyboardButton(text="Анкеты Двоек", callback_data="motopair_passengers")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Анкеты Пилотов", callback_data="motopair_pilots")],
+            [InlineKeyboardButton(text="Анкеты Двоек", callback_data="motopair_passengers")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ]
+    )
     await message.answer("🏍 Мотопара\n\nВыбери категорию:", reply_markup=kb)
 
 
@@ -431,10 +489,16 @@ async def kb_events(message: Message, state: FSMContext, user=None):
 
         await message.answer(
             await subscription_required_message("events_menu"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
-                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-            ]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Оформить подписку", callback_data="profile_subscribe"
+                        )
+                    ],
+                    [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+                ]
+            ),
         )
         return
     if is_sa or is_ca:
@@ -442,10 +506,14 @@ async def kb_events(message: Message, state: FSMContext, user=None):
         rows = []
         for e in events[:20]:
             label = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
-            rows.append([InlineKeyboardButton(
-                text=f"{e.start_at.strftime('%d.%m')} {label}",
-                callback_data=f"admin_ev_{e.id}",
-            )])
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{e.start_at.strftime('%d.%m')} {label}",
+                        callback_data=f"admin_ev_{e.id}",
+                    )
+                ]
+            )
         rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
         text = (
             "Мероприятия (последние):\n\n"
@@ -460,12 +528,14 @@ async def kb_events(message: Message, state: FSMContext, user=None):
         return
 
     from src.keyboards.events import get_events_menu_kb
+
     await message.answer("📅 Мероприятия", reply_markup=get_events_menu_kb())
 
 
 @router.message(F.text == "📞 Контакты")
 async def kb_contacts(message: Message, state: FSMContext, user=None):
     from src.keyboards.contacts import get_contacts_menu_kb
+
     await message.answer("📇 Полезные контакты", reply_markup=get_contacts_menu_kb())
 
 
@@ -488,13 +558,17 @@ async def kb_profile(message: Message, state: FSMContext, user=None):
         [InlineKeyboardButton(text="Редактировать анкету", callback_data="profile_edit")],
     ]
     if sub_required:
-        kb_rows.append([InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")])
-    kb_rows.extend([
-        [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
-        [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
-        [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-    ])
+        kb_rows.append(
+            [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")]
+        )
+    kb_rows.extend(
+        [
+            [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
+            [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
+            [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+        ]
+    )
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     if photo_id:
         try:

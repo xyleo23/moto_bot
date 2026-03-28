@@ -1,4 +1,5 @@
 """Admin: useful contacts CRUD."""
+
 import uuid
 
 from aiogram import Router, F
@@ -13,7 +14,6 @@ from src.keyboards.contacts import (
     get_admin_contact_edit_kb,
     get_admin_contact_edit_fields_kb,
 )
-from src.keyboards.menu import get_back_to_menu_kb
 from src.services.useful_contacts_service import (
     can_manage_contacts,
     create_contact,
@@ -38,13 +38,17 @@ class ContactAddStates(StatesGroup):
 
 class ContactEditStates(StatesGroup):
     """Editing single field of a contact."""
+
     value = State()
 
 
 @router.callback_query(F.data == "admin_contacts")
 async def cb_admin_contacts(callback: CallbackQuery, user=None):
     from src.services.useful_contacts_service import can_manage_contacts
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         await callback.answer("Доступ запрещён.")
         return
     await callback.message.edit_text(
@@ -56,7 +60,9 @@ async def cb_admin_contacts(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data == "admin_contact_add")
 async def cb_admin_contact_add_start(callback: CallbackQuery, state: FSMContext, user=None):
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         await callback.answer("Доступ запрещён.")
         return
     if not user or not user.city_id:
@@ -149,7 +155,9 @@ async def admin_contact_add_address(message: Message, state: FSMContext, user=No
 
 @router.callback_query(F.data == "admin_contact_list")
 async def cb_admin_contact_list(callback: CallbackQuery, user=None):
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         await callback.answer("Доступ запрещён.")
         return
     if not user or not user.city_id:
@@ -164,13 +172,18 @@ async def cb_admin_contact_list(callback: CallbackQuery, user=None):
         )
     else:
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
         rows = []
         for c in contacts[:15]:
             label = CAT_LABELS.get(c.category.value, c.category.value)
-            rows.append([InlineKeyboardButton(
-                text=f"{c.name} ({label})",
-                callback_data=f"admin_contact_view_{c.id}",
-            )])
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{c.name} ({label})",
+                        callback_data=f"admin_contact_view_{c.id}",
+                    )
+                ]
+            )
         rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_contacts")])
         await callback.message.edit_text(
             "Контакты:",
@@ -181,7 +194,9 @@ async def cb_admin_contact_list(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_view_"))
 async def cb_admin_contact_view(callback: CallbackQuery, user=None):
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_view_", "")
@@ -203,7 +218,9 @@ async def cb_admin_contact_view(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_del_"))
 async def cb_admin_contact_del(callback: CallbackQuery, user=None):
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_del_", "")
@@ -220,7 +237,9 @@ async def cb_admin_contact_del(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_edit_"))
 async def cb_admin_contact_edit(callback: CallbackQuery, state: FSMContext, user=None):
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_edit_", "")
@@ -238,7 +257,9 @@ async def cb_admin_contact_edit(callback: CallbackQuery, state: FSMContext, user
 
 @router.callback_query(F.data.startswith("admin_contact_ef_"))
 async def cb_admin_contact_edit_field(callback: CallbackQuery, state: FSMContext, user=None):
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         await callback.answer("Доступ запрещён.")
         return
     # admin_contact_ef_{cid}_{field}
@@ -275,9 +296,13 @@ async def cb_admin_contact_edit_field(callback: CallbackQuery, state: FSMContext
 
 
 @router.callback_query(F.data.startswith("admin_contact_ev_"), ContactEditStates.value)
-async def cb_admin_contact_edit_value_category(callback: CallbackQuery, state: FSMContext, user=None):
+async def cb_admin_contact_edit_value_category(
+    callback: CallbackQuery, state: FSMContext, user=None
+):
     """Обработка выбора категории при редактировании."""
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         await callback.answer("Доступ запрещён.")
         return
     # admin_contact_ev_{cid}_{category}
@@ -312,7 +337,9 @@ async def cb_admin_contact_edit_value_category(callback: CallbackQuery, state: F
 
 @router.message(ContactEditStates.value, F.text)
 async def admin_contact_edit_value_message(message: Message, state: FSMContext, user=None):
-    if not user or not await can_manage_contacts(user.id, user.city_id, get_settings().superadmin_ids):
+    if not user or not await can_manage_contacts(
+        user.id, user.city_id, get_settings().superadmin_ids
+    ):
         return
     data = await state.get_data()
     cid = data.get("contact_edit_id")
@@ -340,5 +367,3 @@ async def admin_contact_edit_value_message(message: Message, state: FSMContext, 
         await message.answer(text_msg, reply_markup=get_admin_contact_edit_kb(cid))
     else:
         await message.answer("Ошибка.", reply_markup=get_admin_contacts_menu_kb())
-
-

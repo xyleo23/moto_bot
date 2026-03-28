@@ -1,4 +1,5 @@
 """Main menu keyboards — inline + persistent reply."""
+
 from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
@@ -23,8 +24,10 @@ def get_main_menu_kb(
         [InlineKeyboardButton(text="ℹ️ О нас", callback_data="menu_about")],
         [InlineKeyboardButton(text="📄 Документы", callback_data="menu_documents")],
     ]
-    show = show_admin if show_admin is not None else (
-        platform_user_id is not None and platform_user_id in get_settings().superadmin_ids
+    show = (
+        show_admin
+        if show_admin is not None
+        else (platform_user_id is not None and platform_user_id in get_settings().superadmin_ids)
     )
     if show:
         rows.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")])
@@ -87,39 +90,45 @@ def get_persistent_kb() -> ReplyKeyboardMarkup:
 
 def get_welcome_legal_kb() -> InlineKeyboardMarkup:
     """Три кнопки документов в приветствии (как на Voditel66)."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
-            InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
-        ],
-        [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
+                InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
+            ],
+            [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
+        ]
+    )
 
 
 def get_welcome_with_city_kb(cities: list) -> InlineKeyboardMarkup:
     """Город — основное действие сверху, юридические кнопки ниже."""
     rows = [[InlineKeyboardButton(text=c.name, callback_data=f"city_{c.id}")] for c in cities]
-    rows.extend([
+    rows.extend(
         [
-            InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
-            InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
-        ],
-        [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
-    ])
+            [
+                InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
+                InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
+            ],
+            [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_welcome_with_role_kb() -> InlineKeyboardMarkup:
     """Роль — основное действие сверху, юридические кнопки ниже."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Я Пилот", callback_data="role_pilot")],
-        [InlineKeyboardButton(text="Я Двойка", callback_data="role_passenger")],
-        [
-            InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
-            InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
-        ],
-        [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Я Пилот", callback_data="role_pilot")],
+            [InlineKeyboardButton(text="Я Двойка", callback_data="role_passenger")],
+            [
+                InlineKeyboardButton(text="🔒 Политика", callback_data="doc_privacy"),
+                InlineKeyboardButton(text="📄 Соглашение", callback_data="doc_agreement"),
+            ],
+            [InlineKeyboardButton(text="✅ Согласие на обработку ПД", callback_data="doc_consent")],
+        ]
+    )
 
 
 def get_city_select_kb(cities: list | None = None) -> InlineKeyboardMarkup:
@@ -132,16 +141,20 @@ def get_city_select_kb(cities: list | None = None) -> InlineKeyboardMarkup:
 
 
 def get_role_select_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Я Пилот", callback_data="role_pilot")],
-        [InlineKeyboardButton(text="Я Двойка", callback_data="role_passenger")],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Я Пилот", callback_data="role_pilot")],
+            [InlineKeyboardButton(text="Я Двойка", callback_data="role_passenger")],
+        ]
+    )
 
 
 def get_back_to_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+        ]
+    )
 
 
 def get_admin_superadmin_kb() -> ReplyKeyboardMarkup:

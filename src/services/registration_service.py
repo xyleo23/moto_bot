@@ -8,6 +8,7 @@ phone number that already exists in a profile on another platform, their
 user record is linked (linked_user_id) to the canonical user, and all
 profile/subscription/like data is shared.
 """
+
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -26,8 +27,10 @@ from src.config import get_settings
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _parse_driving_since(value) -> "date | None":  # noqa: F821 (avoid circular import of date)
     from datetime import date as _date
+
     if isinstance(value, _date):
         return value
     if isinstance(value, str):
@@ -44,9 +47,7 @@ async def _find_canonical_user_by_phone(
 ) -> "UUID | None":
     """Find the canonical user ID that owns a profile with the given phone on another platform."""
     # Search pilot profiles
-    r = await session.execute(
-        select(ProfilePilot.user_id).where(ProfilePilot.phone == phone)
-    )
+    r = await session.execute(select(ProfilePilot.user_id).where(ProfilePilot.phone == phone))
     uid = r.scalar_one_or_none()
     if uid:
         # Verify the owning user is on a different platform
@@ -264,6 +265,7 @@ async def apply_telegram_early_account_link(
 
 # ── public API ────────────────────────────────────────────────────────────────
 
+
 async def finish_pilot_registration(
     platform: Platform,
     platform_user_id: int,
@@ -279,7 +281,9 @@ async def finish_pilot_registration(
     """
     logger.info(
         "finish_pilot_registration: platform=%s user_id=%s keys=%s",
-        platform, platform_user_id, list(data.keys()),
+        platform,
+        platform_user_id,
+        list(data.keys()),
     )
 
     phone = str(data.get("phone") or "").strip()[:20]
@@ -314,7 +318,8 @@ async def finish_pilot_registration(
         if not u:
             logger.warning(
                 "finish_pilot_registration: User not found platform=%s id=%s",
-                platform, platform_user_id,
+                platform,
+                platform_user_id,
             )
             return "user_not_found"
 
@@ -326,7 +331,8 @@ async def finish_pilot_registration(
             u.linked_user_id = canonical_uid
             logger.info(
                 "finish_pilot_registration: linked user %s → canonical %s (phone match)",
-                u.id, canonical_uid,
+                u.id,
+                canonical_uid,
             )
 
         # Store profile under the canonical user's id so both platforms see the
@@ -385,7 +391,9 @@ async def finish_passenger_registration(
     """
     logger.info(
         "finish_passenger_registration: platform=%s user_id=%s keys=%s",
-        platform, platform_user_id, list(data.keys()),
+        platform,
+        platform_user_id,
+        list(data.keys()),
     )
 
     required = ("name", "phone", "age", "gender", "weight", "height", "preferred_style")
@@ -425,7 +433,8 @@ async def finish_passenger_registration(
         if not u:
             logger.warning(
                 "finish_passenger_registration: User not found platform=%s id=%s",
-                platform, platform_user_id,
+                platform,
+                platform_user_id,
             )
             return "user_not_found"
 
@@ -438,7 +447,8 @@ async def finish_passenger_registration(
             u.linked_user_id = canonical_uid
             logger.info(
                 "finish_passenger_registration: linked user %s → canonical %s (phone match)",
-                u.id, canonical_uid,
+                u.id,
+                canonical_uid,
             )
 
         profile_owner_id = u.linked_user_id if u.linked_user_id else u.id

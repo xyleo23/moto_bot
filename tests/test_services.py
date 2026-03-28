@@ -1,4 +1,5 @@
 """Basic service tests."""
+
 import pytest
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ async def test_motopair_raise_profile():
     """Test raise_profile with invalid user_id returns False."""
     try:
         from src.services.motopair_service import raise_profile
+
         fake_id = uuid4()
         ok = await raise_profile(fake_id, "pilot")
         assert ok is False

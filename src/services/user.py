@@ -1,11 +1,10 @@
 """User service."""
+
 import uuid
 from sqlalchemy import select, delete, update, or_
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.base import get_session_factory
 from src.models.user import User, Platform, UserRole, effective_user_id
-from src.models.city import City
 from src.models.profile_pilot import ProfilePilot
 from src.models.profile_passenger import ProfilePassenger
 from src.config import get_settings
@@ -87,7 +86,9 @@ async def get_all_platform_identities(canonical_user_id: uuid.UUID) -> list[User
         return list(r.scalars().all())
 
 
-async def sync_city_across_linked_identities(canonical_user_id: uuid.UUID, city_id: uuid.UUID) -> None:
+async def sync_city_across_linked_identities(
+    canonical_user_id: uuid.UUID, city_id: uuid.UUID
+) -> None:
     """Прописать city_id всем записям User (TG + MAX), связанным с одним человеком."""
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -114,9 +115,7 @@ async def has_profile(user: User) -> bool:
     session_factory = get_session_factory()
     async with session_factory() as session:
         if user.role == UserRole.PILOT:
-            result = await session.execute(
-                select(ProfilePilot).where(ProfilePilot.user_id == uid)
-            )
+            result = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == uid))
             return result.scalar_one_or_none() is not None
         else:
             result = await session.execute(
@@ -140,7 +139,9 @@ async def get_user_profile_display(user: User) -> str:
                 name = p.name
                 phone = p.phone
         else:
-            result = await session.execute(select(ProfilePassenger).where(ProfilePassenger.user_id == uid))
+            result = await session.execute(
+                select(ProfilePassenger).where(ProfilePassenger.user_id == uid)
+            )
             p = result.scalar_one_or_none()
             if p:
                 name = p.name
@@ -156,7 +157,7 @@ async def get_user_profile_display(user: User) -> str:
 
 async def delete_user_data(user: User) -> None:
     """Удалить все персональные данные пользователя (ФЗ-152, запрос /delete_data)."""
-    from sqlalchemy import delete, select, update
+    from sqlalchemy import select, update
     from src.models.like import Like, LikeBlacklist
     from src.models.phone_change_request import PhoneChangeRequest
     from src.models.subscription import Subscription
@@ -181,21 +182,29 @@ async def delete_user_data(user: User) -> None:
         # 2. EventRegistration — где user участник или matched
         await session.execute(delete(EventRegistration).where(EventRegistration.user_id == uid))
         await session.execute(
-            update(EventRegistration).where(EventRegistration.matched_user_id == uid).values(matched_user_id=None)
+            update(EventRegistration)
+            .where(EventRegistration.matched_user_id == uid)
+            .values(matched_user_id=None)
         )
         # 3. Events, созданные пользователем — удаляем регистрации и заявки, затем сами события
         ev_result = await session.execute(select(Event.id).where(Event.creator_id == uid))
         event_ids = [r[0] for r in ev_result.fetchall()]
         if event_ids:
-            await session.execute(delete(EventPairRequest).where(EventPairRequest.event_id.in_(event_ids)))
-            await session.execute(delete(EventRegistration).where(EventRegistration.event_id.in_(event_ids)))
+            await session.execute(
+                delete(EventPairRequest).where(EventPairRequest.event_id.in_(event_ids))
+            )
+            await session.execute(
+                delete(EventRegistration).where(EventRegistration.event_id.in_(event_ids))
+            )
             await session.execute(delete(Event).where(Event.creator_id == uid))
         # 4. Like, LikeBlacklist
         await session.execute(
             delete(Like).where((Like.from_user_id == uid) | (Like.to_user_id == uid))
         )
         await session.execute(
-            delete(LikeBlacklist).where((LikeBlacklist.user_id == uid) | (LikeBlacklist.blocked_user_id == uid))
+            delete(LikeBlacklist).where(
+                (LikeBlacklist.user_id == uid) | (LikeBlacklist.blocked_user_id == uid)
+            )
         )
         # 5. PhoneChangeRequest, Subscription, SosAlert, ActivityLog, CityAdmin
         await session.execute(delete(PhoneChangeRequest).where(PhoneChangeRequest.user_id == uid))

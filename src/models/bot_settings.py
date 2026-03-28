@@ -1,7 +1,8 @@
 """Bot settings model — configurable parameters managed by superadmin."""
+
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Boolean, DateTime, Text
+from sqlalchemy import Integer, Boolean, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, generate_uuid
@@ -12,6 +13,7 @@ class BotSettings(Base):
     Single-row table for runtime-configurable bot parameters.
     Superadmin can change these through the admin panel without redeploying.
     """
+
     __tablename__ = "bot_settings"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)

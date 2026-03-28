@@ -1,12 +1,19 @@
 """Webhook HTTP server for YooKassa notifications."""
+
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import hmac
 import ipaddress
 import json
 import uuid
+from typing import TYPE_CHECKING
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from aiohttp.web import Response as AiohttpResponse
 
 from src.config import get_settings
 from src.services.subscription import activate_subscription
@@ -91,9 +98,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
     signature = request.headers.get("X-Content-Signature", "")
     remote_ip = _effective_client_ip(request)
 
-    sig_valid = _verify_yookassa_signature(
-        body, signature, settings.yookassa_secret_key or ""
-    )
+    sig_valid = _verify_yookassa_signature(body, signature, settings.yookassa_secret_key or "")
     ip_valid = _is_yookassa_ip(remote_ip)
 
     if not sig_valid and not ip_valid:
@@ -121,7 +126,9 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
 
     pay_type = metadata.get("type")
 
-    async def _notify_user(user_id_uuid: uuid.UUID, msg: str, source_platform: str | None = None) -> None:
+    async def _notify_user(
+        user_id_uuid: uuid.UUID, msg: str, source_platform: str | None = None
+    ) -> None:
         """Send notification to user via Telegram bot or MAX adapter.
 
         When source_platform='max', prefers to notify via the MAX account:
@@ -151,6 +158,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
         if u.platform == Platform.MAX:
             try:
                 from src.platforms.max_adapter import MaxAdapter
+
                 adapter = MaxAdapter()
                 await adapter.send_message(chat_id, msg)
             except Exception as e:
@@ -234,6 +242,7 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
 
     # Notify user via Telegram or MAX
     from src.services.notification_templates import get_template
+
     period_label = "1 месяц" if period == "monthly" else "год (365 дней)"
     msg = await get_template("template_subscription_activated", period=period_label)
     await _notify_user(user_id, msg, src_platform)
@@ -246,7 +255,7 @@ def set_webhook_bot(bot):
     handle_yookassa_webhook._bot = bot
 
 
-async def handle_health(request) -> "web.Response":
+async def handle_health(request) -> AiohttpResponse:
     """Health check for monitoring. Probes DB. Usable in aiohttp routes."""
     from aiohttp import web
 
@@ -274,6 +283,7 @@ async def run_webhook_server(bot=None):
     app.router.add_get("/health", handle_health)
 
     if settings.yookassa_shop_id and settings.yookassa_secret_key:
+
         async def handler(request):
             status, body = await handle_yookassa_webhook(request)
             return web.json_response(body, status=status)

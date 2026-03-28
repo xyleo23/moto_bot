@@ -1,12 +1,25 @@
 """Profile service."""
-from datetime import date, datetime
+
+from datetime import datetime
 from sqlalchemy import select
 
 from src.models.base import get_session_factory
-from src.models.profile_pilot import ProfilePilot
-from src.models.profile_passenger import ProfilePassenger
+from src.models.profile_pilot import ProfilePilot, DrivingStyle
+from src.models.profile_passenger import ProfilePassenger, PreferredStyle
 from src.models.subscription import Subscription
 from src.models.user import effective_user_id
+from src.config import get_settings
+
+_DRIVING_STYLE_RU = {
+    DrivingStyle.CALM: "Спокойный",
+    DrivingStyle.AGGRESSIVE: "Динамичный",
+    DrivingStyle.MIXED: "Смешанный",
+}
+_PREFERRED_STYLE_RU = {
+    PreferredStyle.CALM: "Спокойный",
+    PreferredStyle.DYNAMIC: "Динамичный",
+    PreferredStyle.MIXED: "Смешанный",
+}
 
 
 async def get_profile_display(user) -> tuple[str, str | None]:
@@ -38,10 +51,13 @@ async def get_profile_display(user) -> tuple[str, str | None]:
             return ("Анкета не заполнена.", None)
 
         sub_result = await session.execute(
-            select(Subscription).where(
+            select(Subscription)
+            .where(
                 Subscription.user_id == uid,
                 Subscription.is_active.is_(True),
-            ).order_by(Subscription.expires_at.desc()).limit(1)
+            )
+            .order_by(Subscription.expires_at.desc())
+            .limit(1)
         )
         sub = sub_result.scalar_one_or_none()
         if sub and sub.expires_at:
@@ -53,9 +69,32 @@ async def get_profile_display(user) -> tuple[str, str | None]:
             sub_text = "\n\n❌ Подписка не активна"
 
         if is_pilot:
-            text = f"👤 {p.name}\nВозраст: {p.age}\n{p.bike_brand} {p.bike_model}, {p.engine_cc} см³{sub_text}"
+            style_ru = _DRIVING_STYLE_RU.get(p.driving_style, str(p.driving_style.value))
+            about_line = (p.about or "").strip()
+            about_part = ""
+            if about_line:
+                lim = min(280, max(80, get_settings().about_text_max_length // 2))
+                if len(about_line) > lim:
+                    about_line = about_line[: lim - 1] + "…"
+                about_part = f"\nО себе: {about_line}"
+            text = (
+                f"👤 {p.name}\nВозраст: {p.age}\nТел.: {p.phone}\n"
+                f"{p.bike_brand} {p.bike_model}, {p.engine_cc} см³\n"
+                f"Стиль вождения: {style_ru}{about_part}{sub_text}"
+            )
         else:
-            text = f"👤 {p.name}\nВозраст: {p.age}, Рост: {p.height} см, Вес: {p.weight} кг{sub_text}"
+            pref_ru = _PREFERRED_STYLE_RU.get(p.preferred_style, str(p.preferred_style.value))
+            about_line = (p.about or "").strip()
+            about_part = ""
+            if about_line:
+                lim = min(280, max(80, get_settings().about_text_max_length // 2))
+                if len(about_line) > lim:
+                    about_line = about_line[: lim - 1] + "…"
+                about_part = f"\nО себе: {about_line}"
+            text = (
+                f"👤 {p.name}\nВозраст: {p.age}, Рост: {p.height} см, Вес: {p.weight} кг\n"
+                f"Тел.: {p.phone}\nПредпочитаемый стиль: {pref_ru}{about_part}{sub_text}"
+            )
         return (text, p.photo_file_id)
 
 

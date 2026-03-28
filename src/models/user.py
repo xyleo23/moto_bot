@@ -1,9 +1,10 @@
 """User model."""
+
 import uuid
 import enum
 from datetime import datetime
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, Enum, BigInteger, Index
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, generate_uuid
 
@@ -39,7 +40,9 @@ class User(Base):
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     block_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     # Cross-platform account linking: when a user registers on MAX with the same
     # phone as an existing Telegram user (or vice versa), their linked_user_id

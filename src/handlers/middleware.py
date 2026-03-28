@@ -1,4 +1,5 @@
 """Middleware for handlers."""
+
 from typing import Any, Awaitable, Callable, Dict
 
 from loguru import logger
@@ -6,7 +7,6 @@ from aiogram import BaseMiddleware, Bot
 from aiogram.types import Message, CallbackQuery, TelegramObject
 
 from src.services.user import get_or_create_user
-from src.config import get_settings
 
 # Callback data prefixes and text triggers that bypass the block check.
 # SOS must be accessible at ALL times — even for blocked users.
@@ -18,12 +18,22 @@ _SOS_CALLBACK_PREFIXES = (
     "sos_ran_out",
     "sos_other",
     "sos_skip_comment",
-    "sos_all_clear_",
+    "sos_check_ready",
+    "sos_all_clear",
 )
 _SOS_TEXT_TRIGGERS = ("🚨 SOS",)
 
 # Юридические команды и callbacks — доступны даже заблокированным (ФЗ-152, GDPR)
-_LEGAL_PREFIXES = ("menu_documents", "doc_privacy", "doc_consent", "doc_agreement", "doc_delete", "doc_support", "doc_cancel_delete", "confirm_delete_data")
+_LEGAL_PREFIXES = (
+    "menu_documents",
+    "doc_privacy",
+    "doc_consent",
+    "doc_agreement",
+    "doc_delete",
+    "doc_support",
+    "doc_cancel_delete",
+    "confirm_delete_data",
+)
 _LEGAL_COMMANDS = ("/privacy", "/consent", "/delete_data", "/support")
 
 
@@ -121,11 +131,17 @@ class BlockCheckMiddleware(BaseMiddleware):
                 user = await get_or_create_user(
                     platform="telegram",
                     platform_user_id=user_id,
-                    username=getattr(event.from_user, "username", None) if event.from_user else None,
-                    first_name=getattr(event.from_user, "first_name", None) if event.from_user else None,
+                    username=getattr(event.from_user, "username", None)
+                    if event.from_user
+                    else None,
+                    first_name=getattr(event.from_user, "first_name", None)
+                    if event.from_user
+                    else None,
                 )
             except Exception as e:
-                logger.warning("BlockCheckMiddleware: get_or_create_user failed for %s: %s", user_id, e)
+                logger.warning(
+                    "BlockCheckMiddleware: get_or_create_user failed for %s: %s", user_id, e
+                )
             if user and user.is_blocked:
                 if isinstance(event, Message):
                     await event.answer("Вы заблокированы. Обратитесь в поддержку.")

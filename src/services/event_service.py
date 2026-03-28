@@ -1,4 +1,5 @@
 """Event service."""
+
 from uuid import UUID
 from datetime import datetime, date
 from calendar import monthrange
@@ -75,15 +76,24 @@ async def get_events_list(
             e, pilots, passengers = row
             pilots = pilots or 0
             passengers = passengers or 0
-            out.append({
-                "id": str(e.id),
-                "title": e.title or TYPE_LABELS.get(e.type.value, e.type.value),
-                "type": e.type.value,
-                "date": e.start_at.strftime("%d.%m.%Y %H:%M"),
-                "point_start": e.point_start,
-                "pilots": pilots,
-                "passengers": passengers,
-            })
+            base_title = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
+            badges: list[str] = []
+            if getattr(e, "is_official", False):
+                badges.append("офиц.")
+            if getattr(e, "is_recommended", False):
+                badges.append("реком.")
+            title = f"{base_title} ({', '.join(badges)})" if badges else base_title
+            out.append(
+                {
+                    "id": str(e.id),
+                    "title": title,
+                    "type": e.type.value,
+                    "date": e.start_at.strftime("%d.%m.%Y %H:%M"),
+                    "point_start": e.point_start,
+                    "pilots": pilots,
+                    "passengers": passengers,
+                }
+            )
         return out
 
 
@@ -97,7 +107,9 @@ async def count_motorcades_this_month(user_id: UUID) -> int:
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.scalar(
-            select(func.count()).select_from(Event).where(
+            select(func.count())
+            .select_from(Event)
+            .where(
                 Event.creator_id == user_id,
                 Event.type == EventType.MOTORCADE,
                 Event.start_at >= start_dt,
@@ -127,7 +139,11 @@ async def event_creation_payment_required(
     If ``apply_subscription_benefits`` is False (MAX messenger), льготы подписки
     на создание не применяются — как платное создание для всех (кроме админов).
     """
-    if not settings or not settings.event_creation_enabled or settings.event_creation_price_kopecks <= 0:
+    if (
+        not settings
+        or not settings.event_creation_enabled
+        or settings.event_creation_price_kopecks <= 0
+    ):
         return False, None
 
     from src.services.admin_service import can_create_event_free
@@ -254,6 +270,7 @@ async def create_event(
 
         from src.services.activity_log_service import log_event
         from src.models.activity_log import ActivityEventType
+
         await log_event(
             ActivityEventType.EVENT_CREATED,
             user_id=creator_id,
@@ -298,7 +315,9 @@ async def set_seeking_pair(event_id: UUID, user_id: UUID, seeking: bool) -> bool
         return True
 
 
-async def get_seeking_users(event_id: UUID, opposite_role: str, exclude_user_id: UUID | None = None):
+async def get_seeking_users(
+    event_id: UUID, opposite_role: str, exclude_user_id: UUID | None = None
+):
     """Get users seeking pair (opposite role). Exclude viewers already sent request to."""
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -314,10 +333,14 @@ async def get_seeking_users(event_id: UUID, opposite_role: str, exclude_user_id:
         )
         if exclude_user_id:
             # Exclude users we already sent request to
-            existing = select(EventPairRequest.to_user_id).where(
-                EventPairRequest.event_id == event_id,
-                EventPairRequest.from_user_id == exclude_user_id,
-            ).scalar_subquery()
+            existing = (
+                select(EventPairRequest.to_user_id)
+                .where(
+                    EventPairRequest.event_id == event_id,
+                    EventPairRequest.from_user_id == exclude_user_id,
+                )
+                .scalar_subquery()
+            )
             stmt = stmt.where(EventRegistration.user_id.not_in(existing))
         result = await session.execute(stmt)
         return result.all()
@@ -336,7 +359,9 @@ async def get_user_registration(event_id: UUID, user_id: UUID):
         return result.scalar_one_or_none()
 
 
-async def send_pair_request(event_id: UUID, from_user_id: UUID, to_user_id: UUID) -> tuple[bool, str]:
+async def send_pair_request(
+    event_id: UUID, from_user_id: UUID, to_user_id: UUID
+) -> tuple[bool, str]:
     """Send pair request. Returns (ok, msg)."""
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -514,7 +539,9 @@ async def get_profile_display(user_id: UUID) -> str:
         p = pilot.scalar_one_or_none()
         if p:
             return f"{p.name}, {p.age} лет, {p.bike_brand}"
-        pass_r = await session.execute(select(ProfilePassenger).where(ProfilePassenger.user_id == user_id))
+        pass_r = await session.execute(
+            select(ProfilePassenger).where(ProfilePassenger.user_id == user_id)
+        )
         pp = pass_r.scalar_one_or_none()
         if pp:
             return f"{pp.name}, {pp.age} лет"

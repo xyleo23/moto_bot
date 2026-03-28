@@ -1,9 +1,9 @@
 """Admin service."""
+
 import time
 from uuid import UUID
 from datetime import date, timedelta
 
-from loguru import logger
 from sqlalchemy import select, func, or_, and_, String
 
 from src.models.base import get_session_factory
@@ -22,13 +22,23 @@ async def get_stats() -> dict:
         users = await session.scalar(select(func.count()).select_from(User)) or 0
         sos = await session.scalar(select(func.count()).select_from(SosAlert)) or 0
         events = await session.scalar(select(func.count()).select_from(Event)) or 0
-        blocked = await session.scalar(select(func.count()).select_from(User).where(User.is_blocked.is_(True))) or 0
-        active_subs = await session.scalar(
-            select(func.count()).select_from(Subscription).where(
-                Subscription.is_active.is_(True),
-                Subscription.expires_at >= date.today(),
+        blocked = (
+            await session.scalar(
+                select(func.count()).select_from(User).where(User.is_blocked.is_(True))
             )
-        ) or 0
+            or 0
+        )
+        active_subs = (
+            await session.scalar(
+                select(func.count())
+                .select_from(Subscription)
+                .where(
+                    Subscription.is_active.is_(True),
+                    Subscription.expires_at >= date.today(),
+                )
+            )
+            or 0
+        )
         return {
             "users": users,
             "blocked": blocked,
@@ -58,7 +68,9 @@ async def get_users_list(
         if city_id:
             conditions.append(User.city_id == city_id)
         if role and role in ("pilot", "passenger"):
-            conditions.append(User.role == UserRole.PILOT if role == "pilot" else UserRole.PASSENGER)
+            conditions.append(
+                User.role == UserRole.PILOT if role == "pilot" else UserRole.PASSENGER
+            )
         if search and search.strip():
             s = f"%{search.strip()}%"
             search_val = search.strip()
@@ -92,6 +104,7 @@ async def block_user(user_id: UUID, reason: str | None = None) -> bool:
         await session.commit()
     from src.services.activity_log_service import log_event
     from src.models.activity_log import ActivityEventType
+
     await log_event(ActivityEventType.BLOCK, user_id=user_id, data={"reason": (reason or "")[:200]})
     return True
 
@@ -108,6 +121,7 @@ async def unblock_user(user_id: UUID) -> bool:
         await session.commit()
     from src.services.activity_log_service import log_event
     from src.models.activity_log import ActivityEventType
+
     await log_event(ActivityEventType.UNBLOCK, user_id=user_id)
     return True
 
@@ -277,7 +291,9 @@ async def get_city_admin_city_id(platform_user_id: int) -> UUID | None:
         return r.scalar_one_or_none()
 
 
-async def can_admin_events(platform_user_id: int, city_id: UUID | None, event_city_id: UUID) -> bool:
+async def can_admin_events(
+    platform_user_id: int, city_id: UUID | None, event_city_id: UUID
+) -> bool:
     if platform_user_id in get_settings().superadmin_ids:
         return True
     if not city_id or city_id != event_city_id:
@@ -403,7 +419,6 @@ async def deactivate_subscription(user_id: UUID) -> bool:
 
 async def get_admin_events(superadmin: bool, city_id: UUID | None, limit: int = 50) -> list[Event]:
     """All events for superadmin, city events for city admin."""
-    from datetime import datetime as dt_cls
 
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -471,16 +486,19 @@ async def set_event_hidden(event_id: UUID, hidden: bool) -> bool:
 
 
 async def get_broadcast_recipients(
-    city_id: UUID | None = None,
+    city_id: UUID | str | None = None,
     role: str | None = None,
     with_subscription: bool | None = None,
+    platform: Platform = Platform.TELEGRAM,
     limit: int = 10000,
 ) -> list[int]:
-    """Get platform_user_ids for broadcast (Telegram only)."""
+    """Get platform_user_ids for broadcast for one platform (Telegram or MAX)."""
+    if city_id is not None and not isinstance(city_id, UUID):
+        city_id = UUID(str(city_id))
     session_factory = get_session_factory()
     async with session_factory() as session:
         stmt = select(User.platform_user_id).where(
-            User.platform == Platform.TELEGRAM,
+            User.platform == platform,
             User.is_blocked.is_(False),
         )
         if city_id:
@@ -490,12 +508,9 @@ async def get_broadcast_recipients(
                 User.role == (UserRole.PILOT if role == "pilot" else UserRole.PASSENGER)
             )
         if with_subscription is not None:
-            sub_q = (
-                select(Subscription.user_id)
-                .where(
-                    Subscription.is_active.is_(True),
-                    Subscription.expires_at >= date.today(),
-                )
+            sub_q = select(Subscription.user_id).where(
+                Subscription.is_active.is_(True),
+                Subscription.expires_at >= date.today(),
             )
             if with_subscription:
                 stmt = stmt.where(User.id.in_(sub_q.scalar_subquery()))

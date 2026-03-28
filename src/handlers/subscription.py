@@ -1,9 +1,13 @@
 """Subscription and payment handlers."""
+
 from aiogram import Router, F
+from aiogram.enums import ParseMode
 from aiogram.types import CallbackQuery
 
 from src.services.payment import create_payment
 from src.config import get_settings
+from src.usecases.payment_metadata import subscription_metadata
+from src import texts
 from src.utils.tg_callback_message import edit_text_or_send_new
 
 router = Router()
@@ -40,7 +44,7 @@ async def cb_subscribe(callback: CallbackQuery, user=None, bot=None):
     payment = await create_payment(
         amount_kopecks=amount,
         description=f"Подписка {period}",
-        metadata={"user_id": str(user.id), "type": "subscription", "period": period},
+        metadata=subscription_metadata(user, period, platform="telegram"),
         return_url=get_settings().telegram_return_url or "https://t.me",
     )
     if not payment or not payment.get("confirmation_url"):
@@ -52,13 +56,17 @@ async def cb_subscribe(callback: CallbackQuery, user=None, bot=None):
         return
 
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
-        [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
-    ])
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
+            [InlineKeyboardButton(text="« Назад", callback_data="menu_profile")],
+        ]
+    )
     await edit_text_or_send_new(
         callback,
-        "Перейди по ссылке для оплаты. После оплаты нажми /start для обновления статуса.",
+        texts.SUBSCRIPTION_PAY_FOLLOWUP_TG,
         reply_markup=kb,
+        parse_mode=ParseMode.HTML,
     )
     await callback.answer()

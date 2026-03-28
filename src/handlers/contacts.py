@@ -1,6 +1,7 @@
 """Useful contacts block."""
+
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery
 
 from src.keyboards.menu import get_back_to_menu_kb
 from src.keyboards.contacts import (
@@ -27,7 +28,9 @@ async def cb_contacts_menu(callback: CallbackQuery, user=None):
     await callback.answer()
 
 
-@router.callback_query(F.data.regexp(r"^contacts_(motoshop|motoservice|motoschool|motoclubs|motoevac|other)$"))
+@router.callback_query(
+    F.data.regexp(r"^contacts_(motoshop|motoservice|motoschool|motoclubs|motoevac|other)$")
+)
 async def cb_contacts_category(callback: CallbackQuery, user=None):
     cat = callback.data.replace("contacts_", "")
     contacts, total, has_more = await get_contacts_by_category(

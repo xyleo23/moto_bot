@@ -1,7 +1,10 @@
 """Short callback data cache for Telegram (callback_data ≤ 64 bytes)."""
+
 import secrets
 from uuid import UUID
+
 _CACHE: dict[str, tuple[UUID, UUID]] = {}
+_CITY_ADMIN_RM: dict[str, tuple[UUID, UUID]] = {}
 _MAX_SIZE = 2000
 
 
@@ -11,7 +14,7 @@ def put_pair_callback(eid: UUID, user_id: UUID) -> str:
     _CACHE[code] = (eid, user_id)
     if len(_CACHE) > _MAX_SIZE:
         # Evict oldest (first) items
-        for k in list(_CACHE.keys())[:_MAX_SIZE // 2]:
+        for k in list(_CACHE.keys())[: _MAX_SIZE // 2]:
             _CACHE.pop(k, None)
     return code
 
@@ -19,3 +22,17 @@ def put_pair_callback(eid: UUID, user_id: UUID) -> str:
 def get_pair_callback(code: str) -> tuple[UUID, UUID] | None:
     """Look up (eid, user_id) by code. Returns None if not found."""
     return _CACHE.get(code)
+
+
+def put_city_admin_remove(city_id: UUID, admin_internal_user_id: UUID) -> str:
+    """Store (city_id, users.id of city admin) for callback_data cam_<code>."""
+    code = secrets.token_hex(4)
+    _CITY_ADMIN_RM[code] = (city_id, admin_internal_user_id)
+    if len(_CITY_ADMIN_RM) > _MAX_SIZE:
+        for k in list(_CITY_ADMIN_RM.keys())[: _MAX_SIZE // 2]:
+            _CITY_ADMIN_RM.pop(k, None)
+    return code
+
+
+def get_city_admin_remove(code: str) -> tuple[UUID, UUID] | None:
+    return _CITY_ADMIN_RM.get(code)

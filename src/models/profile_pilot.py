@@ -1,9 +1,10 @@
 """Pilot profile model."""
+
 import uuid
 import enum
 from datetime import datetime, date
 from sqlalchemy import String, Integer, Date, DateTime, ForeignKey, Text, Enum
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, generate_uuid
 

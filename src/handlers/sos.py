@@ -1,5 +1,5 @@
 """SOS block — emergency alerts with timer and all-clear."""
-import asyncio
+
 from html import escape
 
 from loguru import logger
@@ -37,13 +37,15 @@ class SosStates(StatesGroup):
 @router.callback_query(F.data == "menu_sos")
 async def cb_sos_menu(callback: CallbackQuery, state: FSMContext, user=None):
     try:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
-            [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
-            [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
-            [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
-            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-        ])
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="ДТП", callback_data="sos_accident")],
+                [InlineKeyboardButton(text="Сломался", callback_data="sos_broken")],
+                [InlineKeyboardButton(text="Обсох", callback_data="sos_ran_out")],
+                [InlineKeyboardButton(text="Другое", callback_data="sos_other")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+            ]
+        )
         await callback.message.edit_text(texts.SOS_CHOOSE_TYPE, reply_markup=kb)
         await state.set_state(SosStates.choose_type)
     except Exception:
@@ -96,9 +98,11 @@ async def sos_location(message: Message, state: FSMContext, user=None, bot=None)
         )
         await message.answer(
             "Можешь добавить описание ситуации.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="sos_skip_comment")],
-            ]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="sos_skip_comment")],
+                ]
+            ),
         )
     except Exception:
         logger.exception("sos_location: error")
@@ -113,7 +117,9 @@ async def sos_location(message: Message, state: FSMContext, user=None, bot=None)
 async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None, bot=None):
     try:
         logger.info("SOS sending...")
-        await _send_sos_alert(callback.message, state, user, None, bot, platform_user_id=callback.from_user.id)
+        await _send_sos_alert(
+            callback.message, state, user, None, bot, platform_user_id=callback.from_user.id
+        )
     except Exception as e:
         logger.exception("sos_skip_comment: error in _send_sos_alert: %s", e)
         await state.clear()
@@ -128,7 +134,9 @@ async def sos_skip_comment(callback: CallbackQuery, state: FSMContext, user=None
 async def sos_comment(message: Message, state: FSMContext, user=None, bot=None):
     try:
         logger.info("SOS sending...")
-        await _send_sos_alert(message, state, user, message.text.strip(), bot, platform_user_id=message.from_user.id)
+        await _send_sos_alert(
+            message, state, user, message.text.strip(), bot, platform_user_id=message.from_user.id
+        )
     except Exception as e:
         logger.exception("sos_comment: error in _send_sos_alert: %s", e)
         await state.clear()
@@ -163,13 +171,18 @@ async def _send_sos_alert(
     # Use explicit platform_user_id when called from callback (message.from_user = bot).
     if not user:
         from src.services.user import get_or_create_user
+
         uid = platform_user_id or (message.from_user.id if message.from_user else None)
         if uid:
             user = await get_or_create_user(
                 platform="telegram",
                 platform_user_id=uid,
-                username=getattr(message.from_user, "username", None) if message.from_user else None,
-                first_name=getattr(message.from_user, "first_name", None) if message.from_user else None,
+                username=getattr(message.from_user, "username", None)
+                if message.from_user
+                else None,
+                first_name=getattr(message.from_user, "first_name", None)
+                if message.from_user
+                else None,
             )
 
     # Validate FSM data — if state expired (Redis TTL), we may get empty dict
@@ -282,6 +295,7 @@ async def _send_sos_alert(
     # Cross-platform: also broadcast to MAX users in the same city
     from src.services.broadcast import get_max_adapter, broadcast_max_background
     from src.platforms.base import Button, ButtonType
+
     max_adapter = get_max_adapter()
     if max_adapter and max_user_ids:
         map_rows = [
@@ -302,11 +316,13 @@ async def _send_sos_alert(
 
     cooldown_mins = settings.sos_cooldown_minutes
     # Reply with confirmation + timer + all-clear button
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
-        [InlineKeyboardButton(text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear")],
-        [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
+            [InlineKeyboardButton(text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear")],
+            [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+        ]
+    )
     await message.answer(
         texts.SOS_SENT.format(cooldown=cooldown_mins),
         reply_markup=kb,
@@ -315,11 +331,13 @@ async def _send_sos_alert(
 
 def _sos_cooldown_kb(remaining_seconds: int) -> InlineKeyboardMarkup:
     """Keyboard shown when cooldown is active."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
-        [InlineKeyboardButton(text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear")],
-        [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
+            [InlineKeyboardButton(text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear")],
+            [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+        ]
+    )
 
 
 @router.callback_query(F.data == "sos_check_ready")
@@ -334,19 +352,31 @@ async def cb_sos_check_ready(callback: CallbackQuery, state: FSMContext, user=No
 
         remaining = await check_sos_cooldown(effective_user_id(user))
         if remaining <= 0:
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🚨 Отправить новый SOS", callback_data="menu_sos")],
-                [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-            ])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🚨 Отправить новый SOS", callback_data="menu_sos")],
+                    [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+                ]
+            )
             await callback.message.edit_text(texts.SOS_READY_NOW, reply_markup=kb)
         else:
             mins = remaining // 60
             secs = remaining % 60
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=texts.SOS_CHECK_READY, callback_data="sos_check_ready")],
-                [InlineKeyboardButton(text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear")],
-                [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
-            ])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=texts.SOS_CHECK_READY, callback_data="sos_check_ready"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=texts.SOS_ALL_CLEAR_BTN, callback_data="sos_all_clear"
+                        )
+                    ],
+                    [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+                ]
+            )
             try:
                 await callback.message.edit_text(
                     texts.SOS_READY_WAIT.format(mins=mins, secs=secs),
@@ -368,14 +398,12 @@ async def cb_sos_all_clear(callback: CallbackQuery, state: FSMContext, user=None
     """
     from src.services.sos_service import get_city_telegram_user_ids
     from src.services.broadcast import broadcast_background
-    from src.services.user import get_user_profile_display
 
     try:
         if not user or not user.city_id:
             await callback.answer(texts.SOS_NO_CITY, show_alert=True)
             return
 
-        profile = await get_user_profile_display(user)
         # Extract user's display name for the broadcast message
         name = (
             getattr(user, "platform_first_name", None)
@@ -392,6 +420,27 @@ async def cb_sos_all_clear(callback: CallbackQuery, state: FSMContext, user=None
                 user_ids,
                 texts.SOS_ALL_CLEAR_BROADCAST.format(name=name),
                 exclude_id=callback.from_user.id,
+            )
+
+        # Кросс-платформа: отбой в MAX (раньше уходил только в Telegram)
+        from src.services.sos_service import get_city_max_user_ids
+        from src.services.broadcast import get_max_adapter, broadcast_max_background
+        from src.services.user import get_all_platform_identities
+        from src.models.user import Platform as UserPlatform
+
+        max_adapter = get_max_adapter()
+        max_user_ids = await get_city_max_user_ids(user.city_id)
+        max_exclude = None
+        for ident in await get_all_platform_identities(effective_user_id(user)):
+            if ident.platform == UserPlatform.MAX:
+                max_exclude = int(ident.platform_user_id)
+                break
+        if max_adapter and max_user_ids:
+            broadcast_max_background(
+                max_adapter,
+                max_user_ids,
+                texts.SOS_ALL_CLEAR_BROADCAST.format(name=name),
+                exclude_id=max_exclude,
             )
 
         await callback.message.edit_text(

@@ -1,4 +1,5 @@
 """Database models."""
+
 from src.models.base import Base, get_async_session, init_db
 from src.models.city import City, CityAdmin
 from src.models.user import User

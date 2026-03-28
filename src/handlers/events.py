@@ -1,4 +1,5 @@
 """Events block."""
+
 import uuid
 from datetime import datetime
 
@@ -17,11 +18,20 @@ from src.keyboards.events import (
     get_event_list_filter_kb,
     get_event_card_kb,
     get_seeking_confirm_kb,
-    get_seeking_list_kb,
-    get_pair_request_kb,
     get_my_events_kb,
     get_my_event_detail_kb,
 )
+from src.usecases.event_list_ui import (
+    format_event_list_header_plain,
+    parse_event_list_callback,
+    build_telegram_event_list_markup,
+)
+from src.usecases.event_pair import (
+    notify_pair_request_cross_platform,
+    notify_pair_accepted_cross_platform,
+    build_telegram_seeking_list_markup,
+)
+from src.services.broadcast import get_max_adapter
 from src.services.event_service import (
     get_events_list,
     get_event_by_id,
@@ -43,6 +53,28 @@ from src.services.event_service import (
 )
 
 
+async def _edit_or_answer_status(msg: Message, text: str, reply_markup=None) -> None:
+    """Pair-request / event UI may be a photo message (caption only) — avoid edit_text on those."""
+    try:
+        if msg.photo:
+            await msg.edit_caption(caption=text, reply_markup=reply_markup)
+        else:
+            await msg.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        desc = (e.message or "").lower()
+        if "message is not modified" in desc:
+            return
+        try:
+            await msg.answer(text, reply_markup=reply_markup)
+        except Exception:
+            logger.warning("events status edit+answer failed: %s", e)
+    except Exception as e:
+        try:
+            await msg.answer(text, reply_markup=reply_markup)
+        except Exception:
+            logger.warning("events status fallback failed: %s", e)
+
+
 router = Router()
 
 
@@ -61,7 +93,8 @@ class EventCreateStates(StatesGroup):
 
 class EventEditStates(StatesGroup):
     """FSM for editing an existing event's fields."""
-    field = State()      # Choosing which field to edit
+
+    field = State()  # Choosing which field to edit
     title = State()
     start_date = State()
     start_time = State()
@@ -86,8 +119,15 @@ def _format_location(value: str | None) -> str:
 
 
 def _format_event_card(e) -> str:
+    badges = []
+    if getattr(e, "is_official", False):
+        badges.append("официальное")
+    if getattr(e, "is_recommended", False):
+        badges.append("рекомендуемое")
+    badge_line = ("🏷 " + ", ".join(badges) + "\n") if badges else ""
     return (
         f"<b>{e.title or TYPE_LABELS.get(e.type.value, e.type.value)}</b>\n"
+        f"{badge_line}"
         f"Тип: {TYPE_LABELS.get(e.type.value, e.type.value)}\n"
         f"📅 {e.start_at.strftime('%d.%m.%Y %H:%M')}\n"
         f"📍 Старт: {_format_location(e.point_start)}\n"
@@ -124,10 +164,12 @@ async def cb_events_menu(callback: CallbackQuery, user=None):
         from src.services.subscription_messages import subscription_required_message
 
         text = await subscription_required_message("events_menu")
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
-            [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
-        ])
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe")],
+                [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
+            ]
+        )
         try:
             await callback.message.edit_text(text, reply_markup=kb)
         except TelegramBadRequest as e:
@@ -148,20 +190,25 @@ async def cb_events_menu(callback: CallbackQuery, user=None):
 def _evcreate_type_kb() -> "InlineKeyboardMarkup":
     """Keyboard for selecting event type."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Масштабное", callback_data="evcreate_type_large"),
-            InlineKeyboardButton(text="Мотопробег", callback_data="evcreate_type_motorcade"),
-            InlineKeyboardButton(text="Прохват", callback_data="evcreate_type_run"),
-        ],
-        [InlineKeyboardButton(text="« Отмена", callback_data="menu_events")],
-    ])
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Масштабное", callback_data="evcreate_type_large"),
+                InlineKeyboardButton(text="Мотопробег", callback_data="evcreate_type_motorcade"),
+                InlineKeyboardButton(text="Прохват", callback_data="evcreate_type_run"),
+            ],
+            [InlineKeyboardButton(text="« Отмена", callback_data="menu_events")],
+        ]
+    )
 
 
 @router.callback_query(F.data == "event_create")
 async def cb_event_create_start(callback: CallbackQuery, state: FSMContext, user=None):
     if not user or not user.city_id:
-        await callback.message.edit_text("Сначала выбери город в /start.", reply_markup=get_back_to_menu_kb())
+        await callback.message.edit_text(
+            "Сначала выбери город в /start.", reply_markup=get_back_to_menu_kb()
+        )
         await callback.answer()
         return
 
@@ -184,7 +231,9 @@ async def cb_evcreate_check_payment(callback: CallbackQuery, state: FSMContext, 
     status = await check_payment_status(payment_id)
     if status == "succeeded":
         await state.set_state(EventCreateStates.title)
-        await callback.message.edit_text("✅ Оплата прошла! Введи название мероприятия (или «Пропустить»):")
+        await callback.message.edit_text(
+            "✅ Оплата прошла! Введи название мероприятия (или «Пропустить»):"
+        )
     elif status == "canceled":
         await state.clear()
         await callback.message.edit_text("❌ Платёж отменён.", reply_markup=get_back_to_menu_kb())
@@ -218,6 +267,7 @@ async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext, user=None
 
     if needs_payment and price and price > 0:
         from src.config import get_settings
+
         s = get_settings()
         payment = await create_payment(
             amount_kopecks=price,
@@ -228,11 +278,17 @@ async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext, user=None
         if payment and payment.get("confirmation_url"):
             await state.set_state(EventCreateStates.awaiting_payment)
             await state.update_data(event_payment_id=payment["id"])
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
-                [InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data="evcreate_checkpay")],
-                [InlineKeyboardButton(text="« Отмена", callback_data="menu_events")],
-            ])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="💳 Оплатить", url=payment["confirmation_url"])],
+                    [
+                        InlineKeyboardButton(
+                            text="✅ Я оплатил — проверить", callback_data="evcreate_checkpay"
+                        )
+                    ],
+                    [InlineKeyboardButton(text="« Отмена", callback_data="menu_events")],
+                ]
+            )
             price_rub = price // 100
             await callback.message.edit_text(
                 f"💳 Создание мероприятия платное: <b>{price_rub} ₽</b>\n\n"
@@ -271,6 +327,7 @@ async def evcreate_title(message: Message, state: FSMContext):
 
 def _parse_datetime(date_str: str, time_str: str) -> datetime | None:
     from datetime import datetime as dt_cls
+
     try:
         d = dt_cls.strptime(date_str.strip(), "%d.%m.%Y").date()
         t = dt_cls.strptime(time_str.strip(), "%H:%M").time()
@@ -283,7 +340,8 @@ def _parse_datetime(date_str: str, time_str: str) -> datetime | None:
 async def evcreate_date(message: Message, state: FSMContext):
     try:
         from datetime import datetime as dt_cls
-        d = dt_cls.strptime(message.text.strip(), "%d.%m.%Y").date()
+
+        dt_cls.strptime(message.text.strip(), "%d.%m.%Y").date()
         await state.update_data(start_date=message.text.strip())
         await state.set_state(EventCreateStates.start_time)
         await message.answer("Время начала (ЧЧ:ММ):")
@@ -295,10 +353,12 @@ async def evcreate_date(message: Message, state: FSMContext):
 async def evcreate_time(message: Message, state: FSMContext):
     try:
         from datetime import datetime as dt_cls
+
         dt_cls.strptime(message.text.strip(), "%H:%M")
         await state.update_data(start_time=message.text.strip())
         await state.set_state(EventCreateStates.point_start)
         from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
         await message.answer(
             "Точка старта — отправь геолокацию кнопкой или введи адрес текстом:",
             reply_markup=ReplyKeyboardMarkup(
@@ -313,12 +373,20 @@ async def evcreate_time(message: Message, state: FSMContext):
 
 @router.message(EventCreateStates.point_start, F.text)
 async def evcreate_point_start(message: Message, state: FSMContext):
-    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import (
+        ReplyKeyboardMarkup,
+        KeyboardButton,
+        InlineKeyboardMarkup,
+        InlineKeyboardButton,
+    )
+
     await state.update_data(point_start=message.text.strip()[:500])
     await state.set_state(EventCreateStates.point_end)
-    kb_inline = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
-    ])
+    kb_inline = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
+        ]
+    )
     await message.answer(
         "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или нажми «Пропустить»:",
         reply_markup=ReplyKeyboardMarkup(
@@ -335,15 +403,23 @@ async def evcreate_point_start(message: Message, state: FSMContext):
 
 @router.message(EventCreateStates.point_start, F.location)
 async def evcreate_point_start_location(message: Message, state: FSMContext):
-    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import (
+        ReplyKeyboardMarkup,
+        KeyboardButton,
+        InlineKeyboardMarkup,
+        InlineKeyboardButton,
+    )
+
     lat = message.location.latitude
     lon = message.location.longitude
     point_str = f"{lat},{lon}"
     await state.update_data(point_start=point_str)
     await state.set_state(EventCreateStates.point_end)
-    kb_inline = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
-    ])
+    kb_inline = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
+        ]
+    )
     await message.answer(
         "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или нажми «Пропустить»:",
         reply_markup=ReplyKeyboardMarkup(
@@ -364,19 +440,23 @@ async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext)
 
     await state.update_data(point_end=None)
     await state.set_state(EventCreateStates.ride_type)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
-            InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
-        ],
-        [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
+                InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
+            ],
+            [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
+        ]
+    )
     await callback.message.edit_text(
         "Точка финиша — пропущено.\n\nФормат движения:",
         reply_markup=kb,
     )
     try:
-        await callback.message.answer("Выберите формат движения:", reply_markup=ReplyKeyboardRemove())
+        await callback.message.answer(
+            "Выберите формат движения:", reply_markup=ReplyKeyboardRemove()
+        )
     except Exception as e:
         logger.warning("evcreate_point_end_skip: answer with ReplyKeyboardRemove failed: %s", e)
     await callback.answer()
@@ -385,18 +465,21 @@ async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext)
 @router.message(EventCreateStates.point_end, F.text)
 async def evcreate_point_end(message: Message, state: FSMContext):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+
     text = message.text.strip()
     if text.lower() in ("пропустить", "skip", "-"):
         text = None
     await state.update_data(point_end=text[:500] if text else None)
     await state.set_state(EventCreateStates.ride_type)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
-            InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
-        ],
-        [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
+                InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
+            ],
+            [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
+        ]
+    )
     await message.answer("Формат движения:", reply_markup=ReplyKeyboardRemove())
     await message.answer("Выберите формат движения:", reply_markup=kb)
 
@@ -404,17 +487,20 @@ async def evcreate_point_end(message: Message, state: FSMContext):
 @router.message(EventCreateStates.point_end, F.location)
 async def evcreate_point_end_location(message: Message, state: FSMContext):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+
     lat = message.location.latitude
     lon = message.location.longitude
     await state.update_data(point_end=f"{lat},{lon}")
     await state.set_state(EventCreateStates.ride_type)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
-            InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
-        ],
-        [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
+                InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
+            ],
+            [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
+        ]
+    )
     await message.answer("Формат движения:", reply_markup=ReplyKeyboardRemove())
     await message.answer("Выберите формат движения:", reply_markup=kb)
 
@@ -429,14 +515,16 @@ async def cb_evcreate_ride(callback: CallbackQuery, state: FSMContext):
         rt = "column" if "column" in callback.data else "free"
         await state.update_data(ride_type=rt)
     await state.set_state(EventCreateStates.avg_speed)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="60 км/ч", callback_data="evcreate_speed_60"),
-            InlineKeyboardButton(text="80 км/ч", callback_data="evcreate_speed_80"),
-            InlineKeyboardButton(text="100 км/ч", callback_data="evcreate_speed_100"),
-        ],
-        [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_speed_skip")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="60 км/ч", callback_data="evcreate_speed_60"),
+                InlineKeyboardButton(text="80 км/ч", callback_data="evcreate_speed_80"),
+                InlineKeyboardButton(text="100 км/ч", callback_data="evcreate_speed_100"),
+            ],
+            [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_speed_skip")],
+        ]
+    )
     await callback.message.edit_text("Средняя скорость:", reply_markup=kb)
     await callback.answer()
 
@@ -451,9 +539,11 @@ async def cb_evcreate_speed(callback: CallbackQuery, state: FSMContext):
     else:
         await state.update_data(avg_speed=int(val))
     await state.set_state(EventCreateStates.description)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_desc_skip")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_desc_skip")],
+        ]
+    )
     await callback.message.edit_text(
         "Описание (или нажми «Пропустить»):",
         reply_markup=kb,
@@ -480,9 +570,11 @@ async def evcreate_avg_speed(message: Message, state: FSMContext):
             await message.answer("Введи число.")
             return
     await state.set_state(EventCreateStates.description)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_desc_skip")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_desc_skip")],
+        ]
+    )
     await message.answer(
         "Описание (или нажми «Пропустить»):",
         reply_markup=kb,
@@ -500,7 +592,9 @@ async def cb_evcreate_desc_skip(callback: CallbackQuery, state: FSMContext, user
 
     start_at = _parse_datetime(data["start_date"], data["start_time"])
     if not start_at:
-        await callback.message.answer("Ошибка даты. Создание отменено.", reply_markup=get_back_to_menu_kb())
+        await callback.message.answer(
+            "Ошибка даты. Создание отменено.", reply_markup=get_back_to_menu_kb()
+        )
         await callback.answer()
         return
 
@@ -581,10 +675,15 @@ async def cb_event_list(callback: CallbackQuery, user=None):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("event_list_"))
+@router.callback_query(
+    (F.data.startswith("event_list_") & (F.data != "event_list")) | F.data.startswith("evtlp_"),
+)
 async def cb_event_list_filtered(callback: CallbackQuery, user=None):
-    parts = callback.data.replace("event_list_", "")
-    ev_type = parts if parts in ("large", "motorcade", "run") else None
+    parsed = parse_event_list_callback(callback.data)
+    if not parsed:
+        await callback.answer()
+        return
+    ev_type, offset = parsed
 
     events = await get_events_list(user.city_id if user else None, ev_type)
     if not events:
@@ -595,27 +694,19 @@ async def cb_event_list_filtered(callback: CallbackQuery, user=None):
             )
         except TelegramBadRequest as e:
             logger.debug("cb_event_list_filtered: edit_text failed ({}), falling back to answer", e)
-            await callback.message.answer("Мероприятий пока нет.", reply_markup=get_back_to_menu_kb())
-    else:
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        rows = []
-        for e in events:
-            rows.append([InlineKeyboardButton(
-                text=f"{e['title']} — {e['date']} (П:{e['pilots']} Д:{e['passengers']})",
-                callback_data=f"event_detail_{e['id']}",
-            )])
-        rows.append([InlineKeyboardButton(text="« Назад", callback_data="menu_events")])
-        try:
-            await callback.message.edit_text(
-                "Мероприятия:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            await callback.message.answer(
+                "Мероприятий пока нет.", reply_markup=get_back_to_menu_kb()
             )
+    else:
+        if offset >= len(events):
+            offset = 0
+        header = format_event_list_header_plain(ev_type, offset)
+        markup = build_telegram_event_list_markup(events, ev_type, offset)
+        try:
+            await callback.message.edit_text(header, reply_markup=markup)
         except TelegramBadRequest as e:
             logger.debug("cb_event_list_filtered: edit_text failed ({}), falling back to answer", e)
-            await callback.message.answer(
-                "Мероприятия:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-            )
+            await callback.message.answer(header, reply_markup=markup)
     await callback.answer()
 
 
@@ -632,10 +723,14 @@ async def cb_event_detail(callback: CallbackQuery, user=None):
     ev = await get_event_by_id(ev_uuid)
     if not ev:
         try:
-            await callback.message.edit_text("Мероприятие не найдено.", reply_markup=get_back_to_menu_kb())
+            await callback.message.edit_text(
+                "Мероприятие не найдено.", reply_markup=get_back_to_menu_kb()
+            )
         except TelegramBadRequest as e:
             logger.debug("cb_event_detail: edit_text failed ({}), falling back to answer", e)
-            await callback.message.answer("Мероприятие не найдено.", reply_markup=get_back_to_menu_kb())
+            await callback.message.answer(
+                "Мероприятие не найдено.", reply_markup=get_back_to_menu_kb()
+            )
         await callback.answer()
         return
 
@@ -672,9 +767,11 @@ async def cb_event_share(callback: CallbackQuery, user=None):
     # Send as a separate message without extra buttons so user can forward it directly
     await callback.message.answer(
         f"👇 Перешли это сообщение в нужный чат:\n\n{share_text}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="« К мероприятию", callback_data=f"event_detail_{eid}")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« К мероприятию", callback_data=f"event_detail_{eid}")],
+            ]
+        ),
     )
     await callback.answer()
 
@@ -707,23 +804,30 @@ async def cb_event_report(callback: CallbackQuery, user=None):
         await callback.answer("Нельзя пожаловаться на своё мероприятие.", show_alert=True)
         return
 
-    reporter = f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
+    reporter = (
+        f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
+    )
     admin_text = await format_event_report_admin_html(ev, reporter)
 
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=texts.EVENT_REPORT_BTN_ACCEPT,
-            callback_data=f"admin_evreport_accept_{eid}",
-        )],
-        [InlineKeyboardButton(
-            text=texts.EVENT_REPORT_BTN_REJECT,
-            callback_data=f"admin_evreport_reject_{eid}",
-        )],
-    ])
+    admin_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.EVENT_REPORT_BTN_ACCEPT,
+                    callback_data=f"admin_evreport_accept_{eid}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.EVENT_REPORT_BTN_REJECT,
+                    callback_data=f"admin_evreport_reject_{eid}",
+                )
+            ],
+        ]
+    )
 
     settings = get_settings()
     bot = callback.bot
-    notified = False
 
     if ev.city_id:
         admins = await get_city_admins(ev.city_id)
@@ -732,14 +836,12 @@ async def cb_event_report(callback: CallbackQuery, user=None):
                 await bot.send_message(
                     admin_user.platform_user_id, admin_text, reply_markup=admin_kb
                 )
-                notified = True
             except Exception as e:
                 logger.warning("Cannot notify city admin %s: %s", admin_user.platform_user_id, e)
 
     for admin_id in settings.superadmin_ids:
         try:
             await bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
-            notified = True
         except Exception as e:
             logger.warning("Cannot notify superadmin %s: %s", admin_id, e)
 
@@ -757,10 +859,16 @@ async def cb_event_register(callback: CallbackQuery, user=None):
 
         await callback.message.edit_text(
             await subscription_required_message("events_register"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="Оформить подписку", callback_data="profile_subscribe"),
-                InlineKeyboardButton(text="◀️ Назад", callback_data="menu_events"),
-            ]]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Оформить подписку", callback_data="profile_subscribe"
+                        ),
+                        InlineKeyboardButton(text="◀️ Назад", callback_data="menu_events"),
+                    ]
+                ]
+            ),
         )
         await callback.answer()
         return
@@ -770,10 +878,12 @@ async def cb_event_register(callback: CallbackQuery, user=None):
         await callback.answer()
         return
     eid, role = uuid.UUID(parts[0]), parts[1]
+    from src import texts as _texts
+
     ok, err = await register_for_event(eid, effective_user_id(user), role)
     if ok:
         await callback.message.edit_text(
-            "Записал! Хочешь искать пару (двойку/пилота)?",
+            _texts.EVENT_REGISTER_SEEK_PROMPT,
             reply_markup=get_seeking_confirm_kb(str(eid)),
         )
     else:
@@ -785,9 +895,11 @@ async def cb_event_register(callback: CallbackQuery, user=None):
 # ——— Seeking ———
 @router.callback_query(F.data.startswith("event_seeking_"))
 async def cb_event_seeking(callback: CallbackQuery, user=None):
+    from src import texts as _texts
+
     eid = callback.data.replace("event_seeking_", "")
     await callback.message.edit_text(
-        "Кого ищешь?",
+        _texts.EVENT_PAIR_SEEK_INTRO,
         reply_markup=get_seeking_confirm_kb(eid),
     )
     await callback.answer()
@@ -809,22 +921,21 @@ async def cb_event_seek_yes(callback: CallbackQuery, user=None):
     if not seekers:
         await callback.message.edit_text(
             "Пока никого нет. Заявки появятся, когда кто-то запишется и тоже включит поиск.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="« К мероприятию", callback_data=f"event_detail_{eid}")],
-            ]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="« К мероприятию", callback_data=f"event_detail_{eid}"
+                        )
+                    ],
+                ]
+            ),
         )
     else:
-        from src.utils.callback_short import put_pair_callback
-
-        rows = []
-        for reg, u in seekers:
-            name = await get_profile_display(u.id)
-            code = put_pair_callback(eid, u.id)
-            rows.append([InlineKeyboardButton(text=name[:40], callback_data=f"epr_{code}")])
-        rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"event_detail_{eid}")])
+        markup = await build_telegram_seeking_list_markup(str(eid), seekers)
         await callback.message.edit_text(
             "Выбери, кому отправить заявку:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            reply_markup=markup,
         )
     await callback.answer()
 
@@ -854,33 +965,23 @@ async def cb_event_pair_request(callback: CallbackQuery, user=None, bot=None):
     if not ok:
         await callback.answer(msg, show_alert=True)
         return
-    to_platform_id = None
-    from sqlalchemy import select
-    from src.models.user import User
-    from src.models.base import get_session_factory
-    async with get_session_factory() as session:
-        r = await session.execute(select(User).where(User.id == to_user_id))
-        u = r.scalar_one_or_none()
-        if u:
-            to_platform_id = u.platform_user_id
-    if bot and to_platform_id:
-        from_text = await get_profile_display(effective_user_id(user))
-        ev = await get_event_by_id(eid)
-        try:
-            await bot.send_message(
-                to_platform_id,
-                f"💌 Заявка на пару!\n\n{from_text} хочет поехать с тобой на мероприятие «{ev.title or 'Мероприятие'}».",
-                reply_markup=get_pair_request_kb(str(eid), str(effective_user_id(user))),
-            )
-        except Exception as e:
-            logger.warning(f"Cannot send pair request notification to {to_platform_id}: {e}")
+    from_text = await get_profile_display(effective_user_id(user))
+    ev = await get_event_by_id(eid)
+    if bot:
+        await notify_pair_request_cross_platform(
+            bot=bot,
+            max_adapter=get_max_adapter(),
+            event_id=eid,
+            from_user_canonical_id=effective_user_id(user),
+            to_user_internal_id=to_user_id,
+            from_profile_text=from_text,
+            event_title=ev.title if ev else None,
+        )
     await callback.answer("Заявка отправлена!")
 
 
 @router.callback_query(F.data.startswith("epa"))
 async def cb_event_pair_accept(callback: CallbackQuery, user=None, bot=None):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
     code = callback.data[3:]  # after "epa"
     pair = get_pair_callback(code)
     if not pair:
@@ -891,29 +992,18 @@ async def cb_event_pair_accept(callback: CallbackQuery, user=None, bot=None):
     if not ok:
         await callback.answer()
         return
-    ev = await get_event_by_id(eid)
-    from_platform_id = None
-    from sqlalchemy import select
-    from src.models.user import User
-    from src.models.base import get_session_factory
-    async with get_session_factory() as session:
-        r = await session.execute(select(User).where(User.id == from_user_id))
-        u = r.scalar_one_or_none()
-        if u:
-            from_platform_id = u.platform_user_id
-    if bot and from_platform_id:
+    await get_event_by_id(eid)
+    if bot:
         to_text = await get_profile_display(effective_user_id(user))
-        try:
-            await bot.send_message(
-                from_platform_id,
-                f"✅ Заявка принята! {to_text} едет с тобой.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="Написать", url=f"tg://user?id={callback.from_user.id}")],
-                ]),
-            )
-        except Exception as e:
-            logger.warning(f"Cannot notify user {from_platform_id} about pair accept: {e}")
-    await callback.message.edit_text("✅ Заявка принята!")
+        await notify_pair_accepted_cross_platform(
+            bot=bot,
+            max_adapter=get_max_adapter(),
+            initiator_internal_user_id=from_user_id,
+            accepter_telegram_username=callback.from_user.username,
+            accepter_telegram_id=callback.from_user.id,
+            to_profile_text=to_text,
+        )
+    await _edit_or_answer_status(callback.message, "✅ Заявка принята!")
     await callback.answer()
 
 
@@ -926,7 +1016,7 @@ async def cb_event_pair_reject(callback: CallbackQuery, user=None):
         return
     eid, from_user_id = pair
     await reject_pair_request(eid, from_user_id, effective_user_id(user))
-    await callback.message.edit_text("Заявка отклонена.")
+    await _edit_or_answer_status(callback.message, "Заявка отклонена.")
     await callback.answer()
 
 
@@ -985,26 +1075,31 @@ async def cb_event_cancel(callback: CallbackQuery, user=None, bot=None):
         )
     await callback.message.edit_text(
         "Мероприятие отменено. Участники уведомлены.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="« Мои мероприятия", callback_data="event_my")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« Мои мероприятия", callback_data="event_my")],
+            ]
+        ),
     )
     await callback.answer()
 
 
 # ——— Edit event ———
 
+
 def _event_edit_field_kb(event_id: str) -> "InlineKeyboardMarkup":
     """Keyboard to choose which event field to edit."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Название", callback_data=f"evedit_f_title_{event_id}")],
-        [InlineKeyboardButton(text="📅 Дата", callback_data=f"evedit_f_date_{event_id}")],
-        [InlineKeyboardButton(text="⏰ Время", callback_data=f"evedit_f_time_{event_id}")],
-        [InlineKeyboardButton(text="📍 Старт", callback_data=f"evedit_f_start_{event_id}")],
-        [InlineKeyboardButton(text="🏁 Финиш", callback_data=f"evedit_f_end_{event_id}")],
-        [InlineKeyboardButton(text="📝 Описание", callback_data=f"evedit_f_desc_{event_id}")],
-        [InlineKeyboardButton(text="« Назад", callback_data=f"event_my_detail_{event_id}")],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Название", callback_data=f"evedit_f_title_{event_id}")],
+            [InlineKeyboardButton(text="📅 Дата", callback_data=f"evedit_f_date_{event_id}")],
+            [InlineKeyboardButton(text="⏰ Время", callback_data=f"evedit_f_time_{event_id}")],
+            [InlineKeyboardButton(text="📍 Старт", callback_data=f"evedit_f_start_{event_id}")],
+            [InlineKeyboardButton(text="🏁 Финиш", callback_data=f"evedit_f_end_{event_id}")],
+            [InlineKeyboardButton(text="📝 Описание", callback_data=f"evedit_f_desc_{event_id}")],
+            [InlineKeyboardButton(text="« Назад", callback_data=f"event_my_detail_{event_id}")],
+        ]
+    )
 
 
 @router.callback_query(F.data.startswith("event_edit_"))
@@ -1065,7 +1160,6 @@ async def cb_evedit_choose_field(callback: CallbackQuery, state: FSMContext, use
 
 async def _apply_event_edit(message: Message, state: FSMContext, user, **kwargs) -> None:
     """Apply a single field edit and show updated event card."""
-    from src.services.event_service import update_event
 
     data = await state.get_data()
     eid_str = data.get("edit_event_id", "")
@@ -1104,6 +1198,7 @@ async def evedit_date(message: Message, state: FSMContext, user=None):
     ev = await get_event_by_id(uuid.UUID(data.get("edit_event_id", "")))
     try:
         from datetime import datetime as dt_cls
+
         d = dt_cls.strptime(message.text.strip(), "%d.%m.%Y").date()
         # Keep existing time
         existing_time = ev.start_at.time() if ev else dt_cls.now().time()
@@ -1119,6 +1214,7 @@ async def evedit_time(message: Message, state: FSMContext, user=None):
     ev = await get_event_by_id(uuid.UUID(data.get("edit_event_id", "")))
     try:
         from datetime import datetime as dt_cls
+
         t = dt_cls.strptime(message.text.strip(), "%H:%M").time()
         existing_date = ev.start_at.date() if ev else dt_cls.now().date()
         new_dt = dt_cls.combine(existing_date, t)

@@ -1,4 +1,5 @@
 """Единые тексты «нужна подписка» с преимуществами из БД (лимит мотопробегов)."""
+
 from __future__ import annotations
 
 from typing import Literal
@@ -41,8 +42,7 @@ async def max_profile_subscription_block() -> str:
     lim = await motorcade_limit_for_subscription_texts()
     return (
         "Для доступа к функциям бота нужна подписка.\n\n"
-        "Подписка даёт:\n"
-        + texts.sub_benefits_full_text(lim)
+        "Подписка даёт:\n" + texts.sub_benefits_full_text(lim)
     )
 
 

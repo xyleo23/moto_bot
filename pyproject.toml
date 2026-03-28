@@ -21,6 +21,8 @@ dependencies = [
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.23.0",
+    "ruff>=0.9.0",
+    "pre-commit>=4.0.0",
 ]
 
 [build-system]
@@ -34,3 +36,16 @@ packages = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Базовый набор: без I/UP/B, чтобы не ломать весь репозиторий одним прогоном.
+select = ["E", "F"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
