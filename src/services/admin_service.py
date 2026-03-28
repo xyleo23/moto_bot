@@ -262,6 +262,73 @@ async def is_superadmin(platform_user_id: int) -> bool:
     return platform_user_id in get_settings().superadmin_ids
 
 
+async def is_effective_superadmin_user(user: User) -> bool:
+    """Суперадмин по любой связанной записи (TG id в SUPERADMIN_IDS + сессия в MAX)."""
+    from src.models.user import effective_user_id
+    from src.services.user import get_all_platform_identities
+
+    s = get_settings()
+    if not s.superadmin_ids:
+        return False
+    canon = effective_user_id(user)
+    identities = await get_all_platform_identities(canon)
+    return any(i.platform_user_id in s.superadmin_ids for i in identities)
+
+
+async def is_effective_city_admin_for_city(user: User) -> bool:
+    """Админ города: CityAdmin привязан к любой из связанных записей User (TG/MAX)."""
+    from src.models.user import effective_user_id
+    from src.services.user import get_all_platform_identities
+
+    if not user.city_id:
+        return False
+    canon = effective_user_id(user)
+    identities = await get_all_platform_identities(canon)
+    identity_ids = [u.id for u in identities]
+    if not identity_ids:
+        return False
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(CityAdmin.id).where(
+                CityAdmin.user_id.in_(identity_ids),
+                CityAdmin.city_id == user.city_id,
+            ).limit(1)
+        )
+        return r.scalar_one_or_none() is not None
+
+
+async def has_any_city_admin_role_for_linked(user: User) -> bool:
+    """Есть ли у любой связанной записи роль админа хотя бы одного города."""
+    from src.models.user import effective_user_id
+    from src.services.user import get_all_platform_identities
+
+    canon = effective_user_id(user)
+    identities = await get_all_platform_identities(canon)
+    identity_ids = [u.id for u in identities]
+    if not identity_ids:
+        return False
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(CityAdmin.id).where(CityAdmin.user_id.in_(identity_ids)).limit(1)
+        )
+        return r.scalar_one_or_none() is not None
+
+
+async def max_user_should_see_admin_menu(user: User | None) -> bool:
+    """MAX главное меню: кнопка админки, если права есть через TG-ID или связку аккаунтов."""
+    if user is None or getattr(user, "platform_user_id", None) is None:
+        return False
+    if await is_effective_superadmin_user(user):
+        return True
+    if user.city_id and await is_effective_city_admin_for_city(user):
+        return True
+    if await has_any_city_admin_role_for_linked(user):
+        return True
+    return False
+
+
 async def is_city_admin(platform_user_id: int, city_id: UUID | None) -> bool:
     if not city_id:
         return False

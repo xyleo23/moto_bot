@@ -122,19 +122,9 @@ MAX_MENU_MESSAGE_TO_CMD: dict[str, str] = {
 
 async def _main_menu_rows_for(user) -> list:
     """Главное меню MAX с кнопкой админки для суперадмина и админа города."""
-    from src.config import get_settings
-    from src.services.admin_service import is_city_admin, get_city_admin_city_id
+    from src.services.admin_service import max_user_should_see_admin_menu
 
-    show_admin = False
-    if user is not None and getattr(user, "platform_user_id", None) is not None:
-        pid = int(user.platform_user_id)
-        st = get_settings()
-        if pid in st.superadmin_ids:
-            show_admin = True
-        elif getattr(user, "city_id", None) and await is_city_admin(pid, user.city_id):
-            show_admin = True
-        elif await get_city_admin_city_id(pid) is not None:
-            show_admin = True
+    show_admin = await max_user_should_see_admin_menu(user)
     return get_main_menu_rows(show_admin=show_admin)
 
 
@@ -3069,22 +3059,17 @@ async def handle_motopair_report_max(adapter: MaxAdapter, chat_id: str, user, da
 async def handle_max_admin_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
     """Суперадмин / админ города: ссылка на полную админку в Telegram."""
     from src.config import get_settings
-    from src.services.admin_service import is_city_admin, get_city_admin_city_id
+    from src.services.admin_service import max_user_should_see_admin_menu
 
     if not user:
         await adapter.send_message(chat_id, "Ошибка.", get_back_to_menu_rows())
         return
-    pid = int(user.platform_user_id)
-    s = get_settings()
-    allowed = pid in s.superadmin_ids
-    if not allowed and user.city_id:
-        allowed = await is_city_admin(pid, user.city_id)
-    if not allowed:
-        allowed = await get_city_admin_city_id(pid) is not None
+    allowed = await max_user_should_see_admin_menu(user)
     if not allowed:
         await adapter.send_message(chat_id, "Нет доступа к админ-панели.", get_back_to_menu_rows())
         return
 
+    s = get_settings()
     lines = ["⚙️ <b>Админ-панель</b>\n"]
     url = s.telegram_return_url
     if url:
