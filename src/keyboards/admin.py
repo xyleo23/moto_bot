@@ -125,10 +125,16 @@ def get_settings_kb(s: object) -> InlineKeyboardMarkup:
                     callback_data="admin_set_raise_toggle",
                 )
             ],
-            [InlineKeyboardButton(text="💵 Цена месяца (коп)", callback_data="admin_set_monthly")],
             [
                 InlineKeyboardButton(
-                    text="💵 Цена года /365 дн./ (коп)", callback_data="admin_set_season"
+                    text=f"💵 Месяц: {getattr(s, 'monthly_price_kopecks', 0) // 100} ₽ (править)",
+                    callback_data="admin_set_monthly",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"💵 Год: {getattr(s, 'season_price_kopecks', 0) // 100} ₽ (править)",
+                    callback_data="admin_set_season",
                 )
             ],
             [

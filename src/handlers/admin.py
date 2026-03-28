@@ -1227,11 +1227,18 @@ def _settings_text(s) -> str:
     return (
         "⚙️ <b>Настройки подписки</b>\n\n"
         f"Подписка: {'✅ вкл' if s.subscription_enabled else '❌ выкл'}\n"
-        f"Цена месяца: {s.monthly_price_kopecks / 100:.0f} ₽\n"
-        f"Цена года (365 дн.): {s.season_price_kopecks / 100:.0f} ₽\n"
+        f"Цена месяца: {s.monthly_price_kopecks / 100:.0f} ₽ "
+        f"({s.monthly_price_kopecks} коп.)\n"
+        f"Цена года (365 дн.): {s.season_price_kopecks / 100:.0f} ₽ "
+        f"({s.season_price_kopecks} коп.)\n"
         f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}\n"
         f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}\n"
-        f"Мотопробегов/мес (с подпиской): {limit}"
+        f"Мотопробегов/мес (с подпиской): {limit}\n\n"
+        "<i>Чтобы изменить цену: нажми кнопку «Месяц» / «Год» ниже и отправь "
+        "новое значение <b>в копейках</b> обычным сообщением в этот чат "
+        "(например 29900).</i>\n\n"
+        "<i>Суперадмины и админы городов создают мероприятия без оплаты и без "
+        "лимита мотопробегов.</i>"
     )
 
 
@@ -1334,7 +1341,13 @@ async def cb_admin_set_season(callback: CallbackQuery, state: FSMContext):
         return
     await state.set_state(AdminSettingsStates.season_price)
     await state.update_data(admin_set_key="season")
-    await callback.message.edit_text("Введи цену годовой подписки в копейках (например 79900):")
+    s = await get_subscription_settings()
+    cur = s.season_price_kopecks
+    await callback.message.edit_text(
+        f"Текущая цена года: <b>{cur}</b> коп. ({cur // 100} ₽).\n\n"
+        "Отправь <b>новое число в копейках</b> ответом в этот чат "
+        "(например <code>79900</code>)."
+    )
     await callback.answer()
 
 

@@ -2,7 +2,6 @@
 
 from uuid import UUID
 from datetime import datetime, date
-from calendar import monthrange
 
 from sqlalchemy import select, func
 
@@ -98,11 +97,19 @@ async def get_events_list(
 
 
 async def count_motorcades_this_month(user_id: UUID) -> int:
-    """Count motorcade events created by user in current calendar month."""
-    today = date.today()
-    start_dt = datetime(today.year, today.month, 1)
-    _, last_day = monthrange(today.year, today.month)
-    end_dt = datetime(today.year, today.month, last_day, 23, 59, 59)
+    """Count motorcade events **created** in the current UTC calendar month.
+
+    Quota «N мотопробегов в месяц» applies to creations in this month, not to the
+    month of ``start_at``. Otherwise events scheduled for next month while
+    ``today`` is still in the previous month were not counted and all were free.
+    """
+    now = datetime.utcnow()
+    y, m = now.year, now.month
+    start_dt = datetime(y, m, 1)
+    if m == 12:
+        end_dt = datetime(y + 1, 1, 1)
+    else:
+        end_dt = datetime(y, m + 1, 1)
 
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -112,8 +119,8 @@ async def count_motorcades_this_month(user_id: UUID) -> int:
             .where(
                 Event.creator_id == user_id,
                 Event.type == EventType.MOTORCADE,
-                Event.start_at >= start_dt,
-                Event.start_at <= end_dt,
+                Event.created_at >= start_dt,
+                Event.created_at < end_dt,
                 Event.is_cancelled.is_(False),
             )
         )
@@ -133,7 +140,8 @@ async def event_creation_payment_required(
     Determine if payment is required for creating an event.
     Returns (needs_payment, price_kopecks).
     - large: admin free, user always paid (not in subscription)
-    - motorcade: admin free; no sub = paid; with sub = 2/month free, then paid
+    - motorcade: admin free; no sub = paid; with sub = N/month free (by **created**
+      month, UTC), then paid
     - run: admin free; no sub = paid; with sub = free unlimited
 
     If ``apply_subscription_benefits`` is False (MAX messenger), льготы подписки

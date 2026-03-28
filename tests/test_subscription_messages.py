@@ -45,7 +45,7 @@ async def test_subscription_required_message_contains_limit():
     ):
         msg = await subscription_required_message("motopair_menu")
     assert "Мотопара" in msg or "мотопары" in msg
-    assert "1 бесплатно в месяц" in msg
+    assert "1 бесплатно" in msg and "календарный месяц" in msg
 
 
 @pytest.mark.asyncio

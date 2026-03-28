@@ -103,6 +103,18 @@ class EventEditStates(StatesGroup):
     description = State()
 
 
+def _evcreate_ride_format_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
+                InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
+            ],
+            [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
+        ]
+    )
+
+
 def _format_location(value: str | None) -> str:
     """Return a Maps link if value looks like coordinates, otherwise return as-is."""
     if not value:
@@ -360,7 +372,7 @@ async def evcreate_time(message: Message, state: FSMContext):
         from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
         await message.answer(
-            "Точка старта — отправь геолокацию кнопкой или введи адрес текстом:",
+            "Точка старта — <b>геолокация кнопкой</b> или <b>любой текст</b> (адрес, название):",
             reply_markup=ReplyKeyboardMarkup(
                 keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
                 resize_keyboard=True,
@@ -388,7 +400,7 @@ async def evcreate_point_start(message: Message, state: FSMContext):
         ]
     )
     await message.answer(
-        "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или нажми «Пропустить»:",
+        "Точка финиша — <b>геолокация</b>, <b>текст</b> или кнопка «Пропустить» с клавиатуры:",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[
                 [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
@@ -398,7 +410,7 @@ async def evcreate_point_start(message: Message, state: FSMContext):
             one_time_keyboard=False,
         ),
     )
-    await message.answer("Или нажми:", reply_markup=kb_inline)
+    await message.answer("Либо inline «Пропустить ➡️»:", reply_markup=kb_inline)
 
 
 @router.message(EventCreateStates.point_start, F.location)
@@ -421,7 +433,7 @@ async def evcreate_point_start_location(message: Message, state: FSMContext):
         ]
     )
     await message.answer(
-        "Точка финиша — отправь геолокацию кнопкой, введи адрес текстом или нажми «Пропустить»:",
+        "Точка финиша — <b>геолокация</b>, <b>текст</b> или кнопка «Пропустить» с клавиатуры:",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[
                 [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
@@ -431,31 +443,25 @@ async def evcreate_point_start_location(message: Message, state: FSMContext):
             one_time_keyboard=False,
         ),
     )
-    await message.answer("Или нажми:", reply_markup=kb_inline)
+    await message.answer("Либо inline «Пропустить ➡️»:", reply_markup=kb_inline)
 
 
 @router.callback_query(F.data == "evcreate_point_end_skip", EventCreateStates.point_end)
 async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+    from aiogram.types import ReplyKeyboardRemove
 
     await state.update_data(point_end=None)
     await state.set_state(EventCreateStates.ride_type)
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
-                InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
-            ],
-            [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
-        ]
-    )
+    kb = _evcreate_ride_format_kb()
     await callback.message.edit_text(
-        "Точка финиша — пропущено.\n\nФормат движения:",
+        "<b>Формат движения</b>\n\n"
+        "Выбери «Колонна», «Свободная» или «Пропустить»:",
         reply_markup=kb,
     )
     try:
         await callback.message.answer(
-            "Выберите формат движения:", reply_markup=ReplyKeyboardRemove()
+            "Клавиатуру с геолокацией скрыли. Кнопки выбора — в сообщении выше ↑",
+            reply_markup=ReplyKeyboardRemove(),
         )
     except Exception as e:
         logger.warning("evcreate_point_end_skip: answer with ReplyKeyboardRemove failed: %s", e)
@@ -464,45 +470,41 @@ async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext)
 
 @router.message(EventCreateStates.point_end, F.text)
 async def evcreate_point_end(message: Message, state: FSMContext):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+    from aiogram.types import ReplyKeyboardRemove
 
     text = message.text.strip()
     if text.lower() in ("пропустить", "skip", "-"):
         text = None
     await state.update_data(point_end=text[:500] if text else None)
     await state.set_state(EventCreateStates.ride_type)
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
-                InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
-            ],
-            [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
-        ]
+    kb = _evcreate_ride_format_kb()
+    await message.answer(
+        "Клавиатуру с геолокацией скрыли.",
+        reply_markup=ReplyKeyboardRemove(),
     )
-    await message.answer("Формат движения:", reply_markup=ReplyKeyboardRemove())
-    await message.answer("Выберите формат движения:", reply_markup=kb)
+    await message.answer(
+        "<b>Формат движения</b>\n\nВыбери вариант:",
+        reply_markup=kb,
+    )
 
 
 @router.message(EventCreateStates.point_end, F.location)
 async def evcreate_point_end_location(message: Message, state: FSMContext):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+    from aiogram.types import ReplyKeyboardRemove
 
     lat = message.location.latitude
     lon = message.location.longitude
     await state.update_data(point_end=f"{lat},{lon}")
     await state.set_state(EventCreateStates.ride_type)
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Колонна", callback_data="evcreate_ride_column"),
-                InlineKeyboardButton(text="Свободная", callback_data="evcreate_ride_free"),
-            ],
-            [InlineKeyboardButton(text="Пропустить", callback_data="evcreate_ride_skip")],
-        ]
+    kb = _evcreate_ride_format_kb()
+    await message.answer(
+        "Клавиатуру с геолокацией скрыли.",
+        reply_markup=ReplyKeyboardRemove(),
     )
-    await message.answer("Формат движения:", reply_markup=ReplyKeyboardRemove())
-    await message.answer("Выберите формат движения:", reply_markup=kb)
+    await message.answer(
+        "<b>Формат движения</b>\n\nВыбери вариант:",
+        reply_markup=kb,
+    )
 
 
 @router.callback_query(F.data.startswith("evcreate_ride_"), EventCreateStates.ride_type)
