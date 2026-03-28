@@ -15,6 +15,8 @@ from src.platforms.base import (
     ButtonType,
 )
 
+ContextVarToken = contextvars.Token
+
 # When True, send_message uses chat_id param instead of user_id (for dialogs).
 _max_use_chat_id_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "max_use_chat_id", default=False
@@ -23,6 +25,18 @@ _max_use_chat_id_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
 
 def set_max_use_chat_id(value: bool) -> None:
     _max_use_chat_id_var.set(value)
+
+
+def push_max_outbound_by_user_id() -> ContextVarToken:
+    """
+    Proactive sends (SOS broadcast, etc.) must use API ``user_id``, not dialog ``chat_id``.
+    Call :func:`pop_max_outbound_by_user_id` with the returned token in ``finally``.
+    """
+    return _max_use_chat_id_var.set(False)
+
+
+def pop_max_outbound_by_user_id(token: ContextVarToken) -> None:
+    _max_use_chat_id_var.reset(token)
 
 
 def _get_msg_params(target: str) -> dict[str, int | str]:

@@ -11,6 +11,8 @@ import asyncio
 
 from loguru import logger
 
+from src.platforms.max_adapter import pop_max_outbound_by_user_id, push_max_outbound_by_user_id
+
 # 50 ms between messages — stays well under Telegram's 30 msg/s per bot limit
 _SEND_DELAY = 0.05
 
@@ -97,19 +99,28 @@ async def _do_max_broadcast(
     exclude_id: int | None = None,
     kb_rows=None,
 ) -> tuple[int, int]:
-    """Send `text` to MAX users via the adapter."""
+    """Send `text` to MAX users via the adapter.
+
+    Incoming MAX updates set ContextVar chat_id-mode for replies in the *current* dialog.
+    Background tasks inherit that context; proactive sends must use ``user_id``, not
+    ``chat_id`` (peer id ≠ dialog chat id), otherwise recipients never get the message.
+    """
+    _token = push_max_outbound_by_user_id()
     sent = 0
     failed = 0
-    for uid in user_ids:
-        if exclude_id is not None and uid == exclude_id:
-            continue
-        try:
-            await adapter.send_message(str(uid), text, kb_rows)
-            sent += 1
-        except Exception as e:
-            logger.warning(f"max_broadcast: could not send to {uid}: {e}")
-            failed += 1
-        await asyncio.sleep(_SEND_DELAY)
+    try:
+        for uid in user_ids:
+            if exclude_id is not None and uid == exclude_id:
+                continue
+            try:
+                await adapter.send_message(str(uid), text, kb_rows)
+                sent += 1
+            except Exception as e:
+                logger.warning(f"max_broadcast: could not send to {uid}: {e}")
+                failed += 1
+            await asyncio.sleep(_SEND_DELAY)
+    finally:
+        pop_max_outbound_by_user_id(_token)
 
     logger.info(f"max_broadcast done: sent={sent} failed={failed}")
     return sent, failed
