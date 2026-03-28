@@ -39,6 +39,11 @@ def pop_max_outbound_by_user_id(token: ContextVarToken) -> None:
     _max_use_chat_id_var.reset(token)
 
 
+def max_message_query_params(target: str) -> dict[str, int | str]:
+    """Query params for POST /messages (for logs and diagnostics)."""
+    return dict(_get_msg_params(target))
+
+
 def _get_msg_params(target: str) -> dict[str, int | str]:
     """MAX API expects integer for user_id/chat_id when numeric."""
     try:

@@ -8,10 +8,23 @@ MAX broadcasts use the MAX adapter's send_message API.
 """
 
 import asyncio
+import html
+import re
 
 from loguru import logger
 
-from src.platforms.max_adapter import pop_max_outbound_by_user_id, push_max_outbound_by_user_id
+from src.platforms.max_adapter import (
+    max_message_query_params,
+    pop_max_outbound_by_user_id,
+    push_max_outbound_by_user_id,
+)
+
+
+def _max_broadcast_plain_fallback(html_text: str) -> str:
+    """Strip HTML for MAX retry if API rejects formatted body."""
+    t = re.sub(r"<br\s*/?>", "\n", html_text, flags=re.I)
+    t = re.sub(r"<[^>]+>", "", t)
+    return html.unescape(t).strip()
 
 # 50 ms between messages — stays well under Telegram's 30 msg/s per bot limit
 _SEND_DELAY = 0.05
@@ -109,6 +122,24 @@ async def _do_max_broadcast(
     sent = 0
     failed = 0
     try:
+        sample_uid = next(
+            (u for u in user_ids if exclude_id is None or u != exclude_id),
+            None,
+        )
+        if sample_uid is not None:
+            logger.info(
+                "max_broadcast start: recipients={} exclude_id={} sample_uid={} query_params={}",
+                len(user_ids),
+                exclude_id,
+                sample_uid,
+                max_message_query_params(str(sample_uid)),
+            )
+        else:
+            logger.info(
+                "max_broadcast start: recipients={} exclude_id={} (no targets after exclude)",
+                len(user_ids),
+                exclude_id,
+            )
         for uid in user_ids:
             if exclude_id is not None and uid == exclude_id:
                 continue
@@ -116,13 +147,22 @@ async def _do_max_broadcast(
                 await adapter.send_message(str(uid), text, kb_rows)
                 sent += 1
             except Exception as e:
-                logger.warning(f"max_broadcast: could not send to {uid}: {e}")
-                failed += 1
+                logger.warning("max_broadcast: HTML send failed uid={}: {}", uid, e)
+                try:
+                    plain = _max_broadcast_plain_fallback(text)
+                    await adapter.send_message(
+                        str(uid), plain or "(SOS)", kb_rows, parse_mode=None
+                    )
+                    sent += 1
+                    logger.info("max_broadcast: plain fallback ok uid={}", uid)
+                except Exception as e2:
+                    logger.warning("max_broadcast: plain send failed uid={}: {}", uid, e2)
+                    failed += 1
             await asyncio.sleep(_SEND_DELAY)
     finally:
         pop_max_outbound_by_user_id(_token)
 
-    logger.info(f"max_broadcast done: sent={sent} failed={failed}")
+    logger.info("max_broadcast done: sent={} failed={}", sent, failed)
     return sent, failed
 
 
