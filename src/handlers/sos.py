@@ -442,6 +442,12 @@ async def cb_sos_all_clear(callback: CallbackQuery, state: FSMContext, user=None
                 texts.SOS_ALL_CLEAR_BROADCAST.format(name=name),
                 exclude_id=max_exclude,
             )
+        else:
+            logger.info(
+                "SOS all-clear: MAX broadcast skipped (adapter=%s, max_recipients=%s)",
+                bool(max_adapter),
+                len(max_user_ids) if max_user_ids else 0,
+            )
 
         await callback.message.edit_text(
             "✅ Рады, что всё хорошо! Отбой разослан.",

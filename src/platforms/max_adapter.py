@@ -171,7 +171,10 @@ class MaxAdapter(PlatformAdapter):
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(headers=self._headers())
+            # Long poll GET /updates?timeout=30 needs read time > server wait; default
+            # aiohttp limits can surface as TimeoutError and spam ERROR logs.
+            _t = aiohttp.ClientTimeout(total=None, sock_connect=60, sock_read=120)
+            self._session = aiohttp.ClientSession(headers=self._headers(), timeout=_t)
         return self._session
 
     @property

@@ -347,6 +347,10 @@ async def run_max(shared_adapter=None):
                 for upd in result.get("updates", []):
                     if isinstance(upd, dict):
                         await process_max_update(adapter, upd)
+            except TimeoutError:
+                # Long-poll client timeout or cancellation during shutdown — normal, retry.
+                logger.debug("MAX long-poll timed out or was cancelled, retrying")
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.exception(f"MAX poll error: {e}")
                 await asyncio.sleep(5)
