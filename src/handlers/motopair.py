@@ -365,8 +365,6 @@ def _profile_kb_with_report(
 async def cb_motopair_report(callback: CallbackQuery, user=None):
     """User reports an offensive/spam profile. Notifies city admin."""
     from src.services.motopair_service import get_user_for_profile, get_profile_info_text
-    from src.services.admin_service import get_city_admins
-    from src.config import get_settings
 
     if not user:
         await callback.answer("Ошибка.", show_alert=True)
@@ -428,24 +426,29 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
     )
 
     # Send to city admins + superadmins
-    settings = get_settings()
     bot = callback.bot
 
-    if user.city_id:
-        admins = await get_city_admins(user.city_id)
-        for _, admin_user in admins:
-            try:
-                await bot.send_message(
-                    admin_user.platform_user_id, admin_text, reply_markup=admin_kb
-                )
-            except Exception as e:
-                logger.warning("Cannot notify city admin %s: %s", admin_user.platform_user_id, e)
+    from src.services.admin_multichannel_notify import (
+        notify_city_admins_multichannel,
+        notify_superadmins_multichannel,
+    )
+    from src.services.broadcast import get_max_adapter
 
-    for admin_id in settings.superadmin_ids:
-        try:
-            await bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
-        except Exception as e:
-            logger.warning("Cannot notify superadmin %s: %s", admin_id, e)
+    _max_a = get_max_adapter()
+    if user.city_id:
+        await notify_city_admins_multichannel(
+            user.city_id,
+            admin_text,
+            telegram_markup=admin_kb,
+            telegram_bot=bot,
+            max_adapter=_max_a,
+        )
+    await notify_superadmins_multichannel(
+        admin_text,
+        telegram_markup=admin_kb,
+        telegram_bot=bot,
+        max_adapter=_max_a,
+    )
 
     try:
         if callback.message.photo:
@@ -601,29 +604,28 @@ async def city_admin_block_reason(message: Message, state: FSMContext, user=None
             else str(target.platform_user_id)
         )
 
-        # Notify superadmins about the block action
-        for sa_id in settings.superadmin_ids:
-            try:
-                await message.bot.send_message(
-                    sa_id,
-                    texts.ADMIN_BLOCK_NOTIFY_SUPERADMIN.format(
-                        admin=admin_display,
-                        user=target_display,
-                        reason=reason,
-                    ),
-                )
-            except Exception as e:
-                logger.warning("Cannot notify superadmin %s about block: %s", sa_id, e)
+        nmsg = texts.ADMIN_BLOCK_NOTIFY_SUPERADMIN.format(
+            admin=admin_display,
+            user=target_display,
+            reason=reason,
+        )
+        from src.services.admin_multichannel_notify import notify_superadmins_plain
+        from src.services.broadcast import get_max_adapter
+        from src.services.cross_platform_notify import send_text_to_all_identities
 
-        # Notify the blocked user
-        if target.platform_user_id:
-            try:
-                await message.bot.send_message(
-                    target.platform_user_id,
-                    texts.ADMIN_BLOCK_USER_NOTIFICATION.format(reason=reason),
-                )
-            except Exception as e:
-                logger.debug("Cannot notify blocked user %s: %s", target.platform_user_id, e)
+        await notify_superadmins_plain(
+            nmsg,
+            telegram_bot=message.bot,
+            max_adapter=get_max_adapter(),
+        )
+
+        await send_text_to_all_identities(
+            target_uuid,
+            texts.ADMIN_BLOCK_USER_NOTIFICATION.format(reason=reason),
+            telegram_bot=message.bot,
+            max_adapter=get_max_adapter(),
+            parse_mode="HTML",
+        )
 
     await message.answer(
         texts.ADMIN_BLOCK_DONE,

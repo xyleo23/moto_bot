@@ -1,0 +1,411 @@
+"""CRUD полезных контактов в MAX (те же callback_data, что в Telegram)."""
+
+from __future__ import annotations
+
+import uuid
+
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+from src.keyboards.contacts import (
+    get_admin_contact_categories_kb,
+    get_admin_contact_edit_fields_kb,
+    get_admin_contact_edit_kb,
+    get_admin_contacts_menu_kb,
+)
+from src.keyboards.shared import get_main_menu_shortcut_row
+from src.models.user import User
+from src.platforms.base import Button
+from src.platforms.max_adapter import MaxAdapter
+from src.services import max_registration_state as reg_state
+from src.services.admin_multichannel_notify import tg_inline_markup_to_max_rows
+from src.services.user import get_or_create_user
+from src.services.useful_contacts_service import (
+    CAT_LABELS,
+    create_contact,
+    delete_contact,
+    get_admin_contacts_list,
+    get_contact_by_id,
+    update_contact,
+    can_manage_contacts_effective,
+)
+
+_VALID_CATS = frozenset(
+    {"motoshop", "motoservice", "motoschool", "motoclubs", "motoevac", "other"}
+)
+_EDIT_FIELDS = frozenset({"name", "description", "phone", "link", "address", "category"})
+
+
+def _kb(m: InlineKeyboardMarkup | None) -> list | None:
+    return tg_inline_markup_to_max_rows(m)
+
+
+def _append_shortcut(rows: list | None) -> list:
+    out = list(rows or [])
+    out.append(get_main_menu_shortcut_row())
+    return out
+
+
+def _contact_view_text(c) -> str:
+    return (
+        f"<b>{c.name}</b>\n"
+        f"Категория: {CAT_LABELS.get(c.category.value, c.category.value)}\n"
+        f"Описание: {c.description or '—'}\n"
+        f"Телефон: {c.phone or '—'}\n"
+        f"Ссылка: {c.link or '—'}\n"
+        f"Адрес: {c.address or '—'}"
+    )
+
+
+async def _deny(adapter: MaxAdapter, chat_id: str) -> None:
+    await adapter.send_message(
+        chat_id,
+        "Доступ запрещён.",
+        _append_shortcut([[Button("« Меню", payload="menu_main")]]),
+    )
+
+
+async def max_contacts_try_dispatch(
+    adapter: MaxAdapter, chat_id: str, user: User, data: str
+) -> bool:
+    """True если callback относится к админке контактов и обработан."""
+    if data != "admin_contacts" and not data.startswith("admin_contact"):
+        return False
+
+    if not await can_manage_contacts_effective(user):
+        await _deny(adapter, chat_id)
+        return True
+
+    if data == "admin_contacts":
+        await adapter.send_message(
+            chat_id,
+            "📇 <b>Контакты</b> — управление",
+            _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+        )
+        return True
+
+    if data == "admin_contact_add":
+        if not user.city_id:
+            await adapter.send_message(
+                chat_id,
+                "Сначала выбери город в профиле.",
+                _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
+            )
+            return True
+        await adapter.send_message(
+            chat_id,
+            "Выбери категорию:",
+            _append_shortcut(_kb(get_admin_contact_categories_kb("admin_contact_add"))),
+        )
+        return True
+
+    if data.startswith("admin_contact_add_") and data != "admin_contact_add":
+        cat = data.replace("admin_contact_add_", "", 1)
+        if cat not in _VALID_CATS:
+            return True
+        if not user.city_id:
+            await adapter.send_message(
+                chat_id,
+                "Город не выбран.",
+                _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
+            )
+            return True
+        await reg_state.set_state(
+            user.platform_user_id,
+            "admin:contact_add",
+            {"category": cat, "step": "name"},
+        )
+        await adapter.send_message(
+            chat_id,
+            "Название контакта:",
+            [[Button("« Отмена", payload="admin_contacts")], get_main_menu_shortcut_row()],
+        )
+        return True
+
+    if data == "admin_contact_list":
+        if not user.city_id:
+            await adapter.send_message(
+                chat_id,
+                "Город не выбран.",
+                _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
+            )
+            return True
+        contacts = await get_admin_contacts_list(user.city_id)
+        if not contacts:
+            await adapter.send_message(
+                chat_id,
+                "Контактов нет.",
+                _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+            )
+            return True
+        rows = []
+        for c in contacts[:15]:
+            label = CAT_LABELS.get(c.category.value, c.category.value)
+            rows.append(
+                [Button(f"{c.name} ({label})", payload=f"admin_contact_view_{c.id}")]
+            )
+        rows.append([Button("« Назад", payload="admin_contacts")])
+        await adapter.send_message(chat_id, "Контакты:", _append_shortcut(rows))
+        return True
+
+    if data.startswith("admin_contact_view_"):
+        cid_s = data.replace("admin_contact_view_", "", 1)
+        try:
+            cuid = uuid.UUID(cid_s)
+        except ValueError:
+            return True
+        c = await get_contact_by_id(cuid)
+        if not c:
+            await adapter.send_message(chat_id, "Не найден.", _append_shortcut(None))
+            return True
+        await adapter.send_message(
+            chat_id,
+            _contact_view_text(c),
+            _append_shortcut(_kb(get_admin_contact_edit_kb(cid_s))),
+        )
+        return True
+
+    if data.startswith("admin_contact_del_"):
+        cid_s = data.replace("admin_contact_del_", "", 1)
+        try:
+            cuid = uuid.UUID(cid_s)
+        except ValueError:
+            return True
+        ok = await delete_contact(cuid)
+        if ok:
+            await adapter.send_message(
+                chat_id,
+                "Контакт удалён.",
+                _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+            )
+        else:
+            await adapter.send_message(chat_id, "Ошибка.", _append_shortcut(None))
+        return True
+
+    if data.startswith("admin_contact_edit_"):
+        cid_s = data.replace("admin_contact_edit_", "", 1)
+        try:
+            cuid = uuid.UUID(cid_s)
+        except ValueError:
+            return True
+        c = await get_contact_by_id(cuid)
+        if not c:
+            await adapter.send_message(chat_id, "Контакт не найден.", _append_shortcut(None))
+            return True
+        await reg_state.clear_state(user.platform_user_id)
+        await adapter.send_message(
+            chat_id,
+            f"Поля контакта <b>{c.name}</b>:",
+            _append_shortcut(_kb(get_admin_contact_edit_fields_kb(cid_s))),
+        )
+        return True
+
+    if data.startswith("admin_contact_ef_"):
+        rest = data.replace("admin_contact_ef_", "", 1)
+        idx = rest.rfind("_")
+        if idx < 0:
+            return True
+        cid_s, field = rest[:idx], rest[idx + 1 :]
+        if field not in _EDIT_FIELDS:
+            return True
+        try:
+            cuid = uuid.UUID(cid_s)
+        except ValueError:
+            return True
+        c = await get_contact_by_id(cuid)
+        if not c:
+            await adapter.send_message(chat_id, "Контакт не найден.", _append_shortcut(None))
+            return True
+        prompts = {
+            "name": "Введи новое название:",
+            "description": "Введи описание или «Пропустить» для очистки:",
+            "phone": "Введи телефон или «Пропустить» для очистки:",
+            "link": "Введи ссылку или «Пропустить» для очистки:",
+            "address": "Введи адрес или «Пропустить» для очистки:",
+        }
+        if field == "category":
+            await reg_state.set_state(
+                user.platform_user_id,
+                "admin:contact_edit",
+                {"contact_id": cid_s, "field": "category"},
+            )
+            await adapter.send_message(
+                chat_id,
+                "Выбери категорию:",
+                _append_shortcut(
+                    _kb(get_admin_contact_categories_kb(f"admin_contact_ev_{cid_s}"))
+                ),
+            )
+            return True
+        await reg_state.set_state(
+            user.platform_user_id,
+            "admin:contact_edit",
+            {"contact_id": cid_s, "field": field},
+        )
+        await adapter.send_message(
+            chat_id,
+            prompts[field],
+            [[Button("« Отмена", payload=f"admin_contact_view_{cid_s}")], get_main_menu_shortcut_row()],
+        )
+        return True
+
+    return False
+
+
+async def handle_max_contact_fsm_text(
+    adapter: MaxAdapter, chat_id: str, user_id: int, text: str, fsm: dict
+) -> None:
+    state = fsm.get("state") or ""
+    data = fsm.get("data") or {}
+    u = await get_or_create_user(platform="max", platform_user_id=user_id)
+    if not u or not await can_manage_contacts_effective(u):
+        await reg_state.clear_state(user_id)
+        return
+
+    raw = (text or "").strip()
+
+    if state == "admin:contact_add":
+        if not u.city_id:
+            await reg_state.clear_state(user_id)
+            return
+        step = data.get("step")
+        cat = data.get("category")
+        if step == "name":
+            if not raw:
+                await adapter.send_message(chat_id, "Введи название.", _append_shortcut(None))
+                return
+            data["name"] = raw[:200]
+            data["step"] = "description"
+            await reg_state.set_state(user_id, state, data)
+            await adapter.send_message(
+                chat_id,
+                "Описание (или «Пропустить»):",
+                [[Button("« Отмена", payload="admin_contacts")], get_main_menu_shortcut_row()],
+            )
+            return
+        if step == "description":
+            if raw.lower() in ("пропустить", "skip", "-"):
+                raw = ""
+            data["description"] = raw[:1000] if raw else None
+            data["step"] = "phone"
+            await reg_state.set_state(user_id, state, data)
+            await adapter.send_message(chat_id, "Телефон (или «Пропустить»):", _append_shortcut(None))
+            return
+        if step == "phone":
+            if raw.lower() in ("пропустить", "skip", "-"):
+                raw = ""
+            data["phone"] = raw[:50] if raw else None
+            data["step"] = "link"
+            await reg_state.set_state(user_id, state, data)
+            await adapter.send_message(chat_id, "Ссылка (или «Пропустить»):", _append_shortcut(None))
+            return
+        if step == "link":
+            if raw.lower() in ("пропустить", "skip", "-"):
+                raw = ""
+            data["link"] = raw[:500] if raw else None
+            data["step"] = "address"
+            await reg_state.set_state(user_id, state, data)
+            await adapter.send_message(chat_id, "Адрес (или «Пропустить»):", _append_shortcut(None))
+            return
+        if step == "address":
+            if raw.lower() in ("пропустить", "skip", "-"):
+                raw = ""
+            data["address"] = raw[:500] if raw else None
+            c = await create_contact(
+                city_id=u.city_id,
+                created_by=u.id,
+                category=cat,
+                name=data["name"],
+                description=data.get("description"),
+                phone=data.get("phone"),
+                link=data.get("link"),
+                address=data.get("address"),
+            )
+            await reg_state.clear_state(user_id)
+            if c:
+                await adapter.send_message(
+                    chat_id,
+                    f"✅ Контакт добавлен: {c.name}",
+                    _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+                )
+            else:
+                await adapter.send_message(
+                    chat_id,
+                    "Ошибка при сохранении.",
+                    _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+                )
+            return
+
+    if state == "admin:contact_edit":
+        cid_s = data.get("contact_id")
+        field = data.get("field")
+        if not cid_s or not field or field == "category":
+            return
+        try:
+            cuid = uuid.UUID(str(cid_s))
+        except ValueError:
+            await reg_state.clear_state(user_id)
+            return
+        if field != "name" and raw.lower() in ("пропустить", "skip", "-"):
+            raw = ""
+        elif field == "name" and not raw:
+            await adapter.send_message(chat_id, "Название не может быть пустым.", _append_shortcut(None))
+            return
+        kw = {field: raw if raw else None}
+        ok = await update_contact(cuid, **kw)
+        await reg_state.clear_state(user_id)
+        if ok:
+            c = await get_contact_by_id(cuid)
+            await adapter.send_message(
+                chat_id,
+                f"✅ Обновлено.\n\n{_contact_view_text(c)}",
+                _append_shortcut(_kb(get_admin_contact_edit_kb(cid_s))),
+            )
+        else:
+            await adapter.send_message(
+                chat_id,
+                "Ошибка.",
+                _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+            )
+
+
+async def handle_max_contact_category_fsm_callback(
+    adapter: MaxAdapter, chat_id: str, user_id: int, cb_data: str, fsm: dict
+) -> bool:
+    if not cb_data.startswith("admin_contact_ev_"):
+        return False
+    fd = fsm.get("data") or {}
+    if fd.get("field") != "category":
+        return False
+    cid_s = fd.get("contact_id")
+    if not cid_s:
+        return False
+    raw = cb_data.replace("admin_contact_ev_", "", 1)
+    idx = raw.rfind("_")
+    if idx < 0:
+        return False
+    ev_cid, cat = raw[:idx], raw[idx + 1 :]
+    if ev_cid != cid_s or cat not in _VALID_CATS:
+        await reg_state.clear_state(user_id)
+        return True
+    u = await get_or_create_user(platform="max", platform_user_id=user_id)
+    if not u or not await can_manage_contacts_effective(u):
+        await reg_state.clear_state(user_id)
+        return True
+    try:
+        cuid = uuid.UUID(cid_s)
+    except ValueError:
+        await reg_state.clear_state(user_id)
+        return True
+    ok = await update_contact(cuid, category=cat)
+    await reg_state.clear_state(user_id)
+    if ok:
+        c = await get_contact_by_id(cuid)
+        await adapter.send_message(
+            chat_id,
+            f"✅ Категория обновлена.\n\n{_contact_view_text(c)}",
+            _append_shortcut(_kb(get_admin_contact_edit_kb(cid_s))),
+        )
+    else:
+        await adapter.send_message(chat_id, "Ошибка.", _append_shortcut(None))
+    return True
+

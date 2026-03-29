@@ -440,11 +440,15 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
             ],
         ]
     )
-    for admin_id in settings.superadmin_ids:
-        try:
-            await bot.send_message(admin_id, admin_text, reply_markup=kb)
-        except Exception as e:
-            logger.warning("Cannot notify admin %s about phone change: %s", admin_id, e)
+    from src.services.admin_multichannel_notify import notify_superadmins_multichannel
+    from src.services.broadcast import get_max_adapter
+
+    await notify_superadmins_multichannel(
+        admin_text,
+        telegram_markup=kb,
+        telegram_bot=bot,
+        max_adapter=get_max_adapter(),
+    )
 
     await message.answer(texts.PHONE_CHANGE_REQUEST_SENT, reply_markup=get_back_to_menu_kb())
 
@@ -452,125 +456,50 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
 @router.callback_query(F.data.startswith("admin_phone_approve_"))
 async def cb_admin_phone_approve(callback: CallbackQuery, state: FSMContext):
     """Superadmin approves phone change — applies new_phone stored in request."""
-    from src.config import get_settings
-    from src.models.base import get_session_factory
-    from src.models.phone_change_request import PhoneChangeRequest, PhoneChangeStatus
-    from src.models.profile_pilot import ProfilePilot
-    from src.models.profile_passenger import ProfilePassenger
-    from src.models.user import User
-    from sqlalchemy import select
-    from datetime import datetime
+    from src.services.admin_service import get_user_by_platform_id, is_effective_superadmin_user
+    from src.services.admin_phone_actions import phone_change_approve
+    from src.services.broadcast import get_max_adapter
 
-    settings = get_settings()
-    if callback.from_user.id not in settings.superadmin_ids:
+    admin_u = await get_user_by_platform_id(callback.from_user.id)
+    if not admin_u or not await is_effective_superadmin_user(admin_u):
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
 
     req_id = callback.data.replace("admin_phone_approve_", "")
-    try:
-        req_uuid = uuid.UUID(req_id)
-    except ValueError:
-        await callback.answer("Некорректный ID.")
+    ok, msg = await phone_change_approve(
+        req_id,
+        admin_u,
+        telegram_bot=callback.bot,
+        max_adapter=get_max_adapter(),
+    )
+    if not ok:
+        await callback.answer(msg, show_alert=True)
         return
-
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        req_r = await session.execute(
-            select(PhoneChangeRequest).where(PhoneChangeRequest.id == req_uuid)
-        )
-        req = req_r.scalar_one_or_none()
-        if not req or req.status != PhoneChangeStatus.PENDING:
-            await callback.answer("Запрос не найден или уже обработан.", show_alert=True)
-            return
-
-        new_phone = req.new_phone
-        if not new_phone:
-            await callback.answer("Новый номер не указан в заявке.", show_alert=True)
-            return
-
-        # Update phone in pilot/passenger profile
-        pilot = await session.execute(
-            select(ProfilePilot).where(ProfilePilot.user_id == req.user_id)
-        )
-        p = pilot.scalar_one_or_none()
-        if p:
-            p.phone = new_phone[:20]
-        else:
-            pax = await session.execute(
-                select(ProfilePassenger).where(ProfilePassenger.user_id == req.user_id)
-            )
-            pp = pax.scalar_one_or_none()
-            if pp:
-                pp.phone = new_phone[:20]
-
-        req.status = PhoneChangeStatus.APPROVED
-        req.resolved_at = datetime.utcnow()
-        await session.commit()
-
-        user_r = await session.execute(select(User).where(User.id == req.user_id))
-        u = user_r.scalar_one_or_none()
-
-    await callback.message.edit_text(f"✅ Номер изменён на {new_phone}.")
+    await callback.message.edit_text(msg)
     await callback.answer()
-
-    if u and u.platform_user_id:
-        try:
-            await callback.bot.send_message(
-                u.platform_user_id,
-                texts.PHONE_CHANGE_CONFIRMED.format(new_phone=new_phone),
-            )
-        except Exception as e:
-            logger.warning("Cannot notify user %s about phone change: %s", u.platform_user_id, e)
 
 
 @router.callback_query(F.data.startswith("admin_phone_reject_"))
 async def cb_admin_phone_reject(callback: CallbackQuery):
     """Superadmin rejects phone change request."""
-    from src.config import get_settings
+    from src.services.admin_service import get_user_by_platform_id, is_effective_superadmin_user
+    from src.services.admin_phone_actions import phone_change_reject
+    from src.services.broadcast import get_max_adapter
 
-    settings = get_settings()
-    if callback.from_user.id not in settings.superadmin_ids:
+    admin_u = await get_user_by_platform_id(callback.from_user.id)
+    if not admin_u or not await is_effective_superadmin_user(admin_u):
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
 
     req_id = callback.data.replace("admin_phone_reject_", "")
-    try:
-        req_uuid = uuid.UUID(req_id)
-    except ValueError:
-        await callback.answer("Некорректный ID.")
+    ok, msg = await phone_change_reject(
+        req_id,
+        admin_u,
+        telegram_bot=callback.bot,
+        max_adapter=get_max_adapter(),
+    )
+    if not ok:
+        await callback.answer(msg)
         return
-
-    from src.models.base import get_session_factory
-    from src.models.phone_change_request import PhoneChangeRequest, PhoneChangeStatus
-    from src.models.user import User
-    from sqlalchemy import select
-    from datetime import datetime
-
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        req_r = await session.execute(
-            select(PhoneChangeRequest).where(PhoneChangeRequest.id == req_uuid)
-        )
-        req = req_r.scalar_one_or_none()
-        if not req or req.status != PhoneChangeStatus.PENDING:
-            await callback.answer("Запрос не найден или уже обработан.")
-            return
-
-        req.status = PhoneChangeStatus.REJECTED
-        req.resolved_at = datetime.utcnow()
-        await session.commit()
-
-        user_r = await session.execute(select(User).where(User.id == req.user_id))
-        u = user_r.scalar_one_or_none()
-
-    await callback.message.edit_text(texts.PHONE_CHANGE_REJECTED)
+    await callback.message.edit_text(msg)
     await callback.answer()
-
-    if u and u.platform_user_id:
-        try:
-            await callback.bot.send_message(
-                u.platform_user_id,
-                texts.PHONE_CHANGE_REJECTED_USER,
-            )
-        except Exception as e:
-            logger.warning("Cannot notify user %s: %s", u.platform_user_id, e)

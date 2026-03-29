@@ -94,16 +94,18 @@ async def about_feedback_text(message: Message, state: FSMContext, user=None):
 
     await state.clear()
 
-    s = get_settings()
     name = user.platform_first_name or "Пользователь"
     username = f"@{user.platform_username}" if user.platform_username else ""
     msg = f"📩 <b>Предложение/пожелание</b>\n\nОт: {name} {username} (id: {user.platform_user_id})\n\n{text}"
 
-    for admin_id in s.superadmin_ids:
-        try:
-            await message.bot.send_message(admin_id, msg)
-        except Exception as e:
-            logger.debug("about: could not notify superadmin {}: {}", admin_id, e)
+    from src.services.admin_multichannel_notify import notify_superadmins_plain
+    from src.services.broadcast import get_max_adapter
+
+    await notify_superadmins_plain(
+        msg,
+        telegram_bot=message.bot,
+        max_adapter=get_max_adapter(),
+    )
 
     await message.answer(
         "✅ Спасибо! Твоё сообщение отправлено администрации.",

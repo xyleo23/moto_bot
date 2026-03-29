@@ -551,12 +551,15 @@ async def _max_profile_phone_change_text(
             ],
         ]
     )
-    if tg_bot:
-        for admin_id in settings.superadmin_ids:
-            try:
-                await tg_bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
-            except Exception as e:
-                logger.warning("max phone change: cannot notify admin %s: %s", admin_id, e)
+    from src.services.admin_multichannel_notify import notify_superadmins_multichannel
+    from src.services.broadcast import get_max_adapter
+
+    await notify_superadmins_multichannel(
+        admin_text,
+        telegram_markup=admin_kb,
+        telegram_bot=tg_bot,
+        max_adapter=get_max_adapter() or adapter,
+    )
 
     await adapter.send_message(
         chat_id,
@@ -571,6 +574,18 @@ async def _handle_fsm_message(
     """Route incoming text to the correct FSM step handler."""
     state = fsm["state"]
     data = fsm["data"]
+
+    if isinstance(state, str) and state.startswith("admin:contact"):
+        from src.max_admin_contacts import handle_max_contact_fsm_text
+
+        await handle_max_contact_fsm_text(adapter, chat_id, user_id, text, fsm)
+        return
+
+    if isinstance(state, str) and state.startswith("admin:"):
+        from src.max_admin_panel import handle_max_admin_fsm_text
+
+        await handle_max_admin_fsm_text(adapter, chat_id, user_id, text, fsm)
+        return
 
     if state == "profile:phone_change":
         await _max_profile_phone_change_text(adapter, chat_id, user_id, text)
@@ -1170,6 +1185,12 @@ async def _handle_fsm_callback(
     if not state:
         return False
 
+    if isinstance(state, str) and state.startswith("admin:"):
+        from src.max_admin_panel import handle_max_admin_fsm_callback
+
+        if await handle_max_admin_fsm_callback(adapter, chat_id, user_id, cb_data, fsm):
+            return True
+
     # ── Cross-platform link (same phone as Telegram) ──────────────────────────
     if cb_data == "max_reg_cross_link_yes" and state in (
         "pilot:cross_link_confirm",
@@ -1708,6 +1729,11 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
             ev.chat_id, texts.LEGAL_DOCS_INTRO, get_max_documents_menu_rows()
         )
         return
+    if cmd == "admin":
+        from src.max_admin_panel import show_max_admin_root
+
+        await show_max_admin_root(adapter, ev.chat_id, user)
+        return
 
     low = text.lower()
     if low.startswith("/privacy") or low == "privacy":
@@ -1923,6 +1949,11 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         if consumed:
             return
 
+    from src.max_admin_panel import max_admin_dispatch
+
+    if await max_admin_dispatch(adapter, chat_id, user, data):
+        return
+
     # ── City selection ────────────────────────────────────────────────────────
     if data == "city_ekb" or (data.startswith("city_") and len(data) > 5):
         from src.models.city import City
@@ -2092,7 +2123,9 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         await handle_about(adapter, chat_id)
         return
     if data == "menu_admin":
-        await handle_max_admin_menu(adapter, chat_id, user)
+        from src.max_admin_panel import show_max_admin_root
+
+        await show_max_admin_root(adapter, chat_id, user)
         return
     if data == "max_profile_phone":
         await reg_state.set_state(user.platform_user_id, "profile:phone_change", {})
@@ -3102,8 +3135,6 @@ async def handle_event_cancel_max(adapter: MaxAdapter, chat_id: str, user, event
 
 async def handle_motopair_report_max(adapter: MaxAdapter, chat_id: str, user, data: str) -> None:
     from src.services.motopair_service import get_user_for_profile, get_profile_info_text
-    from src.services.admin_service import get_city_admins
-    from src.config import get_settings
     from src import texts
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -3157,54 +3188,29 @@ async def handle_motopair_report_max(adapter: MaxAdapter, chat_id: str, user, da
             ],
         ]
     )
-    settings = get_settings()
     tg_bot = _get_tg_bot()
+    from src.services.admin_multichannel_notify import (
+        notify_city_admins_multichannel,
+        notify_superadmins_multichannel,
+    )
+    from src.services.broadcast import get_max_adapter
+
+    _max_a = get_max_adapter() or adapter
     if user.city_id:
-        admins = await get_city_admins(user.city_id)
-        for _, admin_user in admins:
-            try:
-                if tg_bot:
-                    await tg_bot.send_message(
-                        admin_user.platform_user_id, admin_text, reply_markup=admin_kb
-                    )
-            except Exception as e:
-                logger.warning(
-                    "motopair_report_max: city admin %s: %s", admin_user.platform_user_id, e
-                )
-    if tg_bot:
-        for admin_id in settings.superadmin_ids:
-            try:
-                await tg_bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
-            except Exception as e:
-                logger.warning("motopair_report_max: superadmin %s: %s", admin_id, e)
+        await notify_city_admins_multichannel(
+            user.city_id,
+            admin_text,
+            telegram_markup=admin_kb,
+            telegram_bot=tg_bot,
+            max_adapter=_max_a,
+        )
+    await notify_superadmins_multichannel(
+        admin_text,
+        telegram_markup=admin_kb,
+        telegram_bot=tg_bot,
+        max_adapter=_max_a,
+    )
     await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_SENT, get_back_to_menu_rows())
-
-
-async def handle_max_admin_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
-    """Суперадмин / админ города: ссылка на полную админку в Telegram."""
-    from src.config import get_settings
-    from src.services.admin_service import max_user_should_see_admin_menu
-
-    if not user:
-        await adapter.send_message(chat_id, "Ошибка.", get_back_to_menu_rows())
-        return
-    allowed = await max_user_should_see_admin_menu(user)
-    if not allowed:
-        await adapter.send_message(chat_id, "Нет доступа к админ-панели.", get_back_to_menu_rows())
-        return
-
-    s = get_settings()
-    lines = ["⚙️ <b>Админ-панель</b>\n"]
-    url = s.telegram_return_url
-    if url:
-        lines.append(f"Города, рассылка, жалобы, настройки — в Telegram-боте.\nОткрой: {url}")
-    else:
-        lines.append("Укажи TELEGRAM_BOT_USERNAME в .env — появится ссылка на бота.")
-    kb = []
-    if url:
-        kb.append([Button("Открыть в Telegram", type=ButtonType.URL, url=url)])
-    kb.append(get_main_menu_shortcut_row())
-    await adapter.send_message(chat_id, "\n".join(lines), kb)
 
 
 async def _max_event_seeking_open(adapter: MaxAdapter, chat_id: str, user, eid_str: str) -> None:
@@ -3585,10 +3591,8 @@ async def handle_event_register(
 
 
 async def handle_event_report(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:
-    """Report an event from MAX. Notifies city admins and superadmins via Telegram."""
+    """Report an event from MAX. Уведомляет админов города и суперадминов (TG + MAX)."""
     from src.services.event_service import get_event_by_id, format_event_report_admin_html
-    from src.services.admin_service import get_city_admins
-    from src.config import get_settings
     from src import texts
 
     try:
@@ -3633,25 +3637,27 @@ async def handle_event_report(adapter: MaxAdapter, chat_id: str, user, event_id:
     )
 
     tg_bot = _get_tg_bot()
-    settings = get_settings()
+    from src.services.admin_multichannel_notify import (
+        notify_city_admins_multichannel,
+        notify_superadmins_multichannel,
+    )
+    from src.services.broadcast import get_max_adapter
 
+    _max_a = get_max_adapter() or adapter
     if ev.city_id:
-        admins = await get_city_admins(ev.city_id)
-        for _, admin_user in admins:
-            try:
-                if tg_bot:
-                    await tg_bot.send_message(
-                        admin_user.platform_user_id, admin_text, reply_markup=admin_kb
-                    )
-            except Exception as e:
-                logger.warning("Cannot notify city admin %s: %s", admin_user.platform_user_id, e)
-
-    if tg_bot:
-        for admin_id in settings.superadmin_ids:
-            try:
-                await tg_bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
-            except Exception as e:
-                logger.warning("Cannot notify superadmin %s: %s", admin_id, e)
+        await notify_city_admins_multichannel(
+            ev.city_id,
+            admin_text,
+            telegram_markup=admin_kb,
+            telegram_bot=tg_bot,
+            max_adapter=_max_a,
+        )
+    await notify_superadmins_multichannel(
+        admin_text,
+        telegram_markup=admin_kb,
+        telegram_bot=tg_bot,
+        max_adapter=_max_a,
+    )
 
     await adapter.send_message(chat_id, texts.EVENT_REPORT_SENT, get_back_to_menu_rows())
 

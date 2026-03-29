@@ -7,6 +7,7 @@ from sqlalchemy import select
 from src.models.base import get_session_factory
 from src.models.useful_contact import UsefulContact, ContactCategory
 from src.models.city import CityAdmin
+from src.models.user import User
 
 CAT_MAP = {
     "motoshop": ContactCategory.MOTOSHOP,
@@ -39,6 +40,32 @@ def format_useful_contact_html(c: dict) -> str:
     if c.get("address"):
         parts.append(f"📍 {c['address']}")
     return "\n".join(parts)
+
+
+async def can_manage_contacts_effective(session_user: User) -> bool:
+    """Суперадмин (с учётом связки TG/MAX) или админ текущего города по любой связанной записи User."""
+    from src.services.admin_service import is_effective_superadmin_user
+    from src.models.user import effective_user_id
+    from src.services.user import get_all_platform_identities
+
+    if await is_effective_superadmin_user(session_user):
+        return True
+    if not session_user.city_id:
+        return False
+    canon = effective_user_id(session_user)
+    identities = await get_all_platform_identities(canon)
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        for iu in identities:
+            r = await session.execute(
+                select(CityAdmin).where(
+                    CityAdmin.user_id == iu.id,
+                    CityAdmin.city_id == session_user.city_id,
+                ).limit(1)
+            )
+            if r.scalar_one_or_none() is not None:
+                return True
+    return False
 
 
 async def can_manage_contacts(

@@ -62,7 +62,10 @@ class Settings(BaseSettings):
     superadmin_ids_raw: str = Field(
         default="",
         alias="SUPERADMIN_IDS",
-        description="Comma-separated Telegram/MAX user IDs of superadmins",
+        description=(
+            "Comma-separated platform user IDs of superadmins (Telegram user_id и/или MAX user_id). "
+            "Добавь все свои ID, если заходишь и из TG, и из MAX — иначе уведомления придут не на ту платформу."
+        ),
     )
 
     @property

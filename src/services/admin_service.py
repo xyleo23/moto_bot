@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from sqlalchemy import select, func, or_, and_, String
 
 from src.models.base import get_session_factory
-from src.models.user import User, UserRole, Platform
+from src.models.user import User, UserRole, Platform, effective_user_id
 from src.models.sos_alert import SosAlert
 from src.models.event import Event, EventRegistration
 from src.models.city import City, CityAdmin
@@ -298,6 +298,35 @@ async def is_effective_city_admin_for_city(user: User) -> bool:
         return r.scalar_one_or_none() is not None
 
 
+async def is_effective_city_admin_of(user: User, city_id: UUID) -> bool:
+    """Есть ли у связанных идентичностей роль админа указанного города."""
+    from src.services.user import get_all_platform_identities
+
+    canon = effective_user_id(user)
+    identities = await get_all_platform_identities(canon)
+    identity_ids = [u.id for u in identities]
+    if not identity_ids:
+        return False
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(CityAdmin.id)
+            .where(
+                CityAdmin.user_id.in_(identity_ids),
+                CityAdmin.city_id == city_id,
+            )
+            .limit(1)
+        )
+        return r.scalar_one_or_none() is not None
+
+
+async def can_admin_events_user(actor: User, event_city_id: UUID) -> bool:
+    """Суперадмин или админ города мероприятия (с учётом связки TG/MAX)."""
+    if await is_effective_superadmin_user(actor):
+        return True
+    return await is_effective_city_admin_of(actor, event_city_id)
+
+
 async def has_any_city_admin_role_for_linked(user: User) -> bool:
     """Есть ли у любой связанной записи роль админа хотя бы одного города."""
     from src.models.user import effective_user_id
@@ -329,20 +358,25 @@ async def max_user_should_see_admin_menu(user: User | None) -> bool:
     return False
 
 
-async def is_city_admin(platform_user_id: int, city_id: UUID | None) -> bool:
+async def is_city_admin(
+    platform_user_id: int, city_id: UUID | None, platform: Platform | None = None
+) -> bool:
     if not city_id:
         return False
     session_factory = get_session_factory()
     async with session_factory() as session:
-        r = await session.execute(
-            select(User, CityAdmin)
-            .join(CityAdmin, CityAdmin.user_id == User.id)
+        stmt = (
+            select(CityAdmin.id)
+            .join(User, CityAdmin.user_id == User.id)
             .where(
                 User.platform_user_id == platform_user_id,
                 CityAdmin.city_id == city_id,
             )
         )
-        return r.one_or_none() is not None
+        if platform is not None:
+            stmt = stmt.where(User.platform == platform)
+        r = await session.execute(stmt.limit(1))
+        return r.scalar_one_or_none() is not None
 
 
 async def get_city_admin_city_id(platform_user_id: int) -> UUID | None:

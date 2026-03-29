@@ -1000,9 +1000,6 @@ async def cb_event_share(callback: CallbackQuery, user=None):
 async def cb_event_report(callback: CallbackQuery, user=None):
     """User reports an event. Notifies city admins and superadmins."""
     from src import texts
-    from src.services.admin_service import get_city_admins
-    from src.config import get_settings
-
     if not user:
         await callback.answer("Ошибка.", show_alert=True)
         return
@@ -1045,24 +1042,29 @@ async def cb_event_report(callback: CallbackQuery, user=None):
         ]
     )
 
-    settings = get_settings()
     bot = callback.bot
 
-    if ev.city_id:
-        admins = await get_city_admins(ev.city_id)
-        for _, admin_user in admins:
-            try:
-                await bot.send_message(
-                    admin_user.platform_user_id, admin_text, reply_markup=admin_kb
-                )
-            except Exception as e:
-                logger.warning("Cannot notify city admin %s: %s", admin_user.platform_user_id, e)
+    from src.services.admin_multichannel_notify import (
+        notify_city_admins_multichannel,
+        notify_superadmins_multichannel,
+    )
+    from src.services.broadcast import get_max_adapter
 
-    for admin_id in settings.superadmin_ids:
-        try:
-            await bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
-        except Exception as e:
-            logger.warning("Cannot notify superadmin %s: %s", admin_id, e)
+    _max_a = get_max_adapter()
+    if ev.city_id:
+        await notify_city_admins_multichannel(
+            ev.city_id,
+            admin_text,
+            telegram_markup=admin_kb,
+            telegram_bot=bot,
+            max_adapter=_max_a,
+        )
+    await notify_superadmins_multichannel(
+        admin_text,
+        telegram_markup=admin_kb,
+        telegram_bot=bot,
+        max_adapter=_max_a,
+    )
 
     await callback.answer(texts.EVENT_REPORT_SENT, show_alert=False)
 
