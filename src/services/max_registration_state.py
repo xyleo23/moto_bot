@@ -10,7 +10,8 @@ _memory_store: dict[int, dict] = {}
 # Injected redis.asyncio.Redis client (optional)
 _redis_client = None
 
-_TTL = 3600  # seconds (1 hour)
+_TTL = 7_200  # seconds (2 hours default)
+_TTL_EVENT_CREATE = 86_400  # 24 hours for paid event creation flow
 _KEY_PREFIX = "max_reg:"
 
 
@@ -34,13 +35,17 @@ async def get_state(platform_user_id: int) -> dict | None:
     return _memory_store.get(platform_user_id)
 
 
-async def set_state(platform_user_id: int, state: str, data: dict) -> None:
-    """Persist FSM state for *platform_user_id*."""
+async def set_state(platform_user_id: int, state: str, data: dict, *, ttl: int | None = None) -> None:
+    """Persist FSM state for *platform_user_id*.
+
+    Pass *ttl* to override the default expiry (e.g. longer TTL for paid flows).
+    """
     key = f"{_KEY_PREFIX}{platform_user_id}"
     payload = json.dumps({"state": state, "data": data}, ensure_ascii=False)
+    effective_ttl = ttl if ttl is not None else _TTL
     if _redis_client is not None:
         try:
-            await _redis_client.set(key, payload, ex=_TTL)
+            await _redis_client.set(key, payload, ex=effective_ttl)
             return
         except Exception as exc:
             logger.warning("MAX reg set_state Redis error (falling back to memory): %s", exc)

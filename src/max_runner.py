@@ -591,6 +591,34 @@ async def _handle_fsm_message(
         await _max_profile_phone_change_text(adapter, chat_id, user_id, text)
         return
 
+    # ── SOS location step: accept text address if pin didn't work ────────────
+    if state == "sos:location":
+        loc_text = text.strip() if text else ""
+        if len(loc_text) >= 3:
+            # Accept text as location description (fallback when GPS pin fails)
+            data["location_text"] = loc_text[:200]
+            await reg_state.set_state(user_id, "sos:comment", data)
+            skip_kb = [
+                [Button(texts.BTN_SKIP, payload="sos_skip_comment")],
+                [Button("❌ Отменить", payload="max_reg_cancel")],
+            ]
+            await adapter.send_message(
+                chat_id,
+                "📍 Адрес записан!\n\nДобавь комментарий или нажми «Пропустить»:",
+                skip_kb,
+            )
+        else:
+            _loc_kb = [
+                [get_location_button_row()[0]],
+                [Button("❌ Отменить", payload="max_reg_cancel")],
+            ]
+            await adapter.send_message(
+                chat_id,
+                "Нажми кнопку для отправки геопозиции или напиши адрес текстом:",
+                _loc_kb,
+            )
+        return
+
     # ── SOS comment step ──────────────────────────────────────────────────────
     if state == "sos:comment":
         if text and text.strip().lower() in ("пропустить", "skip", "-", ""):
@@ -1698,14 +1726,39 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         await handle_start(adapter, ev.chat_id, user)
         return
 
-    # Check active FSM
-    fsm = await reg_state.get_state(ev.user_id)
-    if fsm:
-        await _handle_fsm_message(adapter, ev.chat_id, ev.user_id, text, fsm)
-        return
+    # Menu labels (message-type buttons) and known slash commands bypass FSM so
+    # users can always navigate. Exception: event_create:* is "sticky" — the user
+    # explicitly paid, so we remind them to finish or cancel instead of losing state.
+    _nav_cmd: str | None = MAX_MENU_MESSAGE_TO_CMD.get(text)
+    if _nav_cmd is None and text.startswith("/"):
+        _slash = text.lower().lstrip("/").split()[0]
+        if _slash in {
+            "events", "motopair", "contacts", "profile",
+            "about", "sos", "documents", "admin",
+        }:
+            _nav_cmd = _slash
+
+    if _nav_cmd is not None:
+        _active_fsm = await reg_state.get_state(ev.user_id)
+        if _active_fsm and _active_fsm.get("state", "").startswith("event_create:"):
+            await adapter.send_message(
+                ev.chat_id,
+                "⚠️ Создание мероприятия в процессе. Ответь на вопрос выше или нажми «Отмена».",
+                _cancel_kb(),
+            )
+            return
+        if _active_fsm:
+            await reg_state.clear_state(ev.user_id)
+        # Fall through to CMD routing below
+    else:
+        # Regular text — route through FSM if active
+        fsm = await reg_state.get_state(ev.user_id)
+        if fsm:
+            await _handle_fsm_message(adapter, ev.chat_id, ev.user_id, text, fsm)
+            return
 
     # Slash commands + same labels from MAX message-type menu buttons
-    cmd = MAX_MENU_MESSAGE_TO_CMD.get(text, text.lower().lstrip("/"))
+    cmd = _nav_cmd or MAX_MENU_MESSAGE_TO_CMD.get(text, text.lower().lstrip("/"))
     if cmd == "sos":
         await _handle_sos_menu(adapter, ev.chat_id, user)
         return
@@ -2436,7 +2489,8 @@ async def _handle_sos_type_selected(
     kb = [[get_location_button_row()[0]], [Button("❌ Отменить", payload="max_reg_cancel")]]
     await adapter.send_message(
         chat_id,
-        texts.SOS_SEND_LOCATION,
+        "📍 Укажи место на карте — нажми кнопку ниже, перетащи метку и отправь.\n"
+        "Или напиши адрес текстом, если кнопка карты не работает:",
         kb,
     )
 
@@ -2455,8 +2509,10 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
     fsm = await reg_state.get_state(user.platform_user_id)
     data = dict(fsm.get("data", {}) if fsm else {})
 
-    required = ("sos_type", "lat", "lon")
-    if not all(k in data for k in required):
+    has_gps = "lat" in data and "lon" in data
+    has_text_loc = bool(data.get("location_text"))
+
+    if not data.get("sos_type") or (not has_gps and not has_text_loc):
         await adapter.send_message(
             chat_id,
             "Данные SOS устарели. Начни заново — нажми кнопку 🚨 SOS.",
@@ -2464,7 +2520,7 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
         )
         return
 
-    if not is_plausible_gps_coordinate(float(data["lat"]), float(data["lon"])):
+    if has_gps and not is_plausible_gps_coordinate(float(data["lat"]), float(data["lon"])):
         kb = [[get_location_button_row()[0]], [Button("❌ Отменить", payload="max_reg_cancel")]]
         await adapter.send_message(chat_id, texts.SOS_GEO_INVALID, kb)
         await reg_state.set_state(
@@ -2481,12 +2537,16 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
         return
 
     eff_uid = effective_user_id(user)
+
+    lat_val = float(data["lat"]) if has_gps else 0.0
+    lon_val = float(data["lon"]) if has_gps else 0.0
+
     ok, remaining = await create_sos_alert(
         user_id=eff_uid,
         city_id=user.city_id,
         sos_type=data["sos_type"],
-        lat=data["lat"],
-        lon=data["lon"],
+        lat=lat_val,
+        lon=lon_val,
         comment=comment,
     )
     if not ok:
@@ -2514,19 +2574,25 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
     )
     if comment:
         broadcast_text += texts.SOS_BROADCAST_COMMENT.format(comment=escape(comment))
-    broadcast_text += format_sos_broadcast_map_html(data["lat"], data["lon"])
+
+    if has_gps:
+        broadcast_text += format_sos_broadcast_map_html(data["lat"], data["lon"])
+    elif has_text_loc:
+        broadcast_text += f"\n📍 Местоположение: {escape(data['location_text'])}"
 
     # No tel: in inline buttons — Telegram/MAX reject it; phone is in message text (profile).
 
-    map_kb_row: list[KeyboardRow] = [
-        [
-            Button(
-                text=texts.SOS_BROADCAST_MAP_LINK_LABEL,
-                type=ButtonType.URL,
-                url=yandex_maps_point_url(data["lat"], data["lon"]),
-            )
-        ],
-    ]
+    map_kb_row: list[KeyboardRow] = []
+    if has_gps:
+        map_kb_row = [
+            [
+                Button(
+                    text=texts.SOS_BROADCAST_MAP_LINK_LABEL,
+                    type=ButtonType.URL,
+                    url=yandex_maps_point_url(data["lat"], data["lon"]),
+                )
+            ],
+        ]
 
     # Broadcast to MAX users in the city
     max_user_ids = await get_city_max_user_ids(user.city_id)
@@ -2545,12 +2611,14 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
 
     tg_user_ids = await get_city_telegram_user_ids(user.city_id)
     if tg_user_ids:
-        map_url = yandex_maps_point_url(data["lat"], data["lon"])
-        tg_kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=texts.SOS_BROADCAST_MAP_LINK_LABEL, url=map_url)],
-            ]
-        )
+        tg_kb = None
+        if has_gps:
+            map_url = yandex_maps_point_url(data["lat"], data["lon"])
+            tg_kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=texts.SOS_BROADCAST_MAP_LINK_LABEL, url=map_url)],
+                ]
+            )
         tg_bot_instance = _get_tg_bot()
         if tg_bot_instance:
             broadcast_background(
@@ -3846,7 +3914,7 @@ async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
 # ── MAX payment FSM helpers ────────────────────────────────────────────────────
 
 _PAY_KEY_PREFIX = "max_pay:"
-_PAY_TTL = 3600
+_PAY_TTL = 86_400  # 24 hours — user may pay and return later
 
 
 async def _pay_set(user_id: int, data: dict) -> None:
@@ -4330,8 +4398,10 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
 
         if status == "succeeded":
             await _pay_clear(user.platform_user_id)
+            from src.services.max_registration_state import _TTL_EVENT_CREATE
             await reg_state.set_state(
-                user.platform_user_id, "event_create:title", {"event_type": ev_type}
+                user.platform_user_id, "event_create:title", {"event_type": ev_type},
+                ttl=_TTL_EVENT_CREATE,
             )
             await adapter.send_message(
                 chat_id,
