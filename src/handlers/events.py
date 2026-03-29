@@ -153,6 +153,74 @@ async def _remove_reply_keyboard_silently(bot, chat_id: int) -> None:
         logger.debug("remove_reply_keyboard_silently: %s", e)
 
 
+# В Telegram кнопка request_location всегда шлёт только текущие координаты GPS, не выбор на карте.
+EVCREATE_BTN_CURRENT_GPS = "📍 Где я сейчас (GPS)"
+EVCREATE_BTN_ADDRESS_OR_MAP = "✏️ Другая точка: адрес или карта (📎)"
+
+EVCREATE_ADDRESS_OR_MAP_HELP = (
+    "<b>Как указать другую точку</b> (не «где я сейчас»):\n\n"
+    "• Напиши в чат <b>адрес, название места</b> или координаты вида <code>56.8,60.6</code>.\n"
+    "• Или нажми <b>📎</b> под полем ввода → <b>Геопозиция</b> — откроется карта: "
+    "передвинь метку и отправь точку.\n\n"
+    f"Кнопка «{EVCREATE_BTN_CURRENT_GPS}» всегда подставляет только GPS телефона в этот момент."
+)
+
+
+def _evcreate_point_start_reply_kb() -> "ReplyKeyboardMarkup":
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=EVCREATE_BTN_CURRENT_GPS, request_location=True)],
+            [KeyboardButton(text=EVCREATE_BTN_ADDRESS_OR_MAP)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def _evcreate_point_end_reply_kb() -> "ReplyKeyboardMarkup":
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=EVCREATE_BTN_CURRENT_GPS, request_location=True)],
+            [KeyboardButton(text=EVCREATE_BTN_ADDRESS_OR_MAP)],
+            [KeyboardButton(text="Пропустить")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+    )
+
+
+async def _evcreate_send_point_end_prompt(message: Message) -> None:
+    """Сообщения для шага «финиш» после сохранения старта."""
+    kb_inline = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
+        ]
+    )
+    await message.answer(
+        "Точка финиша — <b>GPS-кнопка</b> (только «здесь и сейчас»), <b>текст</b>, "
+        "<b>📎 → Геопозиция на карте</b> или «Пропустить»:",
+        reply_markup=_evcreate_point_end_reply_kb(),
+    )
+    await message.answer("Либо inline «Пропустить ➡️»:", reply_markup=kb_inline)
+
+
+async def _evcreate_send_point_end_address_help(message: Message) -> None:
+    kb_inline = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
+        ]
+    )
+    await message.answer(
+        EVCREATE_ADDRESS_OR_MAP_HELP,
+        reply_markup=_evcreate_point_end_reply_kb(),
+    )
+    await message.answer("Либо inline «Пропустить ➡️»:", reply_markup=kb_inline)
+
+
 def _format_location(value: str | None) -> str:
     """Return a Maps link if value looks like coordinates, otherwise return as-is."""
     if not value:
@@ -443,15 +511,12 @@ async def evcreate_time(message: Message, state: FSMContext):
         dt_cls.strptime(message.text.strip(), "%H:%M")
         await state.update_data(start_time=message.text.strip())
         await state.set_state(EventCreateStates.point_start)
-        from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-
         await message.answer(
-            "Точка старта — <b>геолокация кнопкой</b> или <b>любой текст</b> (адрес, название):",
-            reply_markup=ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
-                resize_keyboard=True,
-                one_time_keyboard=True,
-            ),
+            "Точка старта:\n"
+            f"• <b>{EVCREATE_BTN_CURRENT_GPS}</b> — только текущие координаты телефона.\n"
+            f"• <b>{EVCREATE_BTN_ADDRESS_OR_MAP}</b> — подсказка, как указать другую точку.\n"
+            "• Или сразу напиши адрес / название / координаты в чат.",
+            reply_markup=_evcreate_point_start_reply_kb(),
         )
     except ValueError:
         await message.answer("Формат: ЧЧ:ММ (например 10:00)")
@@ -459,65 +524,43 @@ async def evcreate_time(message: Message, state: FSMContext):
 
 @router.message(EventCreateStates.point_start, F.text)
 async def evcreate_point_start(message: Message, state: FSMContext):
-    from aiogram.types import (
-        ReplyKeyboardMarkup,
-        KeyboardButton,
-        InlineKeyboardMarkup,
-        InlineKeyboardButton,
-    )
+    raw = message.text.strip()
+    if raw == EVCREATE_BTN_ADDRESS_OR_MAP:
+        await message.answer(
+            EVCREATE_ADDRESS_OR_MAP_HELP,
+            reply_markup=_evcreate_point_start_reply_kb(),
+        )
+        return
+    if raw == EVCREATE_BTN_CURRENT_GPS:
+        await message.answer(
+            f"Нажми кнопку «{EVCREATE_BTN_CURRENT_GPS}» <b>на клавиатуре под полем ввода</b> — "
+            "она отправит координаты. Текстом в чат GPS не передаётся."
+        )
+        return
 
-    await state.update_data(point_start=message.text.strip()[:500])
+    await state.update_data(point_start=raw[:500])
     await state.set_state(EventCreateStates.point_end)
-    kb_inline = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
-        ]
-    )
-    await message.answer(
-        "Точка финиша — <b>геолокация</b>, <b>текст</b> или кнопка «Пропустить» с клавиатуры:",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
-                [KeyboardButton(text="Пропустить")],
-            ],
-            resize_keyboard=True,
-            one_time_keyboard=False,
-        ),
-    )
-    await message.answer("Либо inline «Пропустить ➡️»:", reply_markup=kb_inline)
+    await _evcreate_send_point_end_prompt(message)
+
+
+@router.message(EventCreateStates.point_start, F.venue)
+async def evcreate_point_start_venue(message: Message, state: FSMContext):
+    v = message.venue
+    lat = v.location.latitude
+    lon = v.location.longitude
+    await state.update_data(point_start=f"{lat},{lon}")
+    await state.set_state(EventCreateStates.point_end)
+    await _evcreate_send_point_end_prompt(message)
 
 
 @router.message(EventCreateStates.point_start, F.location)
 async def evcreate_point_start_location(message: Message, state: FSMContext):
-    from aiogram.types import (
-        ReplyKeyboardMarkup,
-        KeyboardButton,
-        InlineKeyboardMarkup,
-        InlineKeyboardButton,
-    )
-
     lat = message.location.latitude
     lon = message.location.longitude
     point_str = f"{lat},{lon}"
     await state.update_data(point_start=point_str)
     await state.set_state(EventCreateStates.point_end)
-    kb_inline = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
-        ]
-    )
-    await message.answer(
-        "Точка финиша — <b>геолокация</b>, <b>текст</b> или кнопка «Пропустить» с клавиатуры:",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
-                [KeyboardButton(text="Пропустить")],
-            ],
-            resize_keyboard=True,
-            one_time_keyboard=False,
-        ),
-    )
-    await message.answer("Либо inline «Пропустить ➡️»:", reply_markup=kb_inline)
+    await _evcreate_send_point_end_prompt(message)
 
 
 @router.callback_query(F.data == "evcreate_point_end_skip", EventCreateStates.point_end)
@@ -532,9 +575,29 @@ async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext)
 @router.message(EventCreateStates.point_end, F.text)
 async def evcreate_point_end(message: Message, state: FSMContext):
     text = message.text.strip()
+    if text == EVCREATE_BTN_ADDRESS_OR_MAP:
+        await _evcreate_send_point_end_address_help(message)
+        return
+    if text == EVCREATE_BTN_CURRENT_GPS:
+        await message.answer(
+            f"Нажми «{EVCREATE_BTN_CURRENT_GPS}» <b>на клавиатуре под полем ввода</b> — "
+            "она отправит координаты."
+        )
+        return
     if text.lower() in ("пропустить", "skip", "-"):
         text = None
     await state.update_data(point_end=text[:500] if text else None)
+    await _remove_reply_keyboard_silently(message.bot, message.chat.id)
+    await _prompt_evcreate_ride_type_message(message)
+    await state.set_state(EventCreateStates.ride_type)
+
+
+@router.message(EventCreateStates.point_end, F.venue)
+async def evcreate_point_end_venue(message: Message, state: FSMContext):
+    v = message.venue
+    lat = v.location.latitude
+    lon = v.location.longitude
+    await state.update_data(point_end=f"{lat},{lon}")
     await _remove_reply_keyboard_silently(message.bot, message.chat.id)
     await _prompt_evcreate_ride_type_message(message)
     await state.set_state(EventCreateStates.ride_type)
