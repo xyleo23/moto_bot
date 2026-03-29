@@ -78,6 +78,28 @@ async def _edit_or_answer_status(msg: Message, text: str, reply_markup=None) -> 
 router = Router()
 
 
+async def _evcreate_finish_guard(user, event_type: str | None) -> str | None:
+    """Перед сохранением в БД: квота мотопробега / оплата (гонка двух сценариев)."""
+    if not user or not event_type:
+        return "Ошибка. Начни создание заново."
+    if not user.city_id:
+        return "Не выбран город."
+    from src.services.admin_service import get_subscription_settings
+    from src.services.event_service import event_creation_payment_required
+    from src import texts
+
+    s = await get_subscription_settings()
+    eff = effective_user_id(user)
+    need, price = await event_creation_payment_required(
+        eff, user.platform_user_id, user.city_id, event_type, s
+    )
+    if need and price and price > 0:
+        return texts.EVENT_CREATE_PAYMENT_REQUIRED_AGAIN
+    if need:
+        return texts.EVENT_MOTORCADE_QUOTA_EXCEEDED
+    return None
+
+
 class EventCreateStates(StatesGroup):
     awaiting_payment = State()  # Waiting for event creation payment confirmation
     type = State()
@@ -310,6 +332,17 @@ async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext, user=None
             await callback.answer()
             return
         await callback.answer("Платёжный сервис недоступен.", show_alert=True)
+        return
+
+    if needs_payment:
+        from src import texts
+
+        await state.clear()
+        await callback.message.edit_text(
+            texts.EVENT_MOTORCADE_QUOTA_EXCEEDED,
+            reply_markup=get_back_to_menu_kb(),
+        )
+        await callback.answer("Лимит мотопробегов в месяц.", show_alert=True)
         return
 
     await state.set_state(EventCreateStates.title)
@@ -600,6 +633,12 @@ async def cb_evcreate_desc_skip(callback: CallbackQuery, state: FSMContext, user
         await callback.answer()
         return
 
+    guard = await _evcreate_finish_guard(user, data.get("event_type"))
+    if guard:
+        await callback.message.answer(guard, reply_markup=get_back_to_menu_kb())
+        await callback.answer()
+        return
+
     ev = await create_event(
         city_id=user.city_id,
         creator_id=effective_user_id(user),
@@ -640,6 +679,11 @@ async def evcreate_description(message: Message, state: FSMContext, user=None):
     start_at = _parse_datetime(data["start_date"], data["start_time"])
     if not start_at:
         await message.answer("Ошибка даты. Создание отменено.", reply_markup=get_back_to_menu_kb())
+        return
+
+    guard = await _evcreate_finish_guard(user, data.get("event_type"))
+    if guard:
+        await message.answer(guard, reply_markup=get_back_to_menu_kb())
         return
 
     ev = await create_event(

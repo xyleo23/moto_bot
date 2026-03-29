@@ -146,12 +146,11 @@ async def event_creation_payment_required(
 
     If ``apply_subscription_benefits`` is False (MAX messenger), льготы подписки
     на создание не применяются — как платное создание для всех (кроме админов).
+
+    Важно: лимит мотопробегов для подписчиков проверяется **до** раннего выхода
+    «платное создание выключено», иначе квота никогда не применялась.
     """
-    if (
-        not settings
-        or not settings.event_creation_enabled
-        or settings.event_creation_price_kopecks <= 0
-    ):
+    if not settings:
         return False, None
 
     from src.services.admin_service import can_create_event_free
@@ -159,7 +158,22 @@ async def event_creation_payment_required(
     if await can_create_event_free(platform_user_id, city_id):
         return False, None
 
-    price = settings.event_creation_price_kopecks
+    price = int(settings.event_creation_price_kopecks or 0)
+    payment_available = bool(settings.event_creation_enabled and price > 0)
+
+    if event_type == "motorcade" and apply_subscription_benefits:
+        has_sub = await _user_has_active_subscription(user_id)
+        if has_sub:
+            limit = int(getattr(settings, "event_motorcade_limit_per_month", 2) or 2)
+            count = await count_motorcades_this_month(user_id)
+            if limit > 0 and count < limit:
+                return False, None
+            if payment_available:
+                return True, price
+            return True, None
+
+    if not settings.event_creation_enabled or price <= 0:
+        return False, None
 
     if event_type == "large":
         return True, price
@@ -167,12 +181,9 @@ async def event_creation_payment_required(
     if event_type == "motorcade":
         if not apply_subscription_benefits:
             return True, price
-        has_sub = await _user_has_active_subscription(user_id)
-        if not has_sub:
+        if not await _user_has_active_subscription(user_id):
             return True, price
-        limit = getattr(settings, "event_motorcade_limit_per_month", 2) or 2
-        count = await count_motorcades_this_month(user_id)
-        return count >= limit, price if count >= limit else None
+        return True, price
 
     if event_type == "run":
         if not apply_subscription_benefits:
