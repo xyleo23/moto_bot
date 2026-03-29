@@ -13,7 +13,7 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="👤 Админы городов", callback_data="admin_city_admins"),
             ],
             [InlineKeyboardButton(text="📅 Мероприятия", callback_data="admin_events")],
-            [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
+            [InlineKeyboardButton(text="💰 Подписки и оплаты", callback_data="admin_settings")],
             [InlineKeyboardButton(text="📝 Текст «О нас»", callback_data="admin_text_about")],
             [InlineKeyboardButton(text="📧 Шаблоны уведомлений", callback_data="admin_templates")],
             [InlineKeyboardButton(text="📋 Логи активности", callback_data="admin_logs")],
@@ -104,7 +104,9 @@ def get_admin_event_kb(
 
 
 def get_settings_kb(s: object) -> InlineKeyboardMarkup:
-    """Subscription settings toggles."""
+    """Подписка, цены, платное создание мероприятий и поднятие анкеты."""
+    ev_kop = getattr(s, "event_creation_price_kopecks", 9900)
+    ra_kop = getattr(s, "raise_profile_price_kopecks", 4900)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -115,8 +117,32 @@ def get_settings_kb(s: object) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=f"💵 Цена месяца (коп): {getattr(s, 'monthly_price_kopecks', 0)}",
+                    callback_data="admin_set_monthly",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"💵 Цена года /365 дн./ (коп): {getattr(s, 'season_price_kopecks', 0)}",
+                    callback_data="admin_set_season",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"🏍 Мотопробегов/мес: {getattr(s, 'event_motorcade_limit_per_month', 2)}",
+                    callback_data="admin_set_motorcade_limit",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}",
                     callback_data="admin_set_ev_toggle",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"💵 Цена создания меропр. (коп): {ev_kop}",
+                    callback_data="admin_set_event_creation_price",
                 )
             ],
             [
@@ -127,20 +153,8 @@ def get_settings_kb(s: object) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text=f"💵 Месяц: {getattr(s, 'monthly_price_kopecks', 0) // 100} ₽ (править)",
-                    callback_data="admin_set_monthly",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"💵 Год: {getattr(s, 'season_price_kopecks', 0) // 100} ₽ (править)",
-                    callback_data="admin_set_season",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"🏍 Мотопробегов/мес: {getattr(s, 'event_motorcade_limit_per_month', 2)}",
-                    callback_data="admin_set_motorcade_limit",
+                    text=f"💵 Цена поднятия анкеты (коп): {ra_kop}",
+                    callback_data="admin_set_raise_profile_price",
                 )
             ],
             [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],

@@ -171,7 +171,7 @@ def get_admin_superadmin_kb() -> ReplyKeyboardMarkup:
             ],
             [KeyboardButton(text="📅 Мероприятия")],
             [
-                KeyboardButton(text="⚙️ Настройки"),
+                KeyboardButton(text="💰 Подписки и оплаты"),
                 KeyboardButton(text="📢 Рассылка"),
             ],
             [

@@ -91,6 +91,8 @@ class AdminExtendSubStates(StatesGroup):
 class AdminSettingsStates(StatesGroup):
     monthly_price = State()
     season_price = State()
+    event_creation_price = State()
+    raise_profile_price = State()
 
 
 class AdminTextAboutStates(StatesGroup):
@@ -103,6 +105,12 @@ class AdminTemplatesStates(StatesGroup):
 
 
 # ——— Main / Stats ———
+
+
+def _inline_payments_row():
+    from aiogram.types import InlineKeyboardButton
+
+    return [InlineKeyboardButton(text="💰 Подписки и оплаты", callback_data="admin_settings")]
 
 
 @router.message(Command("admin"))
@@ -162,7 +170,7 @@ async def cb_admin_stats(callback: CallbackQuery):
         f"SOS-сигналов: {stats.get('sos', 0)}\n"
         f"Мероприятий: {stats.get('events', 0)}"
     )
-    await callback.message.edit_text(text, reply_markup=get_admin_back_kb())
+    await callback.message.edit_text(text, reply_markup=_admin_stats_markup())
     await callback.answer()
 
 
@@ -214,6 +222,9 @@ def _build_logs_page(logs: list, total: int, page: int, event_type: str | None):
         )
     if nav:
         rows.append(nav)
+    rows.append(
+        [InlineKeyboardButton(text="💰 Подписки и оплаты", callback_data="admin_settings")]
+    )
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -263,6 +274,22 @@ async def cb_admin_logs_page(callback: CallbackQuery, state: FSMContext):
 # ——— ReplyKeyboard text buttons (superadmin / city admin) ———
 
 
+def _admin_stats_markup():
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💰 Подписки и оплаты",
+                    callback_data="admin_settings",
+                )
+            ],
+            [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+        ]
+    )
+
+
 async def _show_admin_stats(message: Message):
     """Show stats — used by both callback and text handler."""
     stats = await get_stats()
@@ -274,14 +301,23 @@ async def _show_admin_stats(message: Message):
         f"SOS-сигналов: {stats.get('sos', 0)}\n"
         f"Мероприятий: {stats.get('events', 0)}"
     )
-    await message.answer(text, reply_markup=get_admin_back_kb())
+    await message.answer(text, reply_markup=_admin_stats_markup())
 
 
-def _build_users_page(users: list, total: int, page: int):
+def _build_users_page(users: list, total: int, page: int, *, payment_row: bool = False):
     """Build users list (text + markup) for both callback and message."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     rows = []
+    if payment_row:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="💰 Подписки и оплаты",
+                    callback_data="admin_settings",
+                )
+            ]
+        )
     for u in users:
         bl = " 🔒" if u.is_blocked else ""
         rows.append(
@@ -318,7 +354,7 @@ async def msg_admin_users(message: Message, state: FSMContext, user=None):
         return
     await state.clear()
     users, total = await get_users_list(limit=USERS_PAGE_SIZE, offset=0)
-    text, kb = _build_users_page(users, total, 0)
+    text, kb = _build_users_page(users, total, 0, payment_row=True)
     await message.answer(text, reply_markup=kb)
 
 
@@ -347,7 +383,7 @@ async def msg_admin_city_admins(message: Message, user=None):
     )
 
 
-@router.message(F.text == "⚙️ Настройки")
+@router.message(F.text.in_({"⚙️ Настройки", "💰 Подписки и оплаты"}))
 async def msg_admin_settings(message: Message, user=None):
     if not _is_superadmin(message.from_user.id):
         return
@@ -369,6 +405,7 @@ async def msg_admin_templates(message: Message, state: FSMContext, user=None):
         rows.append(
             [InlineKeyboardButton(text=f"✏ {label}", callback_data=f"admin_tpl_edit_{key}")]
         )
+    rows.append(_inline_payments_row())
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
     await message.answer(
         "<b>📧 Шаблоны уведомлений</b>\n\n"
@@ -406,6 +443,7 @@ async def msg_admin_broadcast(message: Message, state: FSMContext, user=None):
         rows.append(
             [InlineKeyboardButton(text=f"Город: {c.name}", callback_data=f"admin_bc_city_{c.id}")]
         )
+    rows.append(_inline_payments_row())
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await message.answer("Выбери сегмент для рассылки:", reply_markup=kb)
@@ -435,6 +473,7 @@ async def msg_admin_text_about(message: Message, state: FSMContext, user=None):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✏ Изменить", callback_data="admin_text_about_edit")],
+            _inline_payments_row(),
             [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
         ]
     )
@@ -543,7 +582,7 @@ async def admin_users_search_input(message: Message, state: FSMContext):
 
 
 async def _render_users_page(callback: CallbackQuery, users: list, total: int, page: int):
-    text, kb = _build_users_page(users, total, page)
+    text, kb = _build_users_page(users, total, page, payment_row=True)
     await callback.message.edit_text(text, reply_markup=kb)
 
 
@@ -682,6 +721,7 @@ async def _admin_cities_list_text_kb():
             ]
         )
     rows.append([InlineKeyboardButton(text="➕ Добавить город", callback_data="admin_cities_add")])
+    rows.append(_inline_payments_row())
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
     text = (
         "🏙 <b>Города</b>\n\n"
@@ -991,6 +1031,15 @@ async def cb_admin_events(callback: CallbackQuery, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     rows = []
+    if is_sa:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="💰 Цена создания мероприятия",
+                    callback_data="admin_set_event_creation_price",
+                )
+            ]
+        )
     for e in events[:20]:
         label = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
         rows.append(
@@ -1224,19 +1273,22 @@ async def cb_admin_settings(callback: CallbackQuery):
 
 def _settings_text(s) -> str:
     limit = getattr(s, "event_motorcade_limit_per_month", 2)
+    ev_pr = getattr(s, "event_creation_price_kopecks", 9900)
+    ra_pr = getattr(s, "raise_profile_price_kopecks", 4900)
     return (
-        "⚙️ <b>Настройки подписки</b>\n\n"
+        "💰 <b>Подписки, оплаты и лимиты</b>\n\n"
         f"Подписка: {'✅ вкл' if s.subscription_enabled else '❌ выкл'}\n"
         f"Цена месяца: {s.monthly_price_kopecks / 100:.0f} ₽ "
         f"({s.monthly_price_kopecks} коп.)\n"
         f"Цена года (365 дн.): {s.season_price_kopecks / 100:.0f} ₽ "
         f"({s.season_price_kopecks} коп.)\n"
-        f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}\n"
-        f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}\n"
         f"Мотопробегов/мес (с подпиской): {limit}\n\n"
-        "<i>Чтобы изменить цену: нажми кнопку «Месяц» / «Год» ниже и отправь "
-        "новое значение <b>в копейках</b> обычным сообщением в этот чат "
-        "(например 29900).</i>\n\n"
+        f"Платное создание мероприятий: {'✅' if s.event_creation_enabled else '❌'}\n"
+        f"→ цена создания: {ev_pr / 100:.0f} ₽ ({ev_pr} коп.)\n\n"
+        f"Платное поднятие анкеты: {'✅' if s.raise_profile_enabled else '❌'}\n"
+        f"→ цена поднятия: {ra_pr / 100:.0f} ₽ ({ra_pr} коп.)\n\n"
+        "<i>Цены меняются кнопками «Месяц», «Год», «Создание», «Поднятие» — "
+        "затем отправь число <b>в копейках</b> (например 9900 = 99 ₽).</i>\n\n"
         "<i>Суперадмины и админы городов создают мероприятия без оплаты и без "
         "лимита мотопробегов.</i>"
     )
@@ -1351,6 +1403,40 @@ async def cb_admin_set_season(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "admin_set_event_creation_price")
+async def cb_admin_set_event_creation_price(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    await state.set_state(AdminSettingsStates.event_creation_price)
+    s = await get_subscription_settings()
+    cur = s.event_creation_price_kopecks
+    await callback.message.edit_text(
+        f"💳 <b>Цена создания мероприятия</b>\n\n"
+        f"Сейчас: <b>{cur}</b> коп. ({cur // 100} ₽).\n\n"
+        "Отправь <b>новое число в копейках</b> ответом в этот чат "
+        "(например <code>9900</code> = 99 ₽). <code>0</code> — бесплатно при включённом платном создании."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_set_raise_profile_price")
+async def cb_admin_set_raise_profile_price(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    await state.set_state(AdminSettingsStates.raise_profile_price)
+    s = await get_subscription_settings()
+    cur = s.raise_profile_price_kopecks
+    await callback.message.edit_text(
+        f"⬆️ <b>Цена поднятия анкеты</b>\n\n"
+        f"Сейчас: <b>{cur}</b> коп. ({cur // 100} ₽).\n\n"
+        "Отправь <b>новое число в копейках</b> ответом в этот чат "
+        "(например <code>4900</code> = 49 ₽). <code>0</code> — поднятие бесплатно при включённой опции."
+    )
+    await callback.answer()
+
+
 @router.message(AdminSettingsStates.monthly_price, F.text)
 async def admin_set_price_monthly(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -1389,6 +1475,42 @@ async def admin_set_price_season(message: Message, state: FSMContext):
     await state.clear()
 
 
+@router.message(AdminSettingsStates.event_creation_price, F.text)
+async def admin_set_price_event_creation(message: Message, state: FSMContext):
+    if not _is_superadmin(message.from_user.id):
+        await state.clear()
+        return
+    try:
+        val = int(message.text.strip())
+        if val < 0 or val > 10000000:
+            raise ValueError()
+    except ValueError:
+        await message.answer("Введи число копеек (0–10000000).")
+        return
+    await update_subscription_settings(event_creation_price_kopecks=val)
+    s = await get_subscription_settings()
+    await message.answer(_settings_text(s), reply_markup=get_settings_kb(s))
+    await state.clear()
+
+
+@router.message(AdminSettingsStates.raise_profile_price, F.text)
+async def admin_set_price_raise_profile(message: Message, state: FSMContext):
+    if not _is_superadmin(message.from_user.id):
+        await state.clear()
+        return
+    try:
+        val = int(message.text.strip())
+        if val < 0 or val > 10000000:
+            raise ValueError()
+    except ValueError:
+        await message.answer("Введи число копеек (0–10000000).")
+        return
+    await update_subscription_settings(raise_profile_price_kopecks=val)
+    s = await get_subscription_settings()
+    await message.answer(_settings_text(s), reply_markup=get_settings_kb(s))
+    await state.clear()
+
+
 # ——— Global texts: О нас ———
 
 
@@ -1404,6 +1526,7 @@ async def cb_admin_text_about(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✏ Изменить", callback_data="admin_text_about_edit")],
+            _inline_payments_row(),
             [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
         ]
     )
@@ -1460,6 +1583,7 @@ async def cb_admin_templates(callback: CallbackQuery, state: FSMContext):
         rows.append(
             [InlineKeyboardButton(text=f"✏ {label}", callback_data=f"admin_tpl_edit_{key}")]
         )
+    rows.append(_inline_payments_row())
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
     await callback.message.edit_text(
         "<b>📧 Шаблоны уведомлений</b>\n\n"
@@ -1536,6 +1660,7 @@ async def cb_admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
         rows.append(
             [InlineKeyboardButton(text=f"Город: {c.name}", callback_data=f"admin_bc_city_{c.id}")]
         )
+    rows.append(_inline_payments_row())
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await callback.message.edit_text(

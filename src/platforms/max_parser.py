@@ -18,6 +18,35 @@ from src.platforms.base import (
 )
 
 
+def normalize_max_callback_payload(cb: dict) -> str:
+    """MAX может прислать payload строкой или объектом (новые версии API)."""
+    p = cb.get("payload")
+    if p is None:
+        return ""
+    if isinstance(p, str):
+        return p
+    if isinstance(p, dict):
+        for k in ("data", "callback_data", "value", "command", "text"):
+            v = p.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+        return ""
+    if isinstance(p, (int, float, bool)):
+        return str(p)
+    return str(p) if p else ""
+
+
+def normalize_max_callback_id(cb: dict, raw: dict) -> str:
+    for obj in (cb, raw):
+        if not isinstance(obj, dict):
+            continue
+        for k in ("callback_id", "callbackId"):
+            v = obj.get(k)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+    return ""
+
+
 def _floatish(value) -> float | None:
     if value is None:
         return None
@@ -205,8 +234,15 @@ def parse_update(raw: dict):
             chat_id = str(recipient.get("chat_id") or user_id)
 
         body = msg.get("body") or {}
-        msg_id = str(body.get("mid") or "")
-        data = str(cb.get("payload") or "")
+        msg_id = str(body.get("mid") or body.get("message_id") or "")
+        data = normalize_max_callback_payload(cb)
+        if not data:
+            import logging as _logging
+
+            _logging.getLogger("max_parser").warning(
+                "MAX message_callback with empty payload keys=%s",
+                list(cb.keys()) if isinstance(cb, dict) else None,
+            )
 
         return IncomingCallback(
             platform="max",

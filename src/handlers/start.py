@@ -504,6 +504,15 @@ async def kb_events(message: Message, state: FSMContext, user=None):
     if is_sa or is_ca:
         events = await get_admin_events(superadmin=is_sa, city_id=user.city_id if user else None)
         rows = []
+        if is_sa:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="💰 Цена создания мероприятия",
+                        callback_data="admin_set_event_creation_price",
+                    )
+                ]
+            )
         for e in events[:20]:
             label = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
             rows.append(

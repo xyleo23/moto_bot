@@ -1535,6 +1535,119 @@ async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
             logger.exception("MAX handle error: %s", e)
 
 
+async def _max_route_menu_text_press(
+    adapter: MaxAdapter, ev: IncomingMessage, user, text: str
+) -> bool:
+    """
+    Некоторые клиенты MAX показывают inline-кнопки, но при нажатии шлют message_created
+    с текстом кнопки вместо message_callback — дублируем логику callback здесь.
+    """
+    from src.services.event_service import get_events_list
+    from src.services.max_last_event_context import clear_last_event_id, get_last_event_id
+    from src.ui_copy import (
+        EVENT_REGISTER_PASSENGER,
+        EVENT_REGISTER_PILOT,
+        EVENT_SEEK_PAIR,
+        SEEK_CONFIRM_PASSENGER,
+        SEEK_CONFIRM_PILOT,
+        SEEK_DECLINE,
+    )
+    from src.utils.text_format import event_button_label
+
+    t = (text or "").strip()
+    if not t:
+        return False
+
+    if t.startswith("📅 ") and user.city_id:
+        events = await get_events_list(user.city_id, None)
+        for e in events:
+            label = event_button_label(str(e.get("title") or "")).strip()
+            if label == t:
+                await handle_event_detail(adapter, ev.chat_id, user, str(e["id"]))
+                return True
+        return False
+
+    low = t.lower()
+    filter_routes = {
+        "все": (None, 0),
+        "масштабное": ("large", 0),
+        "мотопробег": ("motorcade", 0),
+        "прохват": ("run", 0),
+    }
+    if low in filter_routes:
+        et, off = filter_routes[low]
+        await handle_events_list(adapter, ev.chat_id, user, et, offset=off)
+        return True
+    if low.startswith("масшт"):
+        await handle_events_list(adapter, ev.chat_id, user, "large", offset=0)
+        return True
+    if low.startswith("мотопр"):
+        await handle_events_list(adapter, ev.chat_id, user, "motorcade", offset=0)
+        return True
+
+    if t == "« Мероприятия":
+        await handle_events_menu(adapter, ev.chat_id, user)
+        return True
+    if t == "« К списку":
+        await handle_events_list_filter(adapter, ev.chat_id, user)
+        return True
+    if t == "« Мотопара":
+        await handle_motopair_menu(adapter, ev.chat_id, user)
+        return True
+
+    leid = await get_last_event_id(ev.user_id)
+
+    if t == "« К мероприятию" and leid:
+        await handle_event_detail(adapter, ev.chat_id, user, leid)
+        return True
+
+    if t == "🚩 Пожаловаться" and leid:
+        await handle_event_report(adapter, ev.chat_id, user, leid)
+        return True
+
+    if t in (EVENT_REGISTER_PILOT, EVENT_REGISTER_PASSENGER) and leid:
+        role = "pilot" if t == EVENT_REGISTER_PILOT else "passenger"
+        await handle_event_register(adapter, ev.chat_id, user, leid, role)
+        return True
+
+    if t == EVENT_SEEK_PAIR and leid:
+        await _max_event_seeking_open(adapter, ev.chat_id, user, leid)
+        return True
+
+    if leid:
+        try:
+            euuid = uuid.UUID(leid)
+        except ValueError:
+            euuid = None
+        if euuid is not None:
+            h = euuid.hex
+            if t == SEEK_CONFIRM_PASSENGER:
+                await _max_event_seek_yes(adapter, ev.chat_id, user, f"seeky_{h}_pax")
+                return True
+            if t == SEEK_CONFIRM_PILOT:
+                await _max_event_seek_yes(adapter, ev.chat_id, user, f"seeky_{h}_plt")
+                return True
+            if t == SEEK_DECLINE:
+                await _max_event_seek_no(adapter, ev.chat_id, user, f"seekn_{h}")
+                return True
+
+    if t == "🏠 Главное меню":
+        await clear_last_event_id(ev.user_id)
+        await reg_state.clear_state(ev.user_id)
+        try:
+            await _pay_clear(ev.user_id)
+        except Exception:
+            pass
+        await adapter.send_message(
+            ev.chat_id,
+            "С возвращением! 👋\nГлавное меню:",
+            await _main_menu_rows_for(user),
+        )
+        return True
+
+    return False
+
+
 async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
     """Handle text message or /start."""
     user = await get_or_create_user(
@@ -1628,6 +1741,9 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         except KeyError:
             st = texts.LEGAL_SUPPORT_TEXT
         await adapter.send_message(ev.chat_id, st, None)
+        return
+
+    if await _max_route_menu_text_press(adapter, ev, user, text):
         return
 
     # Default
@@ -1777,8 +1893,11 @@ async def _resend_current_step(
 async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
     """Handle callback button press."""
     # Acknowledge the button press immediately (removes loading state in MAX UI)
+    from src.platforms.max_parser import normalize_max_callback_id
+
     cb = ev.raw.get("callback") or {}
-    cb_id = str(cb.get("callback_id") or cb.get("callbackId") or "")
+    raw = ev.raw if isinstance(ev.raw, dict) else {}
+    cb_id = normalize_max_callback_id(cb, raw)
     if cb_id:
         await adapter.answer_callback(cb_id)
 
@@ -1939,6 +2058,9 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
 
     # ── Main menu ─────────────────────────────────────────────────────────────
     if data == "menu_main":
+        from src.services.max_last_event_context import clear_last_event_id
+
+        await clear_last_event_id(ev.user_id)
         await reg_state.clear_state(ev.user_id)
         try:
             await _pay_clear(ev.user_id)
@@ -3099,6 +3221,9 @@ async def _max_event_seeking_open(adapter: MaxAdapter, chat_id: str, user, eid_s
             chat_id, "Сначала запишись на мероприятие.", get_back_to_menu_rows()
         )
         return
+    from src.services.max_last_event_context import set_last_event_id
+
+    await set_last_event_id(user.platform_user_id, str(eid))
     await adapter.send_message(
         chat_id, texts.EVENT_PAIR_SEEK_INTRO, get_max_seeking_confirm_rows(str(eid))
     )
@@ -3417,6 +3542,9 @@ async def handle_event_detail(adapter: MaxAdapter, chat_id: str, user, event_id:
     kb = get_event_detail_rows(
         event_id, is_reg, can_report=can_report, user_role=user_role if is_reg else None
     )
+    from src.services.max_last_event_context import set_last_event_id
+
+    await set_last_event_id(user.platform_user_id, str(ev.id))
     await adapter.send_message(chat_id, text, kb)
 
 
