@@ -154,27 +154,15 @@ async def _remove_reply_keyboard_silently(bot, chat_id: int) -> None:
         logger.debug("remove_reply_keyboard_silently: %s", e)
 
 
-# В Telegram кнопка request_location всегда шлёт только текущие координаты GPS, не выбор на карте.
-EVCREATE_BTN_CURRENT_GPS = "📍 Где я сейчас (GPS)"
-EVCREATE_BTN_ADDRESS_OR_MAP = "✏️ Другая точка: адрес или карта (📎)"
-
-EVCREATE_ADDRESS_OR_MAP_HELP = (
-    "<b>Как указать другую точку</b> (не «где я сейчас»):\n\n"
-    "• Напиши в чат <b>адрес, название места</b> или координаты вида <code>56.8,60.6</code>.\n"
-    "• Или нажми <b>📎</b> под полем ввода → <b>Геопозиция</b> — откроется карта: "
-    "передвинь метку и отправь точку.\n\n"
-    f"Кнопка «{EVCREATE_BTN_CURRENT_GPS}» всегда подставляет только GPS телефона в этот момент."
-)
+# Одна кнопка с request_location — стабильнее, чем подсказки про «карту с меткой» в клиенте Telegram.
+EVCREATE_BTN_LOCATION = "📍 Отправить геолокацию"
 
 
 def _evcreate_point_start_reply_kb() -> "ReplyKeyboardMarkup":
     from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=EVCREATE_BTN_CURRENT_GPS, request_location=True)],
-            [KeyboardButton(text=EVCREATE_BTN_ADDRESS_OR_MAP)],
-        ],
+        keyboard=[[KeyboardButton(text=EVCREATE_BTN_LOCATION, request_location=True)]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
@@ -185,8 +173,7 @@ def _evcreate_point_end_reply_kb() -> "ReplyKeyboardMarkup":
 
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=EVCREATE_BTN_CURRENT_GPS, request_location=True)],
-            [KeyboardButton(text=EVCREATE_BTN_ADDRESS_OR_MAP)],
+            [KeyboardButton(text=EVCREATE_BTN_LOCATION, request_location=True)],
             [KeyboardButton(text="Пропустить")],
         ],
         resize_keyboard=True,
@@ -202,21 +189,8 @@ async def _evcreate_send_point_end_prompt(message: Message) -> None:
         ]
     )
     await message.answer(
-        "Точка финиша — <b>GPS-кнопка</b> (только «здесь и сейчас»), <b>текст</b>, "
-        "<b>📎 → Геопозиция на карте</b> или «Пропустить»:",
-        reply_markup=_evcreate_point_end_reply_kb(),
-    )
-    await message.answer("Либо inline «Пропустить ➡️»:", reply_markup=kb_inline)
-
-
-async def _evcreate_send_point_end_address_help(message: Message) -> None:
-    kb_inline = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить ➡️", callback_data="evcreate_point_end_skip")],
-        ]
-    )
-    await message.answer(
-        EVCREATE_ADDRESS_OR_MAP_HELP,
+        "Точка финиша: кнопка геолокации, <b>текстом</b> (адрес или координаты <code>56.8,60.6</code>) "
+        "или «Пропустить»:",
         reply_markup=_evcreate_point_end_reply_kb(),
     )
     await message.answer("Либо inline «Пропустить ➡️»:", reply_markup=kb_inline)
@@ -444,6 +418,10 @@ async def cb_evcreate_check_payment(callback: CallbackQuery, state: FSMContext, 
 
     status = await check_payment_status(payment_id)
     if status == "succeeded":
+        from src.services.event_creation_credit import grant_event_creation_credit
+
+        d = await state.get_data()
+        await grant_event_creation_credit(effective_user_id(user), d.get("event_type", "run"))
         await state.set_state(EventCreateStates.title)
         await callback.message.edit_text(
             "✅ Оплата прошла! Введи название мероприятия (или «Пропустить»):"
@@ -480,6 +458,17 @@ async def cb_evcreate_type(callback: CallbackQuery, state: FSMContext, user=None
     )
 
     if needs_payment and price and price > 0:
+        from src.services.event_creation_credit import has_event_creation_credit
+
+        if await has_event_creation_credit(eff_id, ev_type):
+            await state.set_state(EventCreateStates.title)
+            await callback.message.edit_text(
+                "✅ Оплата за этот тип мероприятия уже засчитана. "
+                "Введи название мероприятия (или «Пропустить»):"
+            )
+            await callback.answer()
+            return
+
         from src.config import get_settings
 
         s = get_settings()
@@ -583,10 +572,8 @@ async def evcreate_time(message: Message, state: FSMContext):
         await state.update_data(start_time=message.text.strip())
         await state.set_state(EventCreateStates.point_start)
         await message.answer(
-            "Точка старта:\n"
-            f"• <b>{EVCREATE_BTN_CURRENT_GPS}</b> — только текущие координаты телефона.\n"
-            f"• <b>{EVCREATE_BTN_ADDRESS_OR_MAP}</b> — подсказка, как указать другую точку.\n"
-            "• Или сразу напиши адрес / название / координаты в чат.",
+            "Точка старта: нажми кнопку геолокации или напиши адрес / название места / координаты "
+            "<code>56.8,60.6</code>:",
             reply_markup=_evcreate_point_start_reply_kb(),
         )
     except ValueError:
@@ -596,16 +583,10 @@ async def evcreate_time(message: Message, state: FSMContext):
 @router.message(EventCreateStates.point_start, F.text)
 async def evcreate_point_start(message: Message, state: FSMContext):
     raw = message.text.strip()
-    if raw == EVCREATE_BTN_ADDRESS_OR_MAP:
+    if raw == EVCREATE_BTN_LOCATION:
         await message.answer(
-            EVCREATE_ADDRESS_OR_MAP_HELP,
-            reply_markup=_evcreate_point_start_reply_kb(),
-        )
-        return
-    if raw == EVCREATE_BTN_CURRENT_GPS:
-        await message.answer(
-            f"Нажми кнопку «{EVCREATE_BTN_CURRENT_GPS}» <b>на клавиатуре под полем ввода</b> — "
-            "она отправит координаты. Текстом в чат GPS не передаётся."
+            f"Нажми «{EVCREATE_BTN_LOCATION}» <b>на клавиатуре под полем ввода</b> — "
+            "так отправляются координаты. Либо напиши адрес текстом."
         )
         return
 
@@ -646,13 +627,10 @@ async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext)
 @router.message(EventCreateStates.point_end, F.text)
 async def evcreate_point_end(message: Message, state: FSMContext):
     text = message.text.strip()
-    if text == EVCREATE_BTN_ADDRESS_OR_MAP:
-        await _evcreate_send_point_end_address_help(message)
-        return
-    if text == EVCREATE_BTN_CURRENT_GPS:
+    if text == EVCREATE_BTN_LOCATION:
         await message.answer(
-            f"Нажми «{EVCREATE_BTN_CURRENT_GPS}» <b>на клавиатуре под полем ввода</b> — "
-            "она отправит координаты."
+            f"Нажми «{EVCREATE_BTN_LOCATION}» <b>на клавиатуре под полем ввода</b> — "
+            "так отправляются координаты. Либо напиши адрес или «Пропустить»."
         )
         return
     if text.lower() in ("пропустить", "skip", "-"):
@@ -827,6 +805,9 @@ async def cb_evcreate_preview_save(callback: CallbackQuery, state: FSMContext, u
         description=data.get("description"),
     )
     if ev:
+        from src.services.event_creation_credit import consume_event_creation_credit
+
+        await consume_event_creation_credit(effective_user_id(user), data.get("event_type", "run"))
         try:
             await callback.message.edit_text(
                 f"✅ Мероприятие создано!\n\n{_format_event_card(ev)}",

@@ -28,17 +28,12 @@ from src.utils.yandex_maps import (
 
 router = Router()
 
-# Как у мероприятий: request_location = только текущий GPS; карту с меткой — 📎 → Геопозиция.
-SOS_BTN_CURRENT_GPS = "📍 Где я сейчас (GPS)"
-SOS_BTN_MAP_HINT = "✏️ Как выбрать точку на карте (📎)"
+SOS_BTN_LOCATION = "📍 Отправить геолокацию"
 
 
 def _sos_location_reply_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=SOS_BTN_CURRENT_GPS, request_location=True)],
-            [KeyboardButton(text=SOS_BTN_MAP_HINT)],
-        ],
+        keyboard=[[KeyboardButton(text=SOS_BTN_LOCATION, request_location=True)]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
@@ -113,12 +108,8 @@ async def cb_sos_type(callback: CallbackQuery, state: FSMContext, user=None):
         await state.update_data(sos_type=sos_type)
         await state.set_state(SosStates.location)
         await callback.message.edit_text(texts.SOS_SEND_LOCATION)
-        intro = texts.SOS_LOCATION_INTRO.format(
-            gps_btn=SOS_BTN_CURRENT_GPS,
-            map_hint_btn=SOS_BTN_MAP_HINT,
-        )
         await callback.message.answer(
-            intro,
+            "Нажми кнопку ниже или пришли координаты текстом вида <code>56.826,60.614</code>.",
             reply_markup=_sos_location_reply_kb(),
         )
     except Exception:
@@ -163,16 +154,11 @@ async def sos_location(message: Message, state: FSMContext, user=None, bot=None)
 async def sos_location_text(message: Message, state: FSMContext):
     try:
         raw = message.text.strip()
-        if raw == SOS_BTN_MAP_HINT:
+        if raw == SOS_BTN_LOCATION:
             await message.answer(
-                texts.SOS_LOCATION_MAP_HELP.format(gps_btn=SOS_BTN_CURRENT_GPS),
+                f"Нажми «{SOS_BTN_LOCATION}» <b>на клавиатуре под полем ввода</b> — "
+                "так отправляется геолокация. Или пришли координаты текстом.",
                 reply_markup=_sos_location_reply_kb(),
-            )
-            return
-        if raw == SOS_BTN_CURRENT_GPS:
-            await message.answer(
-                f"Нажми «{SOS_BTN_CURRENT_GPS}» <b>на клавиатуре под полем ввода</b> — "
-                "она отправит координаты.",
             )
             return
         pair = _parse_sos_coordinate_text(raw)

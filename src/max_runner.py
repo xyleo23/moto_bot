@@ -1482,8 +1482,10 @@ async def _do_create_event(adapter: MaxAdapter, chat_id: str, user_id: int, data
         description=data.get("description"),
     )
     if ev:
+        from src.services.event_creation_credit import consume_event_creation_credit
         from src.services.event_service import TYPE_LABELS
 
+        await consume_event_creation_credit(effective_user_id(u), data.get("event_type", "run"))
         title = ev.title or TYPE_LABELS.get(ev.type.value, ev.type.value)
         await adapter.send_message(
             chat_id,
@@ -1848,27 +1850,8 @@ async def handle_photo(adapter: MaxAdapter, ev: IncomingPhoto) -> None:
         )
 
 
-async def _maybe_max_debug_show_user_id(adapter: MaxAdapter, chat_id: str, user) -> None:
-    """Если MAX_DEBUG_SHOW_USER_ID=true — показать platform_user_id (для SUPERADMIN_IDS)."""
-    if not get_settings().max_debug_show_user_id:
-        return
-    uid = user.platform_user_id
-    internal = user.id
-    await adapter.send_message(
-        chat_id,
-        "🔧 <b>Отладка MAX</b> (включено <code>MAX_DEBUG_SHOW_USER_ID</code>)\n\n"
-        f"Твой MAX <code>user_id</code> — добавь в <code>SUPERADMIN_IDS</code> в .env:\n"
-        f"<code>{uid}</code>\n\n"
-        f"Внутренний id записи в БД (UUID): <code>{internal}</code>\n\n"
-        "<i>После настройки .env отключи переменную или поставь false и перезапусти бота.</i>",
-        None,
-    )
-
-
 async def handle_start(adapter: MaxAdapter, chat_id: str, user) -> None:
     """Handle /start flow — including resuming active FSM."""
-    await _maybe_max_debug_show_user_id(adapter, chat_id, user)
-
     if not user.city_id:
         from src.services.admin_service import get_cities
 
@@ -4327,6 +4310,25 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
         )
 
         if needs_payment and price and price > 0:
+            from src.services.event_creation_credit import has_event_creation_credit
+
+            if await has_event_creation_credit(eff_uid, ev_type):
+                from src.services.max_registration_state import _TTL_EVENT_CREATE
+
+                await reg_state.set_state(
+                    user.platform_user_id,
+                    "event_create:title",
+                    {"event_type": ev_type},
+                    ttl=_TTL_EVENT_CREATE,
+                )
+                await adapter.send_message(
+                    chat_id,
+                    "✅ Оплата за этот тип мероприятия уже засчитана. "
+                    "Введи название мероприятия (или «Пропустить»):",
+                    _cancel_kb(),
+                )
+                return True
+
             payment = await create_payment(
                 amount_kopecks=price,
                 description="Создание мероприятия — мото-бот",
@@ -4398,7 +4400,10 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
 
         if status == "succeeded":
             await _pay_clear(user.platform_user_id)
+            from src.services.event_creation_credit import grant_event_creation_credit
             from src.services.max_registration_state import _TTL_EVENT_CREATE
+
+            await grant_event_creation_credit(effective_user_id(user), ev_type)
             await reg_state.set_state(
                 user.platform_user_id, "event_create:title", {"event_type": ev_type},
                 ttl=_TTL_EVENT_CREATE,

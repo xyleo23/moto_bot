@@ -185,10 +185,15 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
 
     if pay_type == "event_creation":
         user_id_str = metadata.get("user_id")
+        ev_type = metadata.get("event_type") or "run"
         if user_id_str:
             try:
+                uid = uuid.UUID(user_id_str)
+                from src.services.event_creation_credit import grant_event_creation_credit
+
+                await grant_event_creation_credit(uid, str(ev_type))
                 await _notify_user(
-                    uuid.UUID(user_id_str),
+                    uid,
                     "✅ Оплата создания мероприятия прошла! Вернись в бот и нажми «Я оплатил — проверить».",
                     src_platform,
                 )

@@ -39,14 +39,6 @@ class Settings(BaseSettings):
         default=None,
         description="MAX bot username for return_url (e.g. id123456_bot)",
     )
-    max_debug_show_user_id: bool = Field(
-        default=False,
-        alias="MAX_DEBUG_SHOW_USER_ID",
-        description=(
-            "MAX only: при /start первым сообщением прислать числовой user_id и UUID строки в БД. "
-            "Включай только на время настройки SUPERADMIN_IDS; затем false или убрать из .env."
-        ),
-    )
 
     # Database
     database_url: str = Field(
