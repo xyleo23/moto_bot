@@ -257,6 +257,84 @@ def _cross_link_confirm_kb() -> list[KeyboardRow]:
     ]
 
 
+def _max_registration_text_to_callback(state: str, text: str) -> str | None:
+    """MAX иногда шлёт текст кнопки (message_created) вместо message_callback — эмулируем payload."""
+    if not text or not isinstance(state, str):
+        return None
+    t = text.strip()
+    if not t:
+        return None
+
+    if t == "❌ Отменить" and not state.startswith("admin:"):
+        return "max_reg_cancel"
+
+    if state == "pilot:gender":
+        if t == "Муж":
+            return "max_reg_gender_male"
+        if t == "Жен":
+            return "max_reg_gender_female"
+        return None
+
+    if state == "pilot:driving_style":
+        if t == "Спокойный":
+            return "max_reg_style_calm"
+        if t == "Динамичный":
+            return "max_reg_style_aggressive"
+        if t == "Смешанный":
+            return "max_reg_style_mixed"
+        return None
+
+    if state == "passenger:gender":
+        if t == "Муж":
+            return "max_reg_pax_gender_male"
+        if t == "Жен":
+            return "max_reg_pax_gender_female"
+        return None
+
+    if state == "passenger:preferred_style":
+        if t == "Спокойный":
+            return "max_reg_pax_style_calm"
+        if t == "Динамичный":
+            return "max_reg_pax_style_dynamic"
+        if t == "Смешанный":
+            return "max_reg_pax_style_mixed"
+        return None
+
+    if state == "pilot:photo" and t == texts.BTN_SKIP:
+        return "max_reg_skip_photo"
+    if state == "pilot:about" and t == texts.BTN_SKIP:
+        return "max_reg_skip_about"
+    if state == "pilot:preview":
+        if t == texts.PROFILE_BTN_SAVE:
+            return "max_reg_preview_save"
+        if t == texts.PROFILE_BTN_EDIT:
+            return "max_reg_preview_edit"
+        return None
+
+    if state == "passenger:photo" and t == texts.BTN_SKIP:
+        return "max_reg_pax_skip_photo"
+    if state == "passenger:about" and t == texts.BTN_SKIP:
+        return "max_reg_pax_skip_about"
+    if state == "passenger:preview":
+        if t == texts.PROFILE_BTN_SAVE:
+            return "max_reg_pax_preview_save"
+        if t == texts.PROFILE_BTN_EDIT:
+            return "max_reg_pax_preview_edit"
+        return None
+
+    if state in ("pilot:cross_link_confirm", "passenger:cross_link_confirm"):
+        if t == "✅ Да, это я":
+            return "max_reg_cross_link_yes"
+        if t == "❌ Нет, другой номер":
+            return "max_reg_cross_link_no"
+        return None
+
+    if state == "sos:comment" and t == texts.BTN_SKIP:
+        return "sos_skip_comment"
+
+    return None
+
+
 def _strip_cross_link_keys(data: dict) -> dict:
     return {k: v for k, v in data.items() if not str(k).startswith("cross_link_")}
 
@@ -589,6 +667,10 @@ async def _handle_fsm_message(
 
     if state == "profile:phone_change":
         await _max_profile_phone_change_text(adapter, chat_id, user_id, text)
+        return
+
+    synth_cb = _max_registration_text_to_callback(state, text)
+    if synth_cb and await _handle_fsm_callback(adapter, chat_id, user_id, synth_cb, fsm):
         return
 
     # ── SOS location step: accept text address if pin didn't work ────────────
@@ -1755,6 +1837,33 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         await _handle_max_myid(adapter, ev.chat_id, user)
         return
 
+    # Выбор роли текстом (MAX иногда шлёт label кнопки вместо callback)
+    from src.ui_copy import ROLE_PASSENGER_BTN, ROLE_PILOT_BTN
+
+    if (
+        user.city_id
+        and not await has_profile(user)
+        and text in (ROLE_PILOT_BTN, ROLE_PASSENGER_BTN)
+    ):
+        role = UserRole.PILOT if text == ROLE_PILOT_BTN else UserRole.PASSENGER
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            r = await session.execute(
+                select(User).where(
+                    User.platform_user_id == ev.user_id,
+                    User.platform == Platform.MAX,
+                )
+            )
+            u = r.scalar_one_or_none()
+            if u:
+                u.role = role
+                await session.commit()
+        if role == UserRole.PILOT:
+            await _start_pilot_registration(adapter, ev.chat_id, ev.user_id)
+        else:
+            await _start_passenger_registration(adapter, ev.chat_id, ev.user_id)
+        return
+
     # Menu labels (message-type buttons) and known slash commands bypass FSM so
     # users can always navigate. Exception: event_create:* is "sticky" — the user
     # explicitly paid, so we remind them to finish or cancel instead of losing state.
@@ -2021,6 +2130,13 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
 
     data = ev.callback_data
     chat_id = ev.chat_id
+    if not data:
+        logger.warning(
+            "MAX message_callback empty payload user_id=%s callback_keys=%s raw_callback=%s",
+            ev.user_id,
+            list((ev.raw.get("callback") or {}).keys()) if isinstance(ev.raw, dict) else None,
+            ev.raw.get("callback") if isinstance(ev.raw, dict) else None,
+        )
 
     # ── FSM callbacks (highest priority) ─────────────────────────────────────
     fsm = await reg_state.get_state(ev.user_id)

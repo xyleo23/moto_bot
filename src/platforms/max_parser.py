@@ -30,6 +30,14 @@ def normalize_max_callback_payload(cb: dict) -> str:
             v = p.get(k)
             if isinstance(v, str) and v.strip():
                 return v
+        nested = p.get("payload")
+        if isinstance(nested, str) and nested.strip():
+            return nested
+        if isinstance(nested, dict):
+            for k in ("data", "callback_data", "value", "command", "text", "payload"):
+                v = nested.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v
         return ""
     if isinstance(p, (int, float, bool)):
         return str(p)
