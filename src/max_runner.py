@@ -1795,8 +1795,27 @@ async def handle_photo(adapter: MaxAdapter, ev: IncomingPhoto) -> None:
         )
 
 
+async def _maybe_max_debug_show_user_id(adapter: MaxAdapter, chat_id: str, user) -> None:
+    """Если MAX_DEBUG_SHOW_USER_ID=true — показать platform_user_id (для SUPERADMIN_IDS)."""
+    if not get_settings().max_debug_show_user_id:
+        return
+    uid = user.platform_user_id
+    internal = user.id
+    await adapter.send_message(
+        chat_id,
+        "🔧 <b>Отладка MAX</b> (включено <code>MAX_DEBUG_SHOW_USER_ID</code>)\n\n"
+        f"Твой MAX <code>user_id</code> — добавь в <code>SUPERADMIN_IDS</code> в .env:\n"
+        f"<code>{uid}</code>\n\n"
+        f"Внутренний id записи в БД (UUID): <code>{internal}</code>\n\n"
+        "<i>После настройки .env отключи переменную или поставь false и перезапусти бота.</i>",
+        None,
+    )
+
+
 async def handle_start(adapter: MaxAdapter, chat_id: str, user) -> None:
     """Handle /start flow — including resuming active FSM."""
+    await _maybe_max_debug_show_user_id(adapter, chat_id, user)
+
     if not user.city_id:
         from src.services.admin_service import get_cities
 
