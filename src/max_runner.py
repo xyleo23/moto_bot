@@ -2426,8 +2426,10 @@ async def _handle_sos_all_clear(adapter: MaxAdapter, chat_id: str, user) -> None
         await adapter.send_message(chat_id, texts.SOS_NO_CITY, get_back_to_menu_rows())
         return
 
-    name = user.platform_first_name or user.platform_username or "Участник"
-    clear_text = texts.SOS_ALL_CLEAR_BROADCAST.format(name=name)
+    from src.services.user import get_user_sos_broadcast_name
+
+    name = await get_user_sos_broadcast_name(user)
+    clear_text = texts.SOS_ALL_CLEAR_BROADCAST.format(name=escape(name))
 
     # Broadcast to MAX users
     max_user_ids = await get_city_max_user_ids(user.city_id)

@@ -124,12 +124,11 @@ async def has_profile(user: User) -> bool:
             return result.scalar_one_or_none() is not None
 
 
-async def get_user_profile_display(user: User) -> str:
-    """Get short profile string for SOS: name, username, phone."""
+async def _load_sos_profile_name_phone(user: User) -> tuple[str, str]:
+    """Имя и телефон для SOS/отбой: из анкеты, иначе имя из мессенджера."""
     uid = effective_user_id(user)
     session_factory = get_session_factory()
     async with session_factory() as session:
-        uname = user.platform_username or ""
         name = user.platform_first_name or "Пользователь"
         phone = ""
         if user.role == UserRole.PILOT:
@@ -146,13 +145,25 @@ async def get_user_profile_display(user: User) -> str:
             if p:
                 name = p.name
                 phone = p.phone
+        return name, phone
 
-        parts = [f"Имя: {name}"]
-        if uname:
-            parts.append(f"@{uname}")
-        if phone:
-            parts.append(f"Телефон: {phone}")
-        return "\n".join(parts)
+
+async def get_user_sos_broadcast_name(user: User) -> str:
+    """Имя в тексте отбоя — то же, что в блоке «Имя: …» рассылки SOS."""
+    name, _ = await _load_sos_profile_name_phone(user)
+    return name
+
+
+async def get_user_profile_display(user: User) -> str:
+    """Get short profile string for SOS: name, username, phone."""
+    name, phone = await _load_sos_profile_name_phone(user)
+    uname = user.platform_username or ""
+    parts = [f"Имя: {name}"]
+    if uname:
+        parts.append(f"@{uname}")
+    if phone:
+        parts.append(f"Телефон: {phone}")
+    return "\n".join(parts)
 
 
 async def delete_user_data(user: User) -> None:

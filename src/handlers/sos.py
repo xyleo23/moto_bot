@@ -404,12 +404,10 @@ async def cb_sos_all_clear(callback: CallbackQuery, state: FSMContext, user=None
             await callback.answer(texts.SOS_NO_CITY, show_alert=True)
             return
 
-        # Extract user's display name for the broadcast message
-        name = (
-            getattr(user, "platform_first_name", None)
-            or getattr(callback.from_user, "first_name", None)
-            or "Участник"
-        )
+        from src.services.user import get_user_sos_broadcast_name
+
+        name = await get_user_sos_broadcast_name(user)
+        clear_text = texts.SOS_ALL_CLEAR_BROADCAST.format(name=escape(name))
 
         user_ids = await get_city_telegram_user_ids(user.city_id)
         send_bot = bot or callback.bot
@@ -418,7 +416,7 @@ async def cb_sos_all_clear(callback: CallbackQuery, state: FSMContext, user=None
             broadcast_background(
                 send_bot,
                 user_ids,
-                texts.SOS_ALL_CLEAR_BROADCAST.format(name=name),
+                clear_text,
                 exclude_id=callback.from_user.id,
             )
 
@@ -439,7 +437,7 @@ async def cb_sos_all_clear(callback: CallbackQuery, state: FSMContext, user=None
             broadcast_max_background(
                 max_adapter,
                 max_user_ids,
-                texts.SOS_ALL_CLEAR_BROADCAST.format(name=name),
+                clear_text,
                 exclude_id=max_exclude,
             )
         else:
