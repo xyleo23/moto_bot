@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
+from loguru import logger
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from src.handlers import admin as tg_admin
 from src.keyboards.admin import (
@@ -81,11 +81,23 @@ def _city_admin_root_max() -> list:
 
 async def show_max_admin_root(adapter: MaxAdapter, chat_id: str, user: User) -> None:
     if not await max_user_should_see_admin_menu(user):
+        logger.info(
+            "max_admin_panel denied: platform=max platform_user_id={} chat_id={}",
+            user.platform_user_id,
+            chat_id,
+        )
         await adapter.send_message(
             chat_id, "Нет доступа к админ-панели.", [[Button("« Меню", payload="menu_main")]]
         )
         return
-    if await is_effective_superadmin_user(user):
+    is_sa = await is_effective_superadmin_user(user)
+    logger.info(
+        "max_admin_panel open: platform=max platform_user_id={} chat_id={} superadmin={}",
+        user.platform_user_id,
+        chat_id,
+        is_sa,
+    )
+    if is_sa:
         text = "⚙️ <b>Админ-панель</b>\n\nВыбери раздел (данные общие с Telegram):"
         rows = _kb_max(get_admin_main_kb()) or []
         await adapter.send_message(chat_id, text, rows)
