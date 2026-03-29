@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from html import escape as html_escape
 
 from loguru import logger
 from aiogram import Router, F
@@ -164,7 +165,28 @@ def _format_location(value: str | None) -> str:
         lat, lon = value.strip().split(",")
         href = yandex_maps_href_for_html(float(lat), float(lon))
         return f'<a href="{href}">📍 Открыть на карте</a>'
-    return value
+    return html_escape(value.strip())
+
+
+# Текст шага «формат движения» — один источник правды (edit_text + answer fallback).
+EVCREATE_RIDE_TYPE_HTML = (
+    "<b>Формат движения</b>\n\n"
+    "Выбери вариант кнопками ниже: <b>Колонна</b>, <b>Свободная</b> или <b>Пропустить</b>."
+)
+
+
+async def _prompt_evcreate_ride_type_callback(callback: CallbackQuery) -> None:
+    """Показать inline-клавиатуру формата; при сбое edit — новое сообщение (часто ломается на старых сообщениях)."""
+    kb = _evcreate_ride_format_kb()
+    try:
+        await callback.message.edit_text(EVCREATE_RIDE_TYPE_HTML, reply_markup=kb)
+    except TelegramBadRequest as e:
+        logger.debug("evcreate ride_type: edit_text failed, using answer: %s", e)
+        await callback.message.answer(EVCREATE_RIDE_TYPE_HTML, reply_markup=kb)
+
+
+async def _prompt_evcreate_ride_type_message(message: Message) -> None:
+    await message.answer(EVCREATE_RIDE_TYPE_HTML, reply_markup=_evcreate_ride_format_kb())
 
 
 def _format_event_card(e) -> str:
@@ -174,16 +196,20 @@ def _format_event_card(e) -> str:
     if getattr(e, "is_recommended", False):
         badges.append("рекомендуемое")
     badge_line = ("🏷 " + ", ".join(badges) + "\n") if badges else ""
+    title_raw = e.title or TYPE_LABELS.get(e.type.value, e.type.value)
+    type_lbl = TYPE_LABELS.get(e.type.value, e.type.value)
+    rt_key = e.ride_type.value if e.ride_type else ""
+    desc_line = html_escape(e.description.strip()) if e.description else "—"
     return (
-        f"<b>{e.title or TYPE_LABELS.get(e.type.value, e.type.value)}</b>\n"
+        f"<b>{html_escape(str(title_raw))}</b>\n"
         f"{badge_line}"
-        f"Тип: {TYPE_LABELS.get(e.type.value, e.type.value)}\n"
+        f"Тип: {html_escape(str(type_lbl))}\n"
         f"📅 {e.start_at.strftime('%d.%m.%Y %H:%M')}\n"
         f"📍 Старт: {_format_location(e.point_start)}\n"
         f"📍 Финиш: {_format_location(e.point_end)}\n"
-        f"Формат: {RIDE_LABELS.get(e.ride_type.value if e.ride_type else '', '—')}\n"
+        f"Формат: {html_escape(RIDE_LABELS.get(rt_key, '—'))}\n"
         f"Скорость: {e.avg_speed or '—'} км/ч\n"
-        f"Описание: {e.description or '—'}"
+        f"Описание: {desc_line}"
     )
 
 
@@ -497,14 +523,9 @@ async def evcreate_point_start_location(message: Message, state: FSMContext):
 @router.callback_query(F.data == "evcreate_point_end_skip", EventCreateStates.point_end)
 async def cb_evcreate_point_end_skip(callback: CallbackQuery, state: FSMContext):
     await state.update_data(point_end=None)
-    await state.set_state(EventCreateStates.ride_type)
-    kb = _evcreate_ride_format_kb()
-    await callback.message.edit_text(
-        "<b>Формат движения</b>\n\n"
-        "Выбери «Колонна», «Свободная» или «Пропустить»:",
-        reply_markup=kb,
-    )
     await _remove_reply_keyboard_silently(callback.bot, callback.message.chat.id)
+    await _prompt_evcreate_ride_type_callback(callback)
+    await state.set_state(EventCreateStates.ride_type)
     await callback.answer()
 
 
@@ -514,13 +535,9 @@ async def evcreate_point_end(message: Message, state: FSMContext):
     if text.lower() in ("пропустить", "skip", "-"):
         text = None
     await state.update_data(point_end=text[:500] if text else None)
-    await state.set_state(EventCreateStates.ride_type)
-    kb = _evcreate_ride_format_kb()
     await _remove_reply_keyboard_silently(message.bot, message.chat.id)
-    await message.answer(
-        "<b>Формат движения</b>\n\nВыбери вариант:",
-        reply_markup=kb,
-    )
+    await _prompt_evcreate_ride_type_message(message)
+    await state.set_state(EventCreateStates.ride_type)
 
 
 @router.message(EventCreateStates.point_end, F.location)
@@ -528,13 +545,15 @@ async def evcreate_point_end_location(message: Message, state: FSMContext):
     lat = message.location.latitude
     lon = message.location.longitude
     await state.update_data(point_end=f"{lat},{lon}")
-    await state.set_state(EventCreateStates.ride_type)
-    kb = _evcreate_ride_format_kb()
     await _remove_reply_keyboard_silently(message.bot, message.chat.id)
-    await message.answer(
-        "<b>Формат движения</b>\n\nВыбери вариант:",
-        reply_markup=kb,
-    )
+    await _prompt_evcreate_ride_type_message(message)
+    await state.set_state(EventCreateStates.ride_type)
+
+
+@router.message(EventCreateStates.ride_type, F.text)
+async def evcreate_ride_type_text_fallback(message: Message, state: FSMContext):
+    """Если клиент не показал inline-кнопки или пользователь написал текст — повторно отправляем клавиатуру."""
+    await _prompt_evcreate_ride_type_message(message)
 
 
 @router.callback_query(F.data.startswith("evcreate_ride_"), EventCreateStates.ride_type)
