@@ -121,6 +121,12 @@ PROFILE_PREVIEW_CONFIRM = "Всё верно? Сохранить анкету?"
 PROFILE_BTN_SAVE = "✅ Сохранить"
 PROFILE_BTN_EDIT = "✏️ Редактировать заново"
 
+# ——— Event creation preview (Telegram) ———
+EVENT_CREATE_PREVIEW_HEADER = "👀 Так твоё мероприятие увидят пользователи:\n\n"
+EVENT_CREATE_PREVIEW_CONFIRM = "Всё верно? Сохранить в список мероприятий?"
+EVENT_CREATE_BTN_CANCEL = "❌ Отменить создание"
+EVENT_CREATE_CANCELLED = "Создание мероприятия отменено."
+
 # ——— SOS ———
 SOS_CHOOSE_TYPE = "🚨 Выбери тип SOS:"
 SOS_SEND_LOCATION = "Отправь свою геолокацию:"

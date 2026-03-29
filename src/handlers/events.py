@@ -112,6 +112,7 @@ class EventCreateStates(StatesGroup):
     ride_type = State()
     avg_speed = State()
     description = State()
+    preview = State()
 
 
 class EventEditStates(StatesGroup):
@@ -279,6 +280,76 @@ def _format_event_card(e) -> str:
         f"Скорость: {e.avg_speed or '—'} км/ч\n"
         f"Описание: {desc_line}"
     )
+
+
+def _format_event_card_from_evcreate_data(data: dict, start_at: datetime) -> str:
+    """Карточка мероприятия из черновика FSM (как у пользователей в списке, без бейджей офиц./реком.)."""
+    et = data.get("event_type") or "run"
+    type_lbl = TYPE_LABELS.get(et, et)
+    title_raw = data.get("title") or type_lbl
+    rt_key = data.get("ride_type") or ""
+    desc = data.get("description")
+    desc_line = html_escape(desc.strip()) if desc else "—"
+    spd = data.get("avg_speed")
+    return (
+        f"<b>{html_escape(str(title_raw))}</b>\n"
+        f"Тип: {html_escape(str(type_lbl))}\n"
+        f"📅 {start_at.strftime('%d.%m.%Y %H:%M')}\n"
+        f"📍 Старт: {_format_location(data.get('point_start'))}\n"
+        f"📍 Финиш: {_format_location(data.get('point_end'))}\n"
+        f"Формат: {html_escape(RIDE_LABELS.get(rt_key, '—'))}\n"
+        f"Скорость: {spd if spd is not None else '—'} км/ч\n"
+        f"Описание: {desc_line}"
+    )
+
+
+def _evcreate_preview_kb() -> InlineKeyboardMarkup:
+    from src import texts
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=texts.PROFILE_BTN_SAVE, callback_data="evcreate_preview_save")],
+            [InlineKeyboardButton(text=texts.PROFILE_BTN_EDIT, callback_data="evcreate_preview_edit")],
+            [
+                InlineKeyboardButton(
+                    text=texts.EVENT_CREATE_BTN_CANCEL, callback_data="evcreate_preview_cancel"
+                )
+            ],
+        ]
+    )
+
+
+async def _show_evcreate_preview(source_message: Message, state: FSMContext) -> bool:
+    """Показать предпросмотр и перейти в состояние preview. False — сбросили FSM из‑за ошибки данных."""
+    from src import texts
+
+    await _remove_reply_keyboard_silently(source_message.bot, source_message.chat.id)
+    data = await state.get_data()
+    start_at = _parse_datetime(data.get("start_date", ""), data.get("start_time", ""))
+    if not start_at:
+        await state.clear()
+        await source_message.answer(
+            "Ошибка даты. Создание отменено.", reply_markup=get_back_to_menu_kb()
+        )
+        return False
+    if not data.get("point_start"):
+        await state.clear()
+        await source_message.answer(
+            "Ошибка: не указана точка старта. Начни создание заново.",
+            reply_markup=get_back_to_menu_kb(),
+        )
+        return False
+
+    card = _format_event_card_from_evcreate_data(data, start_at)
+    full = (
+        texts.EVENT_CREATE_PREVIEW_HEADER
+        + card
+        + "\n\n"
+        + texts.EVENT_CREATE_PREVIEW_CONFIRM
+    )
+    await state.set_state(EventCreateStates.preview)
+    await source_message.answer(full, reply_markup=_evcreate_preview_kb())
+    return True
 
 
 def _format_event_share_text(e) -> str:
@@ -701,6 +772,33 @@ async def cb_evcreate_desc_skip(callback: CallbackQuery, state: FSMContext, user
         await callback.answer("Ошибка. Начни заново.", show_alert=True)
         return
     await state.update_data(description=None)
+    ok = await _show_evcreate_preview(callback.message, state)
+    await callback.answer()
+    if not ok:
+        return
+
+
+@router.message(EventCreateStates.description, F.text)
+async def evcreate_description(message: Message, state: FSMContext, user=None):
+    if not user or not user.city_id:
+        await message.answer("Ошибка. Начни заново.", reply_markup=get_back_to_menu_kb())
+        await state.clear()
+        return
+    text = message.text.strip()
+    if text.lower() in ("пропустить", "skip", "-"):
+        text = None
+    await state.update_data(description=text[:1000] if text else None)
+    await _show_evcreate_preview(message, state)
+
+
+@router.callback_query(F.data == "evcreate_preview_save", EventCreateStates.preview)
+async def cb_evcreate_preview_save(callback: CallbackQuery, state: FSMContext, user=None):
+    await callback.answer()
+    if not user or not user.city_id:
+        await callback.message.answer("Ошибка. Начни заново.", reply_markup=get_back_to_menu_kb())
+        await state.clear()
+        return
+
     data = await state.get_data()
     await state.clear()
 
@@ -709,60 +807,11 @@ async def cb_evcreate_desc_skip(callback: CallbackQuery, state: FSMContext, user
         await callback.message.answer(
             "Ошибка даты. Создание отменено.", reply_markup=get_back_to_menu_kb()
         )
-        await callback.answer()
         return
 
     guard = await _evcreate_finish_guard(user, data.get("event_type"))
     if guard:
         await callback.message.answer(guard, reply_markup=get_back_to_menu_kb())
-        await callback.answer()
-        return
-
-    ev = await create_event(
-        city_id=user.city_id,
-        creator_id=effective_user_id(user),
-        event_type=data["event_type"],
-        title=data.get("title"),
-        start_at=start_at,
-        point_start=data["point_start"],
-        point_end=data.get("point_end"),
-        ride_type=data.get("ride_type"),
-        avg_speed=data.get("avg_speed"),
-        description=None,
-    )
-    if ev:
-        try:
-            await callback.message.edit_text(
-                f"✅ Мероприятие создано!\n\n{_format_event_card(ev)}",
-                reply_markup=get_back_to_menu_kb(),
-            )
-        except TelegramBadRequest:
-            await callback.message.answer(
-                f"✅ Мероприятие создано!\n\n{_format_event_card(ev)}",
-                reply_markup=get_back_to_menu_kb(),
-            )
-    else:
-        await callback.message.answer("Ошибка при создании.", reply_markup=get_back_to_menu_kb())
-    await callback.answer()
-
-
-@router.message(EventCreateStates.description, F.text)
-async def evcreate_description(message: Message, state: FSMContext, user=None):
-    text = message.text.strip()
-    if text.lower() in ("пропустить", "skip", "-"):
-        text = None
-    await state.update_data(description=text[:1000] if text else None)
-    data = await state.get_data()
-    await state.clear()
-
-    start_at = _parse_datetime(data["start_date"], data["start_time"])
-    if not start_at:
-        await message.answer("Ошибка даты. Создание отменено.", reply_markup=get_back_to_menu_kb())
-        return
-
-    guard = await _evcreate_finish_guard(user, data.get("event_type"))
-    if guard:
-        await message.answer(guard, reply_markup=get_back_to_menu_kb())
         return
 
     ev = await create_event(
@@ -778,12 +827,57 @@ async def evcreate_description(message: Message, state: FSMContext, user=None):
         description=data.get("description"),
     )
     if ev:
-        await message.answer(
-            f"✅ Мероприятие создано!\n\n{_format_event_card(ev)}",
+        try:
+            await callback.message.edit_text(
+                f"✅ Мероприятие создано!\n\n{_format_event_card(ev)}",
+                reply_markup=get_back_to_menu_kb(),
+            )
+        except TelegramBadRequest:
+            await callback.message.answer(
+                f"✅ Мероприятие создано!\n\n{_format_event_card(ev)}",
+                reply_markup=get_back_to_menu_kb(),
+            )
+    else:
+        await callback.message.answer("Ошибка при создании.", reply_markup=get_back_to_menu_kb())
+
+
+@router.callback_query(F.data == "evcreate_preview_edit", EventCreateStates.preview)
+async def cb_evcreate_preview_edit(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(EventCreateStates.title)
+    try:
+        await callback.message.edit_text(
+            "✏️ Редактирование. Введи название мероприятия заново (или «Пропустить»):",
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            "✏️ Редактирование. Введи название мероприятия заново (или «Пропустить»):",
+        )
+
+
+@router.callback_query(F.data == "evcreate_preview_cancel", EventCreateStates.preview)
+async def cb_evcreate_preview_cancel(callback: CallbackQuery, state: FSMContext):
+    from src import texts
+
+    await callback.answer()
+    await state.clear()
+    try:
+        await callback.message.edit_text(
+            texts.EVENT_CREATE_CANCELLED,
             reply_markup=get_back_to_menu_kb(),
         )
-    else:
-        await message.answer("Ошибка при создании.", reply_markup=get_back_to_menu_kb())
+    except TelegramBadRequest:
+        await callback.message.answer(
+            texts.EVENT_CREATE_CANCELLED,
+            reply_markup=get_back_to_menu_kb(),
+        )
+
+
+@router.message(EventCreateStates.preview, F.text)
+async def evcreate_preview_text_hint(message: Message):
+    await message.answer(
+        "Нажми кнопку под карточкой: «Сохранить», «Редактировать заново» или «Отменить создание»."
+    )
 
 
 # ——— List ———
