@@ -134,6 +134,7 @@ async def get_user_by_id(user_id: UUID) -> User | None:
 
 
 async def get_user_by_platform_id(platform_user_id: int) -> User | None:
+    """Только Telegram — для обратной совместимости (например, коллбеки TG-админов)."""
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.execute(
@@ -143,6 +144,23 @@ async def get_user_by_platform_id(platform_user_id: int) -> User | None:
             )
         )
         return r.scalar_one_or_none()
+
+
+async def get_user_by_platform_numeric_id_any(platform_user_id: int) -> User | None:
+    """Пользователь по числовому ID на MAX или Telegram (для выдачи админа города)."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        for plat in (Platform.MAX, Platform.TELEGRAM):
+            r = await session.execute(
+                select(User).where(
+                    User.platform == plat,
+                    User.platform_user_id == platform_user_id,
+                ).limit(1)
+            )
+            u = r.scalar_one_or_none()
+            if u:
+                return u
+    return None
 
 
 async def get_cities() -> list[City]:

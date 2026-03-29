@@ -32,7 +32,7 @@ from src.services.admin_service import (
     block_user,
     unblock_user,
     get_user_by_id,
-    get_user_by_platform_id,
+    get_user_by_platform_numeric_id_any,
     get_cities,
     get_all_cities,
     create_city,
@@ -921,7 +921,8 @@ async def cb_admin_ca_add(callback: CallbackQuery, state: FSMContext):
     await state.update_data(admin_ca_city=cid)
     await state.set_state(AdminAddCityAdminStates.user_id)
     await callback.message.edit_text(
-        "Введи Telegram user ID нового админа (число):",
+        "Введи <b>числовой ID</b> пользователя: <b>Telegram</b> или <b>MAX</b> "
+        "(в MAX можно посмотреть командой <code>/myid</code>).",
         reply_markup=get_admin_back_kb(f"admin_ca_city_{cid}"),
     )
     await callback.answer()
@@ -937,9 +938,9 @@ async def admin_ca_add_input(message: Message, state: FSMContext):
     try:
         platform_user_id = int(message.text.strip())
     except ValueError:
-        await message.answer("Введи число (Telegram user ID).")
+        await message.answer("Введи число (ID из Telegram или MAX).")
         return
-    u = await get_user_by_platform_id(platform_user_id)
+    u = await get_user_by_platform_numeric_id_any(platform_user_id)
     if not u:
         await message.answer("Пользователь не найден. Он должен хотя бы раз написать боту.")
         return

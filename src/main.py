@@ -325,6 +325,7 @@ async def run_max(shared_adapter=None):
         await adapter.set_my_commands(
             [
                 {"name": "start", "description": "🏠 Главное меню"},
+                {"name": "myid", "description": "🆔 Мой MAX ID (для админов)"},
                 {"name": "admin", "description": "⚙️ Админ-панель"},
                 {"name": "cancel", "description": "❌ Отменить"},
                 {"name": "sos", "description": "🚨 SOS"},

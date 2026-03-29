@@ -1699,6 +1699,28 @@ async def _max_route_menu_text_press(
     return False
 
 
+async def _handle_max_myid(adapter: MaxAdapter, chat_id: str, user) -> None:
+    """Показать MAX platform_user_id — для SUPERADMIN_IDS и добавления админом города."""
+    from src.config import get_settings
+    from src.services.admin_service import is_effective_superadmin_user
+
+    pid = int(user.platform_user_id)
+    s = get_settings()
+    in_env = pid in s.superadmin_ids
+    eff_sa = await is_effective_superadmin_user(user)
+    body = (
+        f"Твой <b>MAX user ID</b>: <code>{pid}</code>\n\n"
+        f"В SUPERADMIN_IDS (указан этот MAX ID): {'✅' if in_env else '❌'}\n"
+        f"Суперадмин (связка TG+MAX / список): {'✅' if eff_sa else '❌'}\n\n"
+        "<b>Суперадмин в MAX:</b> добавь это число в <code>SUPERADMIN_IDS</code> в .env на сервере "
+        "(через запятую с Telegram ID) и перезапусти бота.\n"
+        "<b>Админ города:</b> суперадмин в Telegram или MAX: "
+        "«Города → Админы городов → город → Добавить» — вставь это число. "
+        "Пользователь должен хотя раз написать боту в MAX."
+    )
+    await adapter.send_message(chat_id, body, await _main_menu_rows_for(user))
+
+
 async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
     """Handle text message or /start."""
     user = await get_or_create_user(
@@ -1728,6 +1750,11 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         await handle_start(adapter, ev.chat_id, user)
         return
 
+    _t_myid = text.lower()
+    if _t_myid == "/myid" or _t_myid.startswith("/myid "):
+        await _handle_max_myid(adapter, ev.chat_id, user)
+        return
+
     # Menu labels (message-type buttons) and known slash commands bypass FSM so
     # users can always navigate. Exception: event_create:* is "sticky" — the user
     # explicitly paid, so we remind them to finish or cancel instead of losing state.
@@ -1736,7 +1763,7 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         _slash = text.lower().lstrip("/").split()[0]
         if _slash in {
             "events", "motopair", "contacts", "profile",
-            "about", "sos", "documents", "admin",
+            "about", "sos", "documents", "admin", "myid",
         }:
             _nav_cmd = _slash
 
