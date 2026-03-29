@@ -21,6 +21,7 @@ from src.platforms.max_adapter import MaxAdapter
 from src.services import max_registration_state as reg_state
 from src.services.admin_multichannel_notify import tg_inline_markup_to_max_rows
 from src.services.admin_phone_actions import phone_change_approve, phone_change_reject
+from src.services.activity_log_service import get_logs
 from src.services.admin_service import (
     add_city_admin,
     admin_cancel_event,
@@ -34,7 +35,6 @@ from src.services.admin_service import (
     get_cities,
     get_city_admins,
     get_global_text,
-    get_logs,
     get_stats,
     get_subscription_settings,
     get_user_by_id,
