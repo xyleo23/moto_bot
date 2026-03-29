@@ -1,5 +1,6 @@
 """SOS block — emergency alerts with timer and all-clear."""
 
+import re
 from html import escape
 
 from loguru import logger
@@ -26,6 +27,53 @@ from src.utils.yandex_maps import (
 )
 
 router = Router()
+
+# Как у мероприятий: request_location = только текущий GPS; карту с меткой — 📎 → Геопозиция.
+SOS_BTN_CURRENT_GPS = "📍 Где я сейчас (GPS)"
+SOS_BTN_MAP_HINT = "✏️ Как выбрать точку на карте (📎)"
+
+
+def _sos_location_reply_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=SOS_BTN_CURRENT_GPS, request_location=True)],
+            [KeyboardButton(text=SOS_BTN_MAP_HINT)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def _parse_sos_coordinate_text(raw: str) -> tuple[float, float] | None:
+    t = raw.strip().replace(" ", "")
+    m = re.match(r"^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$", t)
+    if not m:
+        return None
+    try:
+        return float(m.group(1)), float(m.group(2))
+    except ValueError:
+        return None
+
+
+async def _sos_apply_location(message: Message, state: FSMContext, lat: float, lon: float) -> None:
+    """Сохранить координаты и перейти к комментарию или запросить точку снова."""
+    if not is_plausible_gps_coordinate(lat, lon):
+        await message.answer(texts.SOS_GEO_INVALID, reply_markup=_sos_location_reply_kb())
+        return
+    await state.update_data(lat=lat, lon=lon)
+    await state.set_state(SosStates.comment)
+    await message.answer(
+        texts.SOS_ASK_COMMENT,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await message.answer(
+        "Можешь добавить описание ситуации.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="sos_skip_comment")],
+            ]
+        ),
+    )
 
 
 class SosStates(StatesGroup):
@@ -65,13 +113,13 @@ async def cb_sos_type(callback: CallbackQuery, state: FSMContext, user=None):
         await state.update_data(sos_type=sos_type)
         await state.set_state(SosStates.location)
         await callback.message.edit_text(texts.SOS_SEND_LOCATION)
+        intro = texts.SOS_LOCATION_INTRO.format(
+            gps_btn=SOS_BTN_CURRENT_GPS,
+            map_hint_btn=SOS_BTN_MAP_HINT,
+        )
         await callback.message.answer(
-            "Нажми кнопку ниже, чтобы отправить местоположение:",
-            reply_markup=ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
-                resize_keyboard=True,
-                one_time_keyboard=True,
-            ),
+            intro,
+            reply_markup=_sos_location_reply_kb(),
         )
     except Exception:
         logger.exception("cb_sos_type: error")
@@ -83,29 +131,61 @@ async def cb_sos_type(callback: CallbackQuery, state: FSMContext, user=None):
     await callback.answer()
 
 
+@router.message(SosStates.location, F.venue)
+async def sos_location_venue(message: Message, state: FSMContext):
+    try:
+        loc = message.venue.location
+        await _sos_apply_location(message, state, loc.latitude, loc.longitude)
+    except Exception:
+        logger.exception("sos_location_venue: error")
+        await state.clear()
+        await message.answer(
+            "Произошла ошибка. Попробуй снова.",
+            reply_markup=get_back_to_menu_kb(),
+        )
+
+
 @router.message(SosStates.location, F.location)
 async def sos_location(message: Message, state: FSMContext, user=None, bot=None):
     try:
         loc = message.location
-        if not is_plausible_gps_coordinate(loc.latitude, loc.longitude):
-            await message.answer(texts.SOS_GEO_INVALID)
-            return
-        await state.update_data(lat=loc.latitude, lon=loc.longitude)
-        await state.set_state(SosStates.comment)
-        await message.answer(
-            texts.SOS_ASK_COMMENT,
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        await message.answer(
-            "Можешь добавить описание ситуации.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text=texts.BTN_SKIP, callback_data="sos_skip_comment")],
-                ]
-            ),
-        )
+        await _sos_apply_location(message, state, loc.latitude, loc.longitude)
     except Exception:
         logger.exception("sos_location: error")
+        await state.clear()
+        await message.answer(
+            "Произошла ошибка. Попробуй снова.",
+            reply_markup=get_back_to_menu_kb(),
+        )
+
+
+@router.message(SosStates.location, F.text)
+async def sos_location_text(message: Message, state: FSMContext):
+    try:
+        raw = message.text.strip()
+        if raw == SOS_BTN_MAP_HINT:
+            await message.answer(
+                texts.SOS_LOCATION_MAP_HELP.format(gps_btn=SOS_BTN_CURRENT_GPS),
+                reply_markup=_sos_location_reply_kb(),
+            )
+            return
+        if raw == SOS_BTN_CURRENT_GPS:
+            await message.answer(
+                f"Нажми «{SOS_BTN_CURRENT_GPS}» <b>на клавиатуре под полем ввода</b> — "
+                "она отправит координаты.",
+            )
+            return
+        pair = _parse_sos_coordinate_text(raw)
+        if pair:
+            lat, lon = pair
+            await _sos_apply_location(message, state, lat, lon)
+            return
+        await message.answer(
+            texts.SOS_LOCATION_TEXT_UNCLEAR,
+            reply_markup=_sos_location_reply_kb(),
+        )
+    except Exception:
+        logger.exception("sos_location_text: error")
         await state.clear()
         await message.answer(
             "Произошла ошибка. Попробуй снова.",
@@ -205,11 +285,7 @@ async def _send_sos_alert(
         await state.set_data({"sos_type": data["sos_type"]})
         await message.answer(
             texts.SOS_GEO_INVALID,
-            reply_markup=ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
-                resize_keyboard=True,
-                one_time_keyboard=True,
-            ),
+            reply_markup=_sos_location_reply_kb(),
         )
         return
 
