@@ -110,56 +110,77 @@ def broadcast_background(
 
 async def _do_max_broadcast(
     adapter,
-    user_ids: list[int],
+    recipients: list[tuple[int, str, bool]],
     text: str,
-    exclude_id: int | None = None,
+    exclude_platform_user_id: int | None = None,
     kb_rows=None,
 ) -> tuple[int, int]:
-    """Send `text` to MAX users via the adapter.
+    """Send `text` to MAX users.
 
-    Incoming MAX updates set ContextVar chat_id-mode for replies in the *current* dialog.
-    Background tasks inherit that context; proactive sends must use ``user_id``, not
-    ``chat_id`` (peer id ≠ dialog chat id), otherwise recipients never get the message.
+    ``recipients``: (platform_user_id, api_target_str, use_chat_id_param) —
+    см. get_city_max_broadcast_recipients: для лички нужен chat_id диалога.
     """
     _token = push_max_outbound_by_user_id()
     sent = 0
     failed = 0
     try:
-        target_uids = [u for u in user_ids if exclude_id is None or u != exclude_id]
-        sample_uid = target_uids[0] if target_uids else None
-        if sample_uid is not None:
+        to_send = [
+            (puid, target, use_chat)
+            for puid, target, use_chat in recipients
+            if exclude_platform_user_id is None or puid != exclude_platform_user_id
+        ]
+        if to_send:
+            _p0, t0, c0 = to_send[0]
             logger.info(
-                "max_broadcast start: in_city_max={} exclude_id={} will_send_to={} "
+                "max_broadcast start: rows={} exclude_platform_user_id={} will_send_to={} "
                 "sample_query_params={}",
-                len(user_ids),
-                exclude_id,
-                target_uids,
-                max_message_query_params(str(sample_uid)),
+                len(recipients),
+                exclude_platform_user_id,
+                to_send,
+                max_message_query_params(t0, use_chat_id_param=c0),
             )
         else:
             logger.info(
-                "max_broadcast start: in_city_max={} exclude_id={} will_send_to=[] (nobody to notify)",
-                len(user_ids),
-                exclude_id,
+                "max_broadcast start: rows={} exclude_platform_user_id={} will_send_to=[]",
+                len(recipients),
+                exclude_platform_user_id,
             )
-        for uid in user_ids:
-            if exclude_id is not None and uid == exclude_id:
-                continue
+        for puid, target, use_chat in to_send:
             try:
-                await adapter.send_message(str(uid), text, kb_rows)
+                await adapter.send_message(
+                    target, text, kb_rows, use_chat_id_param=use_chat
+                )
                 sent += 1
-                logger.info("max_broadcast: ok uid={}", uid)
+                logger.info(
+                    "max_broadcast: ok platform_user_id={} target={} use_chat_id={}",
+                    puid,
+                    target,
+                    use_chat,
+                )
             except Exception as e:
-                logger.warning("max_broadcast: HTML send failed uid={}: {}", uid, e)
+                logger.warning(
+                    "max_broadcast: HTML send failed platform_user_id={} target={}: {}",
+                    puid,
+                    target,
+                    e,
+                )
                 try:
                     plain = _max_broadcast_plain_fallback(text)
                     await adapter.send_message(
-                        str(uid), plain or "(SOS)", kb_rows, parse_mode=None
+                        target,
+                        plain or "(SOS)",
+                        kb_rows,
+                        parse_mode=None,
+                        use_chat_id_param=use_chat,
                     )
                     sent += 1
-                    logger.info("max_broadcast: plain fallback ok uid={}", uid)
+                    logger.info("max_broadcast: plain fallback ok platform_user_id={}", puid)
                 except Exception as e2:
-                    logger.warning("max_broadcast: plain send failed uid={}: {}", uid, e2)
+                    logger.warning(
+                        "max_broadcast: plain send failed platform_user_id={}: {}",
+                        puid,
+                        e2,
+                    )
                     failed += 1
             await asyncio.sleep(_SEND_DELAY)
     finally:
@@ -171,14 +192,20 @@ async def _do_max_broadcast(
 
 def broadcast_max_background(
     adapter,
-    user_ids: list[int],
+    recipients: list[tuple[int, str, bool]],
     text: str,
-    exclude_id: int | None = None,
+    exclude_platform_user_id: int | None = None,
     kb_rows=None,
 ) -> asyncio.Task:
     """Schedule a MAX broadcast as a fire-and-forget background task."""
     task = asyncio.create_task(
-        _do_max_broadcast(adapter, user_ids, text, exclude_id=exclude_id, kb_rows=kb_rows)
+        _do_max_broadcast(
+            adapter,
+            recipients,
+            text,
+            exclude_platform_user_id=exclude_platform_user_id,
+            kb_rows=kb_rows,
+        )
     )
     task.add_done_callback(
         lambda t: (

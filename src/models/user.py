@@ -54,6 +54,10 @@ class User(Base):
         index=True,
     )
 
+    # MAX: id диалога пользователь↔бот (recipient.chat_id в апдейтах). Для POST /messages
+    # в личку надёжнее chat_id, чем platform_user_id — они могут различаться.
+    max_dialog_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
     __table_args__ = (
         Index("ix_users_linked_user_id", "linked_user_id"),
         {"sqlite_autoincrement": False},

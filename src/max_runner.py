@@ -9,7 +9,11 @@ from loguru import logger
 
 from src.config import get_settings
 from src.platforms.max_adapter import MaxAdapter
-from src.platforms.max_parser import parse_updates
+from src.platforms.max_parser import (
+    parse_updates,
+    extract_max_dialog_chat_id_from_raw,
+    extract_max_sender_platform_user_id,
+)
 from src.platforms.base import (
     Button,
     ButtonType,
@@ -25,6 +29,7 @@ from src.services.user import (
     has_profile,
     delete_user_data,
     sync_city_across_linked_identities,
+    update_max_user_dialog_chat_id,
 )
 from src.services import max_registration_state as reg_state
 from src.services.registration_service import (
@@ -1650,6 +1655,11 @@ async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
     """Process one MAX update."""
     from src.platforms.max_adapter import set_max_use_chat_id
 
+    _dc = extract_max_dialog_chat_id_from_raw(raw)
+    _su = extract_max_sender_platform_user_id(raw)
+    if _dc is not None and _su is not None:
+        await update_max_user_dialog_chat_id(_su, _dc)
+
     events = parse_updates({"updates": [raw]})
     for ev in events:
         try:
@@ -2626,7 +2636,7 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
     from src.services.sos_service import (
         create_sos_alert,
         get_city_telegram_user_ids,
-        get_city_max_user_ids,
+        get_city_max_broadcast_recipients,
     )
     from src.services.broadcast import broadcast_max_background
     from src.services.user import get_user_profile_display
@@ -2721,13 +2731,13 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
         ]
 
     # Broadcast to MAX users in the city
-    max_user_ids = await get_city_max_user_ids(user.city_id)
-    if max_user_ids:
+    max_recipients = await get_city_max_broadcast_recipients(user.city_id)
+    if max_recipients:
         broadcast_max_background(
             adapter,
-            max_user_ids,
+            max_recipients,
             broadcast_text,
-            exclude_id=user.platform_user_id,
+            exclude_platform_user_id=user.platform_user_id,
             kb_rows=map_kb_row,
         )
 
@@ -2786,7 +2796,7 @@ async def _handle_sos_check_ready(adapter: MaxAdapter, chat_id: str, user_id: in
 
 async def _handle_sos_all_clear(adapter: MaxAdapter, chat_id: str, user) -> None:
     """Broadcast 'all clear' from MAX user."""
-    from src.services.sos_service import get_city_telegram_user_ids, get_city_max_user_ids
+    from src.services.sos_service import get_city_telegram_user_ids, get_city_max_broadcast_recipients
     from src.services.broadcast import broadcast_max_background, broadcast_background
     from src.services.user import get_all_platform_identities
 
@@ -2800,10 +2810,13 @@ async def _handle_sos_all_clear(adapter: MaxAdapter, chat_id: str, user) -> None
     clear_text = texts.SOS_ALL_CLEAR_BROADCAST.format(name=escape(name))
 
     # Broadcast to MAX users
-    max_user_ids = await get_city_max_user_ids(user.city_id)
-    if max_user_ids:
+    max_recipients = await get_city_max_broadcast_recipients(user.city_id)
+    if max_recipients:
         broadcast_max_background(
-            adapter, max_user_ids, clear_text, exclude_id=user.platform_user_id
+            adapter,
+            max_recipients,
+            clear_text,
+            exclude_platform_user_id=user.platform_user_id,
         )
 
     # Cross-platform: broadcast to Telegram users (исключаем привязанный TG, чтобы не дублировать)

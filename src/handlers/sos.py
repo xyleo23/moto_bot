@@ -19,7 +19,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from src.keyboards.menu import get_back_to_menu_kb
 from src import texts
-from src.models.user import effective_user_id
+from src.models.user import Platform, effective_user_id
 from src.utils.yandex_maps import (
     format_sos_broadcast_map_html,
     is_plausible_gps_coordinate,
@@ -225,8 +225,9 @@ async def _send_sos_alert(
     from src.services.sos_service import (
         create_sos_alert,
         get_city_telegram_user_ids,
-        get_city_max_user_ids,
+        get_city_max_broadcast_recipients,
     )
+    from src.services.user import get_all_platform_identities
     from src.services.broadcast import broadcast_background
     from src.services.user import get_user_profile_display
     from src.config import get_settings
@@ -315,9 +316,13 @@ async def _send_sos_alert(
     profile = await get_user_profile_display(user)
     user_ids = await get_city_telegram_user_ids(user.city_id)
 
-    max_user_ids = await get_city_max_user_ids(user.city_id)
+    max_recipients = await get_city_max_broadcast_recipients(user.city_id)
     logger.info(
-        f"SOS broadcast: city_id={user.city_id} tg_recipients={len(user_ids)} max_recipients={len(max_user_ids)} exclude_sender={user.platform_user_id}",
+        "SOS broadcast: city_id=%s tg_recipients=%s max_recipient_rows=%s exclude_tg_sender=%s",
+        user.city_id,
+        len(user_ids),
+        len(max_recipients),
+        user.platform_user_id,
     )
 
     # HTML parse_mode: escape profile (name, @username, phone may contain <>&)
@@ -359,7 +364,12 @@ async def _send_sos_alert(
     from src.platforms.base import Button, ButtonType
 
     max_adapter = get_max_adapter()
-    if max_adapter and max_user_ids:
+    max_exclude = None
+    for ident in await get_all_platform_identities(effective_user_id(user)):
+        if ident.platform == Platform.MAX:
+            max_exclude = int(ident.platform_user_id)
+            break
+    if max_adapter and max_recipients:
         map_rows = [
             [
                 Button(
@@ -371,8 +381,9 @@ async def _send_sos_alert(
         ]
         broadcast_max_background(
             max_adapter,
-            max_user_ids,
+            max_recipients,
             broadcast_text,
+            exclude_platform_user_id=max_exclude,
             kb_rows=map_rows,
         )
 
@@ -483,30 +494,29 @@ async def cb_sos_all_clear(callback: CallbackQuery, state: FSMContext, user=None
             )
 
         # Кросс-платформа: отбой в MAX (раньше уходил только в Telegram)
-        from src.services.sos_service import get_city_max_user_ids
+        from src.services.sos_service import get_city_max_broadcast_recipients
         from src.services.broadcast import get_max_adapter, broadcast_max_background
         from src.services.user import get_all_platform_identities
-        from src.models.user import Platform as UserPlatform
 
         max_adapter = get_max_adapter()
-        max_user_ids = await get_city_max_user_ids(user.city_id)
+        max_recipients = await get_city_max_broadcast_recipients(user.city_id)
         max_exclude = None
         for ident in await get_all_platform_identities(effective_user_id(user)):
-            if ident.platform == UserPlatform.MAX:
+            if ident.platform == Platform.MAX:
                 max_exclude = int(ident.platform_user_id)
                 break
-        if max_adapter and max_user_ids:
+        if max_adapter and max_recipients:
             broadcast_max_background(
                 max_adapter,
-                max_user_ids,
+                max_recipients,
                 clear_text,
-                exclude_id=max_exclude,
+                exclude_platform_user_id=max_exclude,
             )
         else:
             logger.info(
-                "SOS all-clear: MAX broadcast skipped (adapter=%s, max_recipients=%s)",
+                "SOS all-clear: MAX broadcast skipped (adapter=%s, max_recipient_rows=%s)",
                 bool(max_adapter),
-                len(max_user_ids) if max_user_ids else 0,
+                len(max_recipients) if max_recipients else 0,
             )
 
         await callback.message.edit_text(

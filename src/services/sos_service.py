@@ -141,3 +141,32 @@ async def get_city_max_user_ids(city_id: UUID) -> list[int]:
             )
         )
         return [r[0] for r in result.fetchall()]
+
+
+async def get_city_max_broadcast_recipients(
+    city_id: UUID,
+) -> list[tuple[int, str, bool]]:
+    """Для POST /messages: (platform_user_id, target_id_str, use_chat_id_query_param).
+
+    Если известен max_dialog_chat_id — шлём в диалог через chat_id; иначе fallback user_id.
+    """
+    from src.models.user import User, Platform
+    from sqlalchemy import select
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(User.platform_user_id, User.max_dialog_chat_id).where(
+                User.city_id == city_id,
+                User.platform == Platform.MAX,
+                User.is_blocked.is_(False),
+            )
+        )
+        out: list[tuple[int, str, bool]] = []
+        for uid, dchat in result.all():
+            uid_i = int(uid)
+            if dchat is not None:
+                out.append((uid_i, str(int(dchat)), True))
+            else:
+                out.append((uid_i, str(uid_i), False))
+        return out

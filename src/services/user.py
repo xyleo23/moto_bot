@@ -10,6 +10,27 @@ from src.models.profile_passenger import ProfilePassenger
 from src.config import get_settings
 
 
+async def update_max_user_dialog_chat_id(platform_user_id: int, dialog_chat_id: int) -> None:
+    """Сохранить MAX recipient.chat_id для исходящих сообщений в личку."""
+    if dialog_chat_id <= 0:
+        return
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(User).where(
+                User.platform == Platform.MAX,
+                User.platform_user_id == platform_user_id,
+            )
+        )
+        u = result.scalar_one_or_none()
+        if u is None:
+            return
+        if u.max_dialog_chat_id == dialog_chat_id:
+            return
+        u.max_dialog_chat_id = dialog_chat_id
+        await session.commit()
+
+
 async def get_or_create_user(
     platform: str,
     platform_user_id: int,
