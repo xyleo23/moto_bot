@@ -39,15 +39,19 @@ async def check_subscription_required(user: User) -> bool:
 
 
 async def activate_subscription(user_id, period: str, payment_id: str) -> bool:
-    """Activate subscription after successful payment."""
+    """Activate subscription after successful payment.
+
+    New period is added on top of the latest active subscription end date
+    (or from today if there is no active subscription), so renewals stack.
+    """
     session_factory = get_session_factory()
     today = date.today()
     if period == "monthly":
-        expires = today + timedelta(days=30)
+        add_days = 30
         sub_type = SubscriptionType.MONTHLY
     else:
         # season | year — годовая подписка 365 дней (тип в БД SEASON)
-        expires = today + timedelta(days=365)
+        add_days = 365
         sub_type = SubscriptionType.SEASON
 
     async with session_factory() as session:
@@ -57,6 +61,20 @@ async def activate_subscription(user_id, period: str, payment_id: str) -> bool:
         )
         if existing.scalar_one_or_none() is not None:
             return True
+
+        result = await session.execute(
+            select(Subscription.expires_at)
+            .where(
+                Subscription.user_id == user_id,
+                Subscription.is_active.is_(True),
+                Subscription.expires_at >= today,
+            )
+            .order_by(Subscription.expires_at.desc())
+            .limit(1)
+        )
+        current_end = result.scalar_one_or_none()
+        base = max(today, current_end) if current_end else today
+        expires = base + timedelta(days=add_days)
 
         sub = Subscription(
             user_id=user_id,
