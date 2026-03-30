@@ -723,8 +723,9 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
             msg_target_tg = msg_target_base + liker_contact
             tg_mk = get_match_kb(callback.from_user.username, callback.from_user.id)
             max_suffix = await contact_footer_html_for_max_notifications(eff_from)
+            canon_target = effective_user_id(target_user)
             await send_text_to_all_identities(
-                result["target_user_id"],
+                canon_target,
                 msg_target_tg,
                 telegram_bot=bot,
                 max_adapter=get_max_adapter(),
@@ -769,7 +770,7 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
             kb = get_like_notification_kb(str(eff_from))
             max_suffix = await contact_footer_html_for_max_notifications(eff_from)
             await notify_like_received_cross_platform(
-                result["target_user_id"],
+                effective_user_id(target_user),
                 notify_text,
                 from_photo,
                 telegram_bot=bot,

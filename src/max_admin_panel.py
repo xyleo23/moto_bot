@@ -30,6 +30,7 @@ from src.services.admin_service import (
     create_city,
     extend_subscription,
     get_admin_events,
+    get_effective_city_admin_city_ids,
     get_all_cities,
     get_broadcast_recipients,
     get_cities,
@@ -112,6 +113,11 @@ async def _max_superadmin(user: User) -> bool:
 
 async def _max_city_events_ok(user: User) -> bool:
     if await _max_superadmin(user):
+        return True
+    from src.services.admin_service import has_any_city_admin_role_for_linked
+
+    # CityAdmin привязан к internal user_id любой связанной платформы — не требуем is_city_admin именно для MAX-строки
+    if await has_any_city_admin_role_for_linked(user):
         return True
     if not user.city_id:
         return False
@@ -514,7 +520,13 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
 
     if data == "admin_events" and await _max_city_events_ok(user):
         is_sa = await _max_superadmin(user)
-        events = await get_admin_events(superadmin=is_sa, city_id=user.city_id if user else None)
+        if is_sa:
+            events = await get_admin_events(superadmin=True)
+        else:
+            cids = await get_effective_city_admin_city_ids(user)
+            if not cids and user and user.city_id:
+                cids = [user.city_id]
+            events = await get_admin_events(superadmin=False, city_ids=cids)
         rows = []
         if is_sa:
             rows.append(

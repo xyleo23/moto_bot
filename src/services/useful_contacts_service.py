@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from src.models.base import get_session_factory
 from src.models.useful_contact import UsefulContact, ContactCategory
-from src.models.city import CityAdmin
+from src.models.city import City, CityAdmin
 from src.models.user import User
 
 CAT_MAP = {
@@ -68,14 +68,16 @@ async def _is_effective_city_admin_for_city_id(session_user: User, city_id: UUID
 
 
 async def can_manage_contacts_effective(session_user: User) -> bool:
-    """Суперадмин (с учётом связки TG/MAX) или админ текущего города по любой связанной записи User."""
-    from src.services.admin_service import is_effective_superadmin_user
+    """Суперадмин (с учётом связки TG/MAX) или админ города по любой связанной записи (CityAdmin)."""
+    from src.services.admin_service import is_effective_superadmin_user, get_effective_city_admin_city_ids
 
     if await is_effective_superadmin_user(session_user):
         return True
-    if not session_user.city_id:
-        return False
-    return await _is_effective_city_admin_for_city_id(session_user, session_user.city_id)
+    if await get_effective_city_admin_city_ids(session_user):
+        return True
+    if session_user.city_id:
+        return await _is_effective_city_admin_for_city_id(session_user, session_user.city_id)
+    return False
 
 
 async def can_manage_contact_effective(session_user: User, contact: UsefulContact) -> bool:
@@ -236,3 +238,74 @@ async def get_admin_contacts_list(city_id: UUID | None, category: str | None = N
         stmt = stmt.order_by(UsefulContact.category, UsefulContact.name)
         result = await session.execute(stmt)
         return result.scalars().all()
+
+
+async def get_cities_for_contact_admin(session_user: User) -> list[City]:
+    """Города, в которых пользователь может добавлять/редактировать полезные контакты."""
+    from src.services.admin_service import get_all_cities, is_effective_superadmin_user, get_effective_city_admin_city_ids
+
+    if await is_effective_superadmin_user(session_user):
+        return await get_all_cities()
+    ids = await get_effective_city_admin_city_ids(session_user)
+    if not ids:
+        if session_user.city_id:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                c = await session.get(City, session_user.city_id)
+            return [c] if c else []
+        return []
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(select(City).where(City.id.in_(ids)).order_by(City.name))
+        return list(r.scalars().all())
+
+
+async def get_admin_contacts_scope_city_ids(session_user: User) -> list[UUID] | None:
+    """None — все города (суперадмин). Иначе список city_id; пустой список — нет объёма для списка контактов."""
+    from src.services.admin_service import is_effective_superadmin_user, get_effective_city_admin_city_ids
+
+    if await is_effective_superadmin_user(session_user):
+        return None
+    ids = await get_effective_city_admin_city_ids(session_user)
+    if ids:
+        return ids
+    if session_user.city_id:
+        return [session_user.city_id]
+    return []
+
+
+async def get_admin_contacts_with_cities_for_manager(session_user: User) -> list[tuple[UsefulContact, str]]:
+    """Пары (контакт, название города) в зоне ответственности менеджера."""
+    scope = await get_admin_contacts_scope_city_ids(session_user)
+    if scope is not None and len(scope) == 0:
+        return []
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = (
+            select(UsefulContact, City.name)
+            .join(City, UsefulContact.city_id == City.id)
+            .order_by(City.name, UsefulContact.category, UsefulContact.name)
+        )
+        if scope is not None:
+            stmt = stmt.where(UsefulContact.city_id.in_(scope))
+        result = await session.execute(stmt)
+        return [(row[0], row[1]) for row in result.all()]
+
+
+async def format_useful_contact_admin_view(c: UsefulContact) -> str:
+    from html import escape
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        city = await session.get(City, c.city_id)
+    cn = escape(city.name) if city else "—"
+    cat = CAT_LABELS.get(c.category.value, c.category.value)
+    return (
+        f"<b>{escape(c.name)}</b>\n"
+        f"Город: {cn}\n"
+        f"Категория: {cat}\n"
+        f"Описание: {escape(c.description) if c.description else '—'}\n"
+        f"Телефон: {escape(c.phone) if c.phone else '—'}\n"
+        f"Ссылка: {escape(c.link) if c.link else '—'}\n"
+        f"Адрес: {escape(c.address) if c.address else '—'}"
+    )

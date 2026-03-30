@@ -44,10 +44,12 @@ from src.services.admin_service import (
     remove_city_admin,
     is_city_admin,
     can_admin_events,
+    can_admin_events_user,
     get_subscription_settings,
     update_subscription_settings,
     extend_subscription,
     get_admin_events,
+    get_effective_city_admin_city_ids,
     admin_cancel_event,
     set_event_recommended,
     set_event_official,
@@ -1094,14 +1096,31 @@ async def cb_admin_ca_remove(callback: CallbackQuery):
 # ——— Events ———
 
 
+async def _tg_user_can_open_admin_events_menu(user, telegram_user_id: int) -> bool:
+    """Доступ к разделу админских мероприятий: TG city_id или CityAdmin по связанным User."""
+    if not user:
+        return False
+    if user.city_id and await is_city_admin(telegram_user_id, user.city_id):
+        return True
+    if await get_effective_city_admin_city_ids(user):
+        return True
+    return False
+
+
 @router.callback_query(F.data == "admin_events")
 async def cb_admin_events(callback: CallbackQuery, user=None):
     is_sa = _is_superadmin(callback.from_user.id)
-    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    is_ca = await _tg_user_can_open_admin_events_menu(user, callback.from_user.id)
     if not is_sa and not is_ca:
         await callback.answer("Доступ запрещён.")
         return
-    events = await get_admin_events(superadmin=is_sa, city_id=user.city_id if user else None)
+    if is_sa:
+        events = await get_admin_events(superadmin=True)
+    else:
+        cids = await get_effective_city_admin_city_ids(user)
+        if not cids and user and user.city_id:
+            cids = [user.city_id]
+        events = await get_admin_events(superadmin=False, city_ids=cids or [])
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     rows = []
@@ -1146,7 +1165,7 @@ async def cb_admin_events(callback: CallbackQuery, user=None):
 )
 async def cb_admin_event_detail(callback: CallbackQuery, user=None):
     is_sa = _is_superadmin(callback.from_user.id)
-    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    is_ca = await _tg_user_can_open_admin_events_menu(user, callback.from_user.id)
     if not is_sa and not is_ca:
         await callback.answer("Доступ запрещён.")
         return
@@ -1160,11 +1179,7 @@ async def cb_admin_event_detail(callback: CallbackQuery, user=None):
     if not ev:
         await callback.answer("Не найдено.", show_alert=True)
         return
-    can_edit = await can_admin_events(
-        callback.from_user.id,
-        user.city_id if user else None,
-        ev.city_id,
-    )
+    can_edit = user and await can_admin_events_user(user, ev.city_id)
     text = _admin_event_text(ev)
     await callback.message.edit_text(
         text,
@@ -1189,7 +1204,7 @@ def _admin_event_text(ev) -> str:
 @router.callback_query(F.data.startswith("admin_ev_rec_"))
 async def cb_admin_ev_recommend(callback: CallbackQuery, user=None):
     is_sa = _is_superadmin(callback.from_user.id)
-    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    is_ca = await _tg_user_can_open_admin_events_menu(user, callback.from_user.id)
     if not is_sa and not is_ca:
         await callback.answer("Доступ запрещён.")
         return
@@ -1198,9 +1213,7 @@ async def cb_admin_ev_recommend(callback: CallbackQuery, user=None):
     if not ev:
         await callback.answer("Не найдено.")
         return
-    can_edit = await can_admin_events(
-        callback.from_user.id, user.city_id if user else None, ev.city_id
-    )
+    can_edit = user and await can_admin_events_user(user, ev.city_id)
     if not can_edit:
         await callback.answer("Нет доступа.")
         return
@@ -1218,7 +1231,7 @@ async def cb_admin_ev_recommend(callback: CallbackQuery, user=None):
 async def cb_admin_ev_official(callback: CallbackQuery, user=None):
     """Toggle is_official flag on an event."""
     is_sa = _is_superadmin(callback.from_user.id)
-    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    is_ca = await _tg_user_can_open_admin_events_menu(user, callback.from_user.id)
     if not is_sa and not is_ca:
         await callback.answer("Доступ запрещён.")
         return
@@ -1227,9 +1240,7 @@ async def cb_admin_ev_official(callback: CallbackQuery, user=None):
     if not ev:
         await callback.answer("Не найдено.")
         return
-    can_edit = await can_admin_events(
-        callback.from_user.id, user.city_id if user else None, ev.city_id
-    )
+    can_edit = user and await can_admin_events_user(user, ev.city_id)
     if not can_edit:
         await callback.answer("Нет доступа.")
         return
@@ -1246,7 +1257,7 @@ async def cb_admin_ev_official(callback: CallbackQuery, user=None):
 @router.callback_query(F.data.startswith("admin_ev_cancel_"))
 async def cb_admin_ev_cancel(callback: CallbackQuery, user=None):
     is_sa = _is_superadmin(callback.from_user.id)
-    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    is_ca = await _tg_user_can_open_admin_events_menu(user, callback.from_user.id)
     if not is_sa and not is_ca:
         await callback.answer("Доступ запрещён.")
         return
@@ -1255,9 +1266,7 @@ async def cb_admin_ev_cancel(callback: CallbackQuery, user=None):
     if not ev:
         await callback.answer("Не найдено.")
         return
-    can_edit = await can_admin_events(
-        callback.from_user.id, user.city_id if user else None, ev.city_id
-    )
+    can_edit = user and await can_admin_events_user(user, ev.city_id)
     if not can_edit:
         await callback.answer("Нет доступа.")
         return
@@ -1288,7 +1297,7 @@ async def cb_admin_evreport_accept(callback: CallbackQuery, user=None):
     from src import texts
 
     is_sa = _is_superadmin(callback.from_user.id)
-    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    is_ca = await _tg_user_can_open_admin_events_menu(user, callback.from_user.id)
     if not is_sa and not is_ca:
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
@@ -1302,7 +1311,7 @@ async def cb_admin_evreport_accept(callback: CallbackQuery, user=None):
     if not ev:
         await callback.answer("Мероприятие не найдено.")
         return
-    if not is_sa and user.city_id != ev.city_id:
+    if not is_sa and (not user or not await can_admin_events_user(user, ev.city_id)):
         await callback.answer("Нет доступа к мероприятиям другого города.", show_alert=True)
         return
     await set_event_hidden(ev.id, True)
@@ -1316,7 +1325,7 @@ async def cb_admin_evreport_reject(callback: CallbackQuery, user=None):
     from src import texts
 
     is_sa = _is_superadmin(callback.from_user.id)
-    is_ca = user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id)
+    is_ca = await _tg_user_can_open_admin_events_menu(user, callback.from_user.id)
     if not is_sa and not is_ca:
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
@@ -1325,7 +1334,7 @@ async def cb_admin_evreport_reject(callback: CallbackQuery, user=None):
         ev = await get_event_by_id(uuid.UUID(eid))
     except ValueError:
         ev = None
-    if ev and not is_sa and user and user.city_id != ev.city_id:
+    if ev and not is_sa and user and not await can_admin_events_user(user, ev.city_id):
         await callback.answer("Нет доступа.")
         return
     await callback.message.edit_text(texts.EVENT_REPORT_REJECTED)

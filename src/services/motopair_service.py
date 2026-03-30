@@ -10,7 +10,7 @@ from src.models.base import get_session_factory
 from src.models.profile_pilot import ProfilePilot
 from src.models.profile_passenger import ProfilePassenger
 from src.models.like import Like, LikeBlacklist
-from src.models.user import User
+from src.models.user import User, Platform
 
 
 def _like_pair_lock_key(a: int, b: int) -> int:
@@ -372,7 +372,6 @@ async def get_contact_footer_html(canonical_user_id: UUID) -> str:
     """Returns phone + TG link block for use in both TG and MAX mutual like notifications."""
     from html import escape
 
-    from src.models.user import Platform
     from src.services.user import get_all_platform_identities
 
     session_factory = get_session_factory()
@@ -402,6 +401,14 @@ async def get_contact_footer_html(canonical_user_id: UUID) -> str:
     if tg_u and tg_u.platform_username:
         un = tg_u.platform_username.lstrip("@")
         lines.append(f'✈️ Telegram: <a href="https://t.me/{escape(un)}">@{escape(un)}</a>')
+
+    max_u = next(
+        (u for u in identities if u.platform == Platform.MAX and u.platform_username),
+        None,
+    )
+    if max_u and max_u.platform_username:
+        mun = max_u.platform_username.lstrip("@")
+        lines.append(f"💬 MAX: @{escape(mun)}")
 
     if not lines:
         return ""
@@ -415,7 +422,6 @@ async def contact_footer_html_for_max_notifications(canonical_user_id: UUID) -> 
     """
     from html import escape
 
-    from src.models.user import Platform
     from src.services.user import get_all_platform_identities
 
     session_factory = get_session_factory()
@@ -445,6 +451,14 @@ async def contact_footer_html_for_max_notifications(canonical_user_id: UUID) -> 
     if tg_u and tg_u.platform_username:
         un = tg_u.platform_username.lstrip("@")
         lines.append(f'✈️ Telegram: <a href="https://t.me/{escape(un)}">@{escape(un)}</a>')
+
+    max_u = next(
+        (u for u in identities if u.platform == Platform.MAX and u.platform_username),
+        None,
+    )
+    if max_u and max_u.platform_username:
+        mun = max_u.platform_username.lstrip("@")
+        lines.append(f"💬 MAX: @{escape(mun)}")
 
     if not lines:
         return ""

@@ -484,13 +484,18 @@ async def kb_motopair(message: Message, state: FSMContext, user=None):
 @router.message(F.text == "📅 Мероприятия")
 async def kb_events(message: Message, state: FSMContext, user=None):
     from src.config import get_settings
-    from src.services.admin_service import is_city_admin, get_admin_events
+    from src.services.admin_service import is_city_admin, get_admin_events, get_effective_city_admin_city_ids
     from src.services.event_service import TYPE_LABELS
     from src.services.subscription import check_subscription_required
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     is_sa = message.from_user.id in get_settings().superadmin_ids
-    is_ca = user and user.city_id and await is_city_admin(message.from_user.id, user.city_id)
+    is_ca = False
+    if user:
+        if user.city_id and await is_city_admin(message.from_user.id, user.city_id):
+            is_ca = True
+        elif await get_effective_city_admin_city_ids(user):
+            is_ca = True
 
     # Subscription check for regular users (admins bypass)
     if not (is_sa or is_ca) and user and await check_subscription_required(user):
@@ -511,7 +516,13 @@ async def kb_events(message: Message, state: FSMContext, user=None):
         )
         return
     if is_sa or is_ca:
-        events = await get_admin_events(superadmin=is_sa, city_id=user.city_id if user else None)
+        if is_sa:
+            events = await get_admin_events(superadmin=True)
+        else:
+            cids = await get_effective_city_admin_city_ids(user)
+            if not cids and user and user.city_id:
+                cids = [user.city_id]
+            events = await get_admin_events(superadmin=False, city_ids=cids or [])
         rows = []
         if is_sa:
             rows.append(

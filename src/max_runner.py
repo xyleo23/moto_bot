@@ -332,6 +332,15 @@ def _max_registration_text_to_callback(state: str, text: str) -> str | None:
     if state == "sos:comment" and t == texts.BTN_SKIP:
         return "sos_skip_comment"
 
+    if state == "event_create:preview":
+        if t == texts.PROFILE_BTN_SAVE:
+            return "max_evcreate_preview_save"
+        if t == texts.PROFILE_BTN_EDIT:
+            return "max_evcreate_preview_edit"
+        if t == texts.EVENT_CREATE_BTN_CANCEL:
+            return "max_evcreate_preview_cancel"
+        return None
+
     return None
 
 
@@ -669,6 +678,13 @@ async def _handle_fsm_message(
 
     synth_cb = _max_registration_text_to_callback(state, text)
     if synth_cb and await _handle_fsm_callback(adapter, chat_id, user_id, synth_cb, fsm):
+        return
+
+    if state == "event_create:preview":
+        await adapter.send_message(
+            chat_id,
+            "Нажми кнопку под карточкой: «Сохранить», «Редактировать заново» или «Отменить создание».",
+        )
         return
 
     # ── SOS location step: accept text address if pin didn't work ────────────
@@ -1194,7 +1210,7 @@ async def _handle_fsm_message(
         if val and val.lower() in ("пропустить", "skip", "-"):
             val = None
         data["description"] = val[:1000] if val else None
-        await _do_create_event(adapter, chat_id, user_id, data)
+        await _max_show_event_create_preview(adapter, chat_id, user_id, data)
         return
 
     # Unknown state — clear and show menu
@@ -1494,7 +1510,30 @@ async def _handle_fsm_callback(
 
     if cb_data == "max_evcreate_skip_desc" and state == "event_create:description":
         data["description"] = None
+        await _max_show_event_create_preview(adapter, chat_id, user_id, data)
+        return True
+
+    if cb_data == "max_evcreate_preview_save" and state == "event_create:preview":
         await _do_create_event(adapter, chat_id, user_id, data)
+        return True
+
+    if cb_data == "max_evcreate_preview_edit" and state == "event_create:preview":
+        await reg_state.set_state(user_id, "event_create:title", data)
+        await adapter.send_message(
+            chat_id,
+            "✏️ Редактирование. Введи название мероприятия заново (или «Пропустить»):",
+            _cancel_kb(),
+        )
+        return True
+
+    if cb_data == "max_evcreate_preview_cancel" and state == "event_create:preview":
+        await reg_state.clear_state(user_id)
+        u_pv = await get_or_create_user(platform="max", platform_user_id=user_id)
+        await adapter.send_message(
+            chat_id,
+            texts.EVENT_CREATE_CANCELLED,
+            await _main_menu_rows_for(u_pv) if u_pv else get_main_menu_rows(),
+        )
         return True
 
     # ── Event edit: пропуск финиша / описания (внутри FSM) ───────────────────
@@ -1513,6 +1552,47 @@ async def _handle_fsm_callback(
         return True
 
     return False
+
+
+async def _max_show_event_create_preview(
+    adapter: MaxAdapter, chat_id: str, user_id: int, data: dict
+) -> None:
+    """Карточка-предпросмотр перед сохранением (как в Telegram, texts.EVENT_CREATE_PREVIEW_*)."""
+    from datetime import datetime as _dt
+
+    from src.handlers.events import _format_event_card_from_evcreate_data
+
+    try:
+        start_at = _dt.strptime(f"{data['start_date']} {data['start_time']}", "%d.%m.%Y %H:%M")
+    except (KeyError, ValueError):
+        await reg_state.clear_state(user_id)
+        await adapter.send_message(
+            chat_id, "Ошибка даты. Создание отменено.", get_back_to_menu_rows()
+        )
+        return
+    if not data.get("point_start"):
+        await reg_state.clear_state(user_id)
+        await adapter.send_message(
+            chat_id,
+            "Ошибка: не указана точка старта. Начни создание заново.",
+            get_back_to_menu_rows(),
+        )
+        return
+    card = _format_event_card_from_evcreate_data(data, start_at)
+    full = (
+        texts.EVENT_CREATE_PREVIEW_HEADER
+        + card
+        + "\n\n"
+        + texts.EVENT_CREATE_PREVIEW_CONFIRM
+    )
+    await reg_state.set_state(user_id, "event_create:preview", data)
+    preview_kb: list = [
+        [Button(texts.PROFILE_BTN_SAVE, payload="max_evcreate_preview_save")],
+        [Button(texts.PROFILE_BTN_EDIT, payload="max_evcreate_preview_edit")],
+        [Button(texts.EVENT_CREATE_BTN_CANCEL, payload="max_evcreate_preview_cancel")],
+    ]
+    preview_kb.append(_cancel_kb()[0])
+    await adapter.send_message(chat_id, full, preview_kb)
 
 
 async def _do_create_event(adapter: MaxAdapter, chat_id: str, user_id: int, data: dict) -> None:
@@ -3033,6 +3113,8 @@ async def handle_motopair_like(
     target_user = to_user_id  # variable renamed for clarity below
     result = await process_like(eff_from, target_user.id, is_like)
 
+    canon_target_user = effective_user_id(target_user)
+
     if is_like and result.get("matched"):
         from src.services.motopair_service import get_profile_info_text
         from src.services.notification_templates import get_template
@@ -3053,9 +3135,9 @@ async def handle_motopair_like(
 
         from src.services.motopair_service import get_contact_footer_html
 
-        from_text, match_photo = await get_profile_info_text(target_user.id)
+        from_text, match_photo = await get_profile_info_text(canon_target_user)
         msg_self_base = await get_template("template_mutual_like_self", profile=from_text)
-        matched_contact = await get_contact_footer_html(target_user.id)
+        matched_contact = await get_contact_footer_html(canon_target_user)
         msg_self = msg_self_base + matched_contact
         self_rows = get_match_max_rows(target_user.platform_username)
         await max_send_message_with_optional_profile_photo(
@@ -3092,7 +3174,7 @@ async def handle_motopair_like(
             )
         max_suffix_match = await contact_footer_html_for_max_notifications(eff_from)
         await send_text_to_all_identities(
-            result["target_user_id"],
+            canon_target_user,
             msg_target_tg,
             telegram_bot=_get_tg_bot(),
             max_adapter=get_max_adapter(),
@@ -3115,7 +3197,7 @@ async def handle_motopair_like(
         max_rows = get_like_notification_max_rows(str(eff_from))
         max_suffix_like = await contact_footer_html_for_max_notifications(eff_from)
         await notify_like_received_cross_platform(
-            result["target_user_id"],
+            canon_target_user,
             notify_text,
             from_photo,
             telegram_bot=_get_tg_bot(),
@@ -3498,7 +3580,10 @@ async def _max_event_seeking_open(adapter: MaxAdapter, chat_id: str, user, eid_s
 
 
 async def _max_event_seek_yes(adapter: MaxAdapter, chat_id: str, user, data: str) -> None:
-    rest = data[5:]
+    # payload = "seeky_" + 32-hex uuid + "_pax|_plt" (6 chars prefix, not 5)
+    if not data.startswith("seeky_"):
+        return
+    rest = data[6:]
     idx = rest.rfind("_")
     if idx < 32:
         return
@@ -3610,7 +3695,7 @@ async def _max_event_pair_request(adapter: MaxAdapter, chat_id: str, user, data:
 
 async def _max_event_pair_accept(adapter: MaxAdapter, chat_id: str, user, data: str) -> None:
     from src.utils.callback_short import get_pair_callback
-    from src.services.event_service import accept_pair_request, get_profile_display
+    from src.services.event_service import accept_pair_request
     from src.services.broadcast import get_max_adapter
     from src.usecases.event_pair import notify_pair_accepted_cross_platform
 
@@ -3623,17 +3708,13 @@ async def _max_event_pair_accept(adapter: MaxAdapter, chat_id: str, user, data: 
     ok = await accept_pair_request(eid, from_user_id, effective_user_id(user))
     if not ok:
         return
-    to_text = await get_profile_display(effective_user_id(user))
     tg = _get_tg_bot()
-    if tg:
-        await notify_pair_accepted_cross_platform(
-            bot=tg,
-            max_adapter=get_max_adapter(),
-            initiator_internal_user_id=from_user_id,
-            accepter_telegram_username=user.platform_username,
-            accepter_telegram_id=None,
-            to_profile_text=to_text,
-        )
+    await notify_pair_accepted_cross_platform(
+        bot=tg,
+        max_adapter=get_max_adapter(),
+        initiator_user_id=from_user_id,
+        accepter_user_id=effective_user_id(user),
+    )
     await adapter.send_message(chat_id, "✅ Заявка принята!", get_back_to_menu_rows())
 
 
@@ -3672,27 +3753,37 @@ async def handle_events_menu(adapter: MaxAdapter, chat_id: str, user) -> None:
         kb.insert(-1, create_row)
     else:
         kb.append(create_row)
-    await adapter.send_message(chat_id, "📅 Мероприятия", kb)
+    hint = await _max_events_menu_pricing_hint()
+    body = "📅 Мероприятия" + (f"\n\n{hint}" if hint else "")
+    await adapter.send_message(chat_id, body, kb)
 
 
 async def handle_events_list_filter(adapter: MaxAdapter, chat_id: str, user) -> None:
-    """Показать только фильтр по типу (как «event_list» в Telegram)."""
-    from src.services.subscription import check_subscription_required
-    from src.services.subscription_messages import subscription_required_message
-
-    if await check_subscription_required(user):
-        await adapter.send_message(
-            chat_id,
-            await subscription_required_message("events_menu"),
-            [[Button("👤 Мой профиль", payload="menu_profile")], get_main_menu_shortcut_row()],
-        )
-        return
+    """Показать только фильтр по типу (как «event_list» в Telegram — без отдельной проверки подписки)."""
     if not user.city_id:
         await adapter.send_message(
             chat_id, "Город не выбран. Нажми /start", get_back_to_menu_rows()
         )
         return
     await adapter.send_message(chat_id, "Фильтр по типу:", get_event_list_rows())
+
+
+async def _max_events_menu_pricing_hint() -> str:
+    """Кратко о платности создания (как логика TG), без хардкода «всё платно»."""
+    from src.services.admin_service import get_subscription_settings
+
+    s = await get_subscription_settings()
+    if not s:
+        return ""
+    parts = [
+        "ℹ️ <b>Прохваты</b> — создание всегда бесплатно.",
+        "<b>Мотопробег / масштабное</b> — по настройкам подписки и лимитам "
+        "(см. раздел подписки в боте).",
+    ]
+    if s.event_creation_enabled and (s.event_creation_price_kopecks or 0) > 0:
+        rub = (s.event_creation_price_kopecks or 0) // 100
+        parts.append(f"Платное создание (после лимитов): <b>{rub} ₽</b>.")
+    return "\n".join(parts)
 
 
 async def handle_events_list(
@@ -3704,8 +3795,6 @@ async def handle_events_list(
     offset: int = 0,
 ) -> None:
     from src.services.event_service import get_events_list
-    from src.services.subscription import check_subscription_required
-    from src.services.subscription_messages import subscription_required_message
     from src.usecases.event_list_ui import (
         PAGE_SIZE,
         build_max_event_detail_rows,
@@ -3713,13 +3802,6 @@ async def handle_events_list(
     )
     from src.utils.text_format import truncate_smart, event_button_label
 
-    if await check_subscription_required(user):
-        await adapter.send_message(
-            chat_id,
-            await subscription_required_message("events_menu"),
-            [[Button("👤 Мой профиль", payload="menu_profile")], get_main_menu_shortcut_row()],
-        )
-        return
     if not user.city_id:
         await adapter.send_message(
             chat_id, "Город не выбран. Нажми /start", get_back_to_menu_rows()
@@ -4512,14 +4594,13 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
 
         sub_settings = await get_subscription_settings()
         eff_uid = effective_user_id(user)
-        # В MAX создание мероприятий всегда платное (льготы подписки только в Telegram).
         needs_payment, price = await event_creation_payment_required(
             eff_uid,
             user.platform_user_id,
             user.city_id,
             ev_type,
             sub_settings,
-            apply_subscription_benefits=False,
+            apply_subscription_benefits=True,
         )
 
         if needs_payment and price and price > 0:

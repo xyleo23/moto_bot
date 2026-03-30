@@ -363,6 +363,25 @@ async def has_any_city_admin_role_for_linked(user: User) -> bool:
         return r.scalar_one_or_none() is not None
 
 
+async def get_effective_city_admin_city_ids(user: User) -> list[UUID]:
+    """Города, где у связанных идентичностей есть роль CityAdmin (для MAX/TG без привязки к platform_user_id)."""
+    from src.services.user import get_all_platform_identities
+
+    canon = effective_user_id(user)
+    identities = await get_all_platform_identities(canon)
+    identity_ids = [u.id for u in identities]
+    if not identity_ids:
+        return []
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(CityAdmin.city_id)
+            .where(CityAdmin.user_id.in_(identity_ids))
+            .distinct()
+        )
+        return list(r.scalars().all())
+
+
 async def max_user_should_see_admin_menu(user: User | None) -> bool:
     """MAX главное меню: кнопка админки, если права есть через TG-ID или связку аккаунтов."""
     if user is None or getattr(user, "platform_user_id", None) is None:
@@ -536,14 +555,28 @@ async def deactivate_subscription(user_id: UUID) -> bool:
         return True
 
 
-async def get_admin_events(superadmin: bool, city_id: UUID | None, limit: int = 50) -> list[Event]:
-    """All events for superadmin, city events for city admin."""
+async def get_admin_events(
+    superadmin: bool,
+    city_id: UUID | None = None,
+    *,
+    city_ids: list[UUID] | None = None,
+    limit: int = 50,
+) -> list[Event]:
+    """Все мероприятия для суперадмина; для админа города — по city_id или списку city_ids."""
 
     session_factory = get_session_factory()
     async with session_factory() as session:
         stmt = select(Event).where(Event.is_cancelled.is_(False))
-        if not superadmin and city_id:
+        if superadmin:
+            pass
+        elif city_ids is not None:
+            if not city_ids:
+                return []
+            stmt = stmt.where(Event.city_id.in_(city_ids))
+        elif city_id is not None:
             stmt = stmt.where(Event.city_id == city_id)
+        else:
+            return []
         stmt = stmt.order_by(Event.start_at.desc()).limit(limit)
         r = await session.execute(stmt)
         return list(r.scalars().all())

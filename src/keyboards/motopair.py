@@ -113,11 +113,20 @@ def get_like_notification_kb(from_user_internal_id: str) -> InlineKeyboardMarkup
 
 
 def get_match_kb(telegram_username: str | None, telegram_id: int | None) -> InlineKeyboardMarkup:
-    """Keyboard after mutual like — only t.me link; tg://user breaks with privacy (BUTTON_USER_PRIVACY_RESTRICTED)."""
+    """После взаимного лайка / пары: ссылка на TG; без username — пробуем tg://user (может не сработать из‑за приватности)."""
     rows = []
     if telegram_username:
         rows.append(
-            [InlineKeyboardButton(text="💬 Написать", url=f"https://t.me/{telegram_username}")]
+            [InlineKeyboardButton(text="💬 Написать в Telegram", url=f"https://t.me/{telegram_username}")]
+        )
+    elif telegram_id:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="💬 Написать в Telegram",
+                    url=f"tg://user?id={telegram_id}",
+                )
+            ]
         )
     rows.append([InlineKeyboardButton(text="« В меню", callback_data="menu_motopair")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -1196,14 +1196,11 @@ async def cb_event_pair_accept(callback: CallbackQuery, user=None, bot=None):
         return
     await get_event_by_id(eid)
     if bot:
-        to_text = await get_profile_display(effective_user_id(user))
         await notify_pair_accepted_cross_platform(
             bot=bot,
             max_adapter=get_max_adapter(),
-            initiator_internal_user_id=from_user_id,
-            accepter_telegram_username=callback.from_user.username,
-            accepter_telegram_id=callback.from_user.id,
-            to_profile_text=to_text,
+            initiator_user_id=from_user_id,
+            accepter_user_id=effective_user_id(user),
         )
     await _edit_or_answer_status(callback.message, "✅ Заявка принята!")
     await callback.answer()

@@ -187,10 +187,8 @@ async def event_creation_payment_required(
         return True, price
 
     if event_type == "run":
-        if not apply_subscription_benefits:
-            return True, price
-        has_sub = await _user_has_active_subscription(user_id)
-        return not has_sub, price if not has_sub else None
+        # Прохваты — всегда бесплатно, без лимитов и без привязки к подписке
+        return False, None
 
     return True, price
 

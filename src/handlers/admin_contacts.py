@@ -20,7 +20,9 @@ from src.services.useful_contacts_service import (
     get_contact_by_id,
     update_contact,
     delete_contact,
-    get_admin_contacts_list,
+    get_cities_for_contact_admin,
+    get_admin_contacts_with_cities_for_manager,
+    format_useful_contact_admin_view,
     CAT_LABELS,
 )
 
@@ -58,46 +60,39 @@ async def cb_admin_contacts(callback: CallbackQuery, user=None):
 @router.callback_query(F.data == "admin_contact_add")
 async def cb_admin_contact_add_start(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from src.services.admin_service import get_all_cities, is_effective_superadmin_user
 
     if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
 
-    # Superadmins can choose any city; regular city admins use their own city
-    is_superadmin = await is_effective_superadmin_user(user)
-    if is_superadmin:
-        cities = await get_all_cities()
-        if not cities:
-            await callback.answer("Нет городов в базе.", show_alert=True)
-            return
-        rows = [
-            [
-                InlineKeyboardButton(
-                    text=(f"{c.name} · выкл" if not c.is_active else c.name),
-                    callback_data=f"admin_contact_city_{c.id}",
-                )
-            ]
-            for c in cities
-        ]
-        rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_contacts")])
-        await state.set_state(ContactAddStates.city)
-        await callback.message.edit_text(
-            "<b>Новый контакт</b>\n\nВыбери город (список из админки городов, в т.ч. скрытые для пользователей "
-            "отмечены «выкл»):",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-        )
-    else:
-        if not user.city_id:
-            await callback.answer("Город не выбран.", show_alert=True)
-            return
-        await state.update_data(contact_city_id=str(user.city_id))
+    cities = await get_cities_for_contact_admin(user)
+    if not cities:
+        await callback.answer("Нет доступных городов для контактов.", show_alert=True)
+        return
+    if len(cities) == 1:
+        await state.update_data(contact_city_id=str(cities[0].id))
         await state.set_state(ContactAddStates.category)
         await callback.message.edit_text(
-            "Контакт будет привязан к <b>твоему городу в профиле</b>. Чтобы вести контакты другого города, "
-            "нужны права суперадмина или отдельный аккаунт админа этого города.\n\nВыбери категорию:",
+            f"Город: <b>{cities[0].name}</b>\n\nВыбери категорию:",
             reply_markup=get_admin_contact_categories_kb("admin_contact_add"),
         )
+        await callback.answer()
+        return
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=(f"{c.name} · выкл" if not c.is_active else c.name),
+                callback_data=f"admin_contact_city_{c.id}",
+            )
+        ]
+        for c in cities
+    ]
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_contacts")])
+    await state.set_state(ContactAddStates.city)
+    await callback.message.edit_text(
+        "<b>Новый контакт</b>\n\nСначала выбери город (в т.ч. скрытые для пользователей отмечены «выкл»):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
     await callback.answer()
 
 
@@ -208,12 +203,9 @@ async def cb_admin_contact_list(callback: CallbackQuery, user=None):
     if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
-    if not user or not user.city_id:
-        await callback.answer("Город не выбран.", show_alert=True)
-        return
 
-    contacts = await get_admin_contacts_list(user.city_id)
-    if not contacts:
+    pairs = await get_admin_contacts_with_cities_for_manager(user)
+    if not pairs:
         await callback.message.edit_text(
             "Контактов нет.",
             reply_markup=get_admin_contacts_menu_kb(),
@@ -221,13 +213,16 @@ async def cb_admin_contact_list(callback: CallbackQuery, user=None):
     else:
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+        distinct_cities = {cn for _, cn in pairs}
+        multi_city = len(distinct_cities) > 1
         rows = []
-        for c in contacts[:15]:
+        for c, city_name in pairs[:15]:
             label = CAT_LABELS.get(c.category.value, c.category.value)
+            prefix = f"{city_name} · " if multi_city else ""
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text=f"{c.name} ({label})",
+                        text=f"{prefix}{c.name} ({label})",
                         callback_data=f"admin_contact_view_{c.id}",
                     )
                 ]
@@ -253,14 +248,7 @@ async def cb_admin_contact_view(callback: CallbackQuery, user=None):
     if not await can_manage_contact_effective(user, c):
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
-    text = (
-        f"<b>{c.name}</b>\n"
-        f"Категория: {CAT_LABELS.get(c.category.value, c.category.value)}\n"
-        f"Описание: {c.description or '—'}\n"
-        f"Телефон: {c.phone or '—'}\n"
-        f"Ссылка: {c.link or '—'}\n"
-        f"Адрес: {c.address or '—'}"
-    )
+    text = await format_useful_contact_admin_view(c)
     await callback.message.edit_text(text, reply_markup=get_admin_contact_edit_kb(cid))
     await callback.answer()
 
@@ -386,13 +374,11 @@ async def cb_admin_contact_edit_value_category(
     await state.clear()
     if ok:
         c = await get_contact_by_id(uuid.UUID(cid))
-        text = (
-            f"✅ Категория обновлена.\n\n<b>{c.name}</b>\n"
-            f"Категория: {CAT_LABELS.get(c.category.value, c.category.value)}\n"
-            f"Описание: {c.description or '—'}\nТелефон: {c.phone or '—'}\n"
-            f"Ссылка: {c.link or '—'}\nАдрес: {c.address or '—'}"
+        body = await format_useful_contact_admin_view(c)
+        await callback.message.edit_text(
+            f"✅ Категория обновлена.\n\n{body}",
+            reply_markup=get_admin_contact_edit_kb(cid),
         )
-        await callback.message.edit_text(text, reply_markup=get_admin_contact_edit_kb(cid))
     else:
         await callback.message.edit_text("Ошибка.", reply_markup=get_admin_contact_edit_kb(cid))
     await callback.answer()
@@ -424,12 +410,10 @@ async def admin_contact_edit_value_message(message: Message, state: FSMContext, 
     await state.clear()
     if ok:
         c = await get_contact_by_id(uuid.UUID(cid))
-        text_msg = (
-            f"✅ Поле обновлено.\n\n<b>{c.name}</b>\n"
-            f"Категория: {CAT_LABELS.get(c.category.value, c.category.value)}\n"
-            f"Описание: {c.description or '—'}\nТелефон: {c.phone or '—'}\n"
-            f"Ссылка: {c.link or '—'}\nАдрес: {c.address or '—'}"
+        body = await format_useful_contact_admin_view(c)
+        await message.answer(
+            f"✅ Поле обновлено.\n\n{body}",
+            reply_markup=get_admin_contact_edit_kb(cid),
         )
-        await message.answer(text_msg, reply_markup=get_admin_contact_edit_kb(cid))
     else:
         await message.answer("Ошибка.", reply_markup=get_admin_contacts_menu_kb())

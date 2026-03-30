@@ -12,7 +12,19 @@ if TYPE_CHECKING:
 from sqlalchemy import select
 
 from src.models.base import get_session_factory
-from src.models.user import User, effective_user_id
+from src.models.user import Platform, User, effective_user_id
+
+
+async def _telegram_identity_for_match_kb(
+    canonical_user_id: uuid.UUID,
+) -> tuple[str | None, int | None]:
+    """Username + numeric id записи Telegram для кнопки «Написать»."""
+    from src.services.user import get_all_platform_identities
+
+    for u in await get_all_platform_identities(canonical_user_id):
+        if u.platform == Platform.TELEGRAM:
+            return u.platform_username, u.platform_user_id
+    return None, None
 
 
 async def notify_pair_request_cross_platform(
@@ -30,8 +42,12 @@ async def notify_pair_request_cross_platform(
     from src.keyboards.shared import get_pair_request_max_rows
 
     title = (event_title or "").strip() or "Мероприятие"
+    from src.services.motopair_service import get_contact_footer_html
+
+    foot = await get_contact_footer_html(from_user_canonical_id)
     msg = (
         f"💌 Заявка на пару!\n\n{from_profile_text} хочет поехать с тобой на мероприятие «{title}»."
+        + foot
     )
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -57,29 +73,55 @@ async def notify_pair_accepted_cross_platform(
     *,
     bot,
     max_adapter,
-    initiator_internal_user_id: uuid.UUID,
-    accepter_telegram_username: str | None,
-    accepter_telegram_id: int | None,
-    to_profile_text: str,
+    initiator_user_id: uuid.UUID,
+    accepter_user_id: uuid.UUID,
 ) -> None:
+    """Оба участника получают анкету и контакты (телефон + Telegram) друг друга."""
     from src.services.cross_platform_notify import send_text_to_all_identities
+    from src.services.event_service import get_profile_display
+    from src.services.motopair_service import get_contact_footer_html
     from src.keyboards.motopair import get_match_kb
     from src.keyboards.shared import get_match_max_rows
 
-    msg_ok = f"✅ Заявка принята! {to_profile_text} едет с тобой."
     session_factory = get_session_factory()
     async with session_factory() as session:
-        r = await session.execute(select(User).where(User.id == initiator_internal_user_id))
-        initiator = r.scalar_one_or_none()
-    canon_from = effective_user_id(initiator) if initiator else initiator_internal_user_id
+        ri = await session.execute(select(User).where(User.id == initiator_user_id))
+        ra = await session.execute(select(User).where(User.id == accepter_user_id))
+        init_u = ri.scalar_one_or_none()
+        acc_u = ra.scalar_one_or_none()
+    if not init_u or not acc_u:
+        logger.warning("notify_pair_accepted: missing user row")
+        return
+    i_canon = effective_user_id(init_u)
+    a_canon = effective_user_id(acc_u)
+
+    text_i = await get_profile_display(i_canon)
+    text_a = await get_profile_display(a_canon)
+    foot_i = await get_contact_footer_html(i_canon)
+    foot_a = await get_contact_footer_html(a_canon)
+
+    un_a, id_a = await _telegram_identity_for_match_kb(a_canon)
+    un_i, id_i = await _telegram_identity_for_match_kb(i_canon)
+
+    msg_initiator = f"✅ Заявка принята!\n\n{text_a}" + foot_a
+    msg_accepter = f"✅ Вы в паре на мероприятии!\n\n{text_i}" + foot_i
+
     try:
         await send_text_to_all_identities(
-            canon_from,
-            msg_ok,
+            i_canon,
+            msg_initiator,
             telegram_bot=bot,
             max_adapter=max_adapter,
-            tg_reply_markup=get_match_kb(accepter_telegram_username, accepter_telegram_id),
-            max_kb_rows=get_match_max_rows(accepter_telegram_username),
+            tg_reply_markup=get_match_kb(un_a, id_a),
+            max_kb_rows=get_match_max_rows(un_a),
+        )
+        await send_text_to_all_identities(
+            a_canon,
+            msg_accepter,
+            telegram_bot=bot,
+            max_adapter=max_adapter,
+            tg_reply_markup=get_match_kb(un_i, id_i),
+            max_kb_rows=get_match_max_rows(un_i),
         )
     except Exception as e:
         logger.warning("notify_pair_accepted_cross_platform: %s", e)
