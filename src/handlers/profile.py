@@ -1,7 +1,5 @@
 """Profile and subscription block, including phone change workflow."""
 
-import uuid
-
 from loguru import logger
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -373,7 +371,6 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
     from src.models.phone_change_request import PhoneChangeRequest
     from src.models.profile_pilot import ProfilePilot
     from src.models.profile_passenger import ProfilePassenger
-    from src.config import get_settings
     from sqlalchemy import select
 
     new_phone = message.text.strip()
@@ -415,7 +412,6 @@ async def user_phone_change_enter(message: Message, state: FSMContext, user=None
         req_id = str(req.id)
 
     # Notify all superadmins with old and new phone
-    settings = get_settings()
     bot = message.bot
     user_display = (
         f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)

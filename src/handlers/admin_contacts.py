@@ -7,7 +7,6 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from src.config import get_settings
 from src.keyboards.contacts import (
     get_admin_contacts_menu_kb,
     get_admin_contact_categories_kb,
@@ -15,7 +14,7 @@ from src.keyboards.contacts import (
     get_admin_contact_edit_fields_kb,
 )
 from src.services.useful_contacts_service import (
-    can_manage_contacts,
+    can_manage_contacts_effective,
     can_manage_contact_effective,
     create_contact,
     get_contact_by_id,
@@ -46,11 +45,7 @@ class ContactEditStates(StatesGroup):
 
 @router.callback_query(F.data == "admin_contacts")
 async def cb_admin_contacts(callback: CallbackQuery, user=None):
-    from src.services.useful_contacts_service import can_manage_contacts
-
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
     await callback.message.edit_text(
@@ -63,19 +58,14 @@ async def cb_admin_contacts(callback: CallbackQuery, user=None):
 @router.callback_query(F.data == "admin_contact_add")
 async def cb_admin_contact_add_start(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from src.services.admin_service import get_cities
+    from src.services.admin_service import get_cities, is_effective_superadmin_user
 
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
 
     # Superadmins can choose any city; regular city admins use their own city
-    is_superadmin = (
-        hasattr(user, "platform_user_id")
-        and user.platform_user_id in get_settings().superadmin_ids
-    )
+    is_superadmin = await is_effective_superadmin_user(user)
     if is_superadmin:
         cities = await get_cities()
         if not cities:
@@ -208,9 +198,7 @@ async def admin_contact_add_address(message: Message, state: FSMContext, user=No
 
 @router.callback_query(F.data == "admin_contact_list")
 async def cb_admin_contact_list(callback: CallbackQuery, user=None):
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
     if not user or not user.city_id:
@@ -247,9 +235,7 @@ async def cb_admin_contact_list(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_view_"))
 async def cb_admin_contact_view(callback: CallbackQuery, user=None):
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_view_", "")
@@ -274,9 +260,7 @@ async def cb_admin_contact_view(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_del_"))
 async def cb_admin_contact_del(callback: CallbackQuery, user=None):
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_del_", "")
@@ -300,9 +284,7 @@ async def cb_admin_contact_del(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data.startswith("admin_contact_edit_"))
 async def cb_admin_contact_edit(callback: CallbackQuery, state: FSMContext, user=None):
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_edit_", "")
@@ -323,9 +305,7 @@ async def cb_admin_contact_edit(callback: CallbackQuery, state: FSMContext, user
 
 @router.callback_query(F.data.startswith("admin_contact_ef_"))
 async def cb_admin_contact_edit_field(callback: CallbackQuery, state: FSMContext, user=None):
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
     # admin_contact_ef_{cid}_{field}
@@ -369,9 +349,7 @@ async def cb_admin_contact_edit_value_category(
     callback: CallbackQuery, state: FSMContext, user=None
 ):
     """Обработка выбора категории при редактировании."""
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
         return
     # admin_contact_ev_{cid}_{category}
@@ -415,9 +393,7 @@ async def cb_admin_contact_edit_value_category(
 
 @router.message(ContactEditStates.value, F.text)
 async def admin_contact_edit_value_message(message: Message, state: FSMContext, user=None):
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         return
     data = await state.get_data()
     cid = data.get("contact_edit_id")

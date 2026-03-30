@@ -451,11 +451,9 @@ async def msg_admin_broadcast(message: Message, state: FSMContext, user=None):
 
 @router.message(F.text == "📇 Контакты")
 async def msg_admin_contacts(message: Message, user=None):
-    from src.services.useful_contacts_service import can_manage_contacts
+    from src.services.useful_contacts_service import can_manage_contacts_effective
 
-    if not user or not await can_manage_contacts(
-        user.id, user.city_id, get_settings().superadmin_ids
-    ):
+    if not user or not await can_manage_contacts_effective(user):
         return
     from src.keyboards.contacts import get_admin_contacts_menu_kb
 

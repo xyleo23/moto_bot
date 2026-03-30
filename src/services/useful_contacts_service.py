@@ -89,31 +89,6 @@ async def can_manage_contact_effective(session_user: User, contact: UsefulContac
     return await _is_effective_city_admin_for_city_id(session_user, contact.city_id)
 
 
-async def can_manage_contacts(
-    user_id: UUID, city_id: UUID | None, superadmin_ids: list[int]
-) -> bool:
-    """True if user can add/edit contacts: superadmin or city admin."""
-    from src.models.user import User
-
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        user_r = await session.execute(select(User).where(User.id == user_id))
-        u = user_r.scalar_one_or_none()
-        if not u:
-            return False
-        if u.platform_user_id in superadmin_ids:
-            return True
-        if not city_id:
-            return False
-        ca = await session.execute(
-            select(CityAdmin).where(
-                CityAdmin.city_id == city_id,
-                CityAdmin.user_id == user_id,
-            )
-        )
-        return ca.scalar_one_or_none() is not None
-
-
 async def get_contacts_by_category(
     city_id: UUID | None,
     category: str,

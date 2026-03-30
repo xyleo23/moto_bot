@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import uuid
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
 from src.keyboards.contacts import (
     get_admin_contact_categories_kb,
     get_admin_contact_edit_fields_kb,

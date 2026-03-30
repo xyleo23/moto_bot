@@ -550,7 +550,6 @@ async def _max_profile_phone_change_text(
     from src.models.profile_pilot import ProfilePilot
     from src.models.profile_passenger import ProfilePassenger
     from src.models.user import effective_user_id
-    from src.config import get_settings
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     new_phone = (text or "").strip()
@@ -602,7 +601,6 @@ async def _max_profile_phone_change_text(
         req_id = str(req.id)
 
     await reg_state.clear_state(user_id)
-    settings = get_settings()
     tg_bot = _get_tg_bot()
     user_display = (
         f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
