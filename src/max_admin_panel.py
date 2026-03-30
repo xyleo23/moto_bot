@@ -34,6 +34,10 @@ from src.services.admin_service import (
     get_cities,
     get_city_admins,
     get_global_text,
+    get_effective_support_email,
+    get_effective_support_username,
+    GLOBAL_TEXT_SUPPORT_EMAIL,
+    GLOBAL_TEXT_SUPPORT_USERNAME,
     get_stats,
     get_subscription_settings,
     get_user_by_id,
@@ -58,7 +62,7 @@ from src.services.motopair_service import hide_profile
 from src.services.notification_templates import TEMPLATE_KEYS
 from src.services.user import get_or_create_user
 from src.utils.callback_short import get_city_admin_remove
-from src.keyboards.shared import get_main_menu_shortcut_row
+from src.keyboards.shared import append_main_menu_shortcut_row, get_main_menu_shortcut_row, max_kb_from_tg_inline
 
 from src import texts
 
@@ -781,6 +785,55 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         )
         return True
 
+    if data == "admin_support_contact" and await _max_superadmin(user):
+        email = await get_effective_support_email()
+        uname = await get_effective_support_username()
+        db_mail = await get_global_text(GLOBAL_TEXT_SUPPORT_EMAIL)
+        db_user = await get_global_text(GLOBAL_TEXT_SUPPORT_USERNAME)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✏ Email", callback_data="admin_support_edit_email"
+                    ),
+                    InlineKeyboardButton(
+                        text="✏ Telegram @", callback_data="admin_support_edit_username"
+                    ),
+                ],
+                [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+            ]
+        )
+        await adapter.send_message(
+            chat_id,
+            "<b>📞 Контакты поддержки</b>\n\n"
+            f"Пользователям сейчас:\n📧 <code>{email}</code>\n👤 <code>@{uname}</code>\n\n"
+            f"<i>В БД (пусто = .env):</i>\n"
+            f"email: <code>{db_mail or '—'}</code>\n"
+            f"username: <code>{db_user or '—'}</code>",
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)),
+        )
+        return True
+
+    if data == "admin_support_edit_email" and await _max_superadmin(user):
+        await reg_state.set_state(user.platform_user_id, "admin:support_email", {})
+        cur = await get_global_text(GLOBAL_TEXT_SUPPORT_EMAIL) or "(из .env)"
+        await adapter.send_message(
+            chat_id,
+            f"Отправь email поддержки (сейчас в БД: {cur}). Пример: info@site.ru",
+            [[Button("« Отмена", payload="admin_support_contact")], get_main_menu_shortcut_row()],
+        )
+        return True
+
+    if data == "admin_support_edit_username" and await _max_superadmin(user):
+        await reg_state.set_state(user.platform_user_id, "admin:support_username", {})
+        cur = await get_global_text(GLOBAL_TEXT_SUPPORT_USERNAME) or "(из .env)"
+        await adapter.send_message(
+            chat_id,
+            f"Отправь username в Telegram <b>без @</b> (сейчас в БД: {cur}).",
+            [[Button("« Отмена", payload="admin_support_contact")], get_main_menu_shortcut_row()],
+        )
+        return True
+
     if data == "admin_templates" and await _max_superadmin(user):
         rows = []
         for key in TEMPLATE_KEYS:
@@ -989,6 +1042,34 @@ async def handle_max_admin_fsm_text(
             return
         await set_global_text("about_us", (text or "").strip()[:5000] or "О нас")
         await _done("✅ Текст «О нас» сохранён.", "admin_panel")
+        return
+
+    if state == "admin:support_email":
+        if not await _max_superadmin(u):
+            await reg_state.clear_state(user_id)
+            return
+        em = (text or "").strip()[:320]
+        if not em or "@" not in em:
+            await adapter.send_message(
+                chat_id,
+                "Нужен корректный email (с символом @). Попробуй ещё раз.",
+                append_main_menu_shortcut_row(None),
+            )
+            return
+        await set_global_text(GLOBAL_TEXT_SUPPORT_EMAIL, em)
+        await _done("✅ Email поддержки сохранён.", "admin_support_contact")
+        return
+
+    if state == "admin:support_username":
+        if not await _max_superadmin(u):
+            await reg_state.clear_state(user_id)
+            return
+        un = (text or "").strip().lstrip("@")[:64]
+        if not un:
+            await adapter.send_message(chat_id, "Username не может быть пустым.", append_main_menu_shortcut_row(None))
+            return
+        await set_global_text(GLOBAL_TEXT_SUPPORT_USERNAME, un)
+        await _done("✅ Username Telegram сохранён.", "admin_support_contact")
         return
 
     if state == "admin:template_text":

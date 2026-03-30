@@ -176,12 +176,13 @@ def get_admin_superadmin_kb() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="📝 Текст «О нас»"),
-                KeyboardButton(text="📧 Шаблоны"),
+                KeyboardButton(text="📞 Контакты поддержки"),
             ],
             [
+                KeyboardButton(text="📧 Шаблоны"),
                 KeyboardButton(text="📋 Логи"),
-                KeyboardButton(text="📇 Контакты"),
             ],
+            [KeyboardButton(text="📇 Контакты")],
             [KeyboardButton(text="🏠 Главное меню")],
         ],
         resize_keyboard=True,

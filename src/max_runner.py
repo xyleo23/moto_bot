@@ -1939,15 +1939,17 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
 
     low = text.lower()
     if low.startswith("/privacy") or low == "privacy":
-        from src.handlers.legal import _chunk_text, _format_legal
+        from src.handlers.legal import _chunk_text, format_legal_template
 
-        for chunk in _chunk_text(_format_legal(texts.PRIVACY_TEXT)):
+        legal = await format_legal_template(texts.PRIVACY_TEXT)
+        for chunk in _chunk_text(legal):
             await adapter.send_message(ev.chat_id, chunk, None)
         return
     if low.startswith("/consent") or low == "consent":
-        from src.handlers.legal import _chunk_text, _format_legal
+        from src.handlers.legal import _chunk_text, format_legal_template
 
-        for chunk in _chunk_text(_format_legal(texts.CONSENT_TEXT)):
+        legal = await format_legal_template(texts.CONSENT_TEXT)
+        for chunk in _chunk_text(legal):
             await adapter.send_message(ev.chat_id, chunk, None)
         return
     if low.startswith("/delete_data") or low.startswith("/deletedata"):
@@ -1958,13 +1960,12 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         )
         return
     if low.startswith("/support"):
-        from src.config import get_settings
+        from src.services.admin_service import get_effective_support_email, get_effective_support_username
 
-        s = get_settings()
         try:
             st = texts.LEGAL_SUPPORT_TEXT.format(
-                email=s.support_email,
-                username=s.support_username or "support",
+                email=await get_effective_support_email(),
+                username=await get_effective_support_username(),
             )
         except KeyError:
             st = texts.LEGAL_SUPPORT_TEXT
@@ -2222,24 +2223,28 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         await adapter.send_message(chat_id, texts.LEGAL_DOCS_INTRO, get_max_documents_menu_rows())
         return
     if data == "doc_privacy":
-        from src.handlers.legal import _format_legal
+        from src.handlers.legal import format_legal_template
 
-        await _max_send_legal_chunks(adapter, chat_id, _format_legal(texts.PRIVACY_TEXT))
+        await _max_send_legal_chunks(
+            adapter, chat_id, await format_legal_template(texts.PRIVACY_TEXT)
+        )
         await adapter.send_message(chat_id, "Документы:", get_max_documents_menu_rows())
         return
     if data == "doc_agreement":
         t = texts.AGREEMENT_TEXT
         if "{support_email}" in t:
-            from src.handlers.legal import _format_legal
+            from src.handlers.legal import format_legal_template
 
-            t = _format_legal(t)
+            t = await format_legal_template(t)
         await _max_send_legal_chunks(adapter, chat_id, t)
         await adapter.send_message(chat_id, "Документы:", get_max_documents_menu_rows())
         return
     if data == "doc_consent":
-        from src.handlers.legal import _format_legal
+        from src.handlers.legal import format_legal_template
 
-        await _max_send_legal_chunks(adapter, chat_id, _format_legal(texts.CONSENT_TEXT))
+        await _max_send_legal_chunks(
+            adapter, chat_id, await format_legal_template(texts.CONSENT_TEXT)
+        )
         await adapter.send_message(chat_id, "Документы:", get_max_documents_menu_rows())
         return
     if data == "doc_delete":
@@ -2250,13 +2255,12 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         )
         return
     if data == "doc_support":
-        from src.config import get_settings
+        from src.services.admin_service import get_effective_support_email, get_effective_support_username
 
-        s = get_settings()
         try:
             st = texts.LEGAL_SUPPORT_TEXT.format(
-                email=s.support_email,
-                username=s.support_username or "support",
+                email=await get_effective_support_email(),
+                username=await get_effective_support_username(),
             )
         except KeyError:
             st = texts.LEGAL_SUPPORT_TEXT
@@ -4066,13 +4070,16 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
 
 
 async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
-    from src.services.admin_service import get_global_text
+    from src.services.admin_service import (
+        get_global_text,
+        get_effective_support_email,
+        get_effective_support_username,
+    )
 
     text_db = await get_global_text("about_us")
     default = "Бот мото-сообщества Екатеринбурга."
     text = (text_db or default).strip()
-    s = get_settings()
-    text += f"\n\n📧 {s.support_email}\n👤 @{s.support_username}"
+    text += f"\n\n📧 {await get_effective_support_email()}\n👤 @{await get_effective_support_username()}"
     kb = [
         [Button("❤️ Поддержать проект", payload="max_donate")],
         get_main_menu_shortcut_row(),

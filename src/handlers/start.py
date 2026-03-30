@@ -226,15 +226,13 @@ async def cmd_contacts(message: Message, state: FSMContext, user=None):
 
 @router.message(Command("about"))
 async def cmd_about(message: Message, state: FSMContext, user=None):
-    from src.services.admin_service import get_global_text
+    from src.services.admin_service import get_global_text, get_effective_support_email
     from src.handlers.about import DEFAULT_ABOUT
     from src.keyboards.menu import get_back_to_menu_kb
-    from src.config import get_settings
 
-    s = get_settings()
     text_db = await get_global_text("about_us")
     about_text = (text_db or DEFAULT_ABOUT).strip()
-    about_text += f"\n\n📧 {s.support_email}"
+    about_text += f"\n\n📧 {await get_effective_support_email()}"
     await message.answer(about_text, reply_markup=get_back_to_menu_kb())
 
 
@@ -600,13 +598,11 @@ async def kb_main_menu(message: Message, state: FSMContext, user=None):
 
 @router.message(F.text == "ℹ️ О нас")
 async def kb_about(message: Message, state: FSMContext, user=None):
-    from src.services.admin_service import get_global_text
+    from src.services.admin_service import get_global_text, get_effective_support_email
     from src.handlers.about import DEFAULT_ABOUT
     from src.keyboards.menu import get_back_to_menu_kb
-    from src.config import get_settings
 
-    s = get_settings()
     text_db = await get_global_text("about_us")
     about_text = (text_db or DEFAULT_ABOUT).strip()
-    about_text += f"\n\n📧 {s.support_email}"
+    about_text += f"\n\n📧 {await get_effective_support_email()}"
     await message.answer(about_text, reply_markup=get_back_to_menu_kb())

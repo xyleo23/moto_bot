@@ -660,3 +660,24 @@ async def set_global_text(key: str, value: str) -> bool:
             session.add(g)
         await session.commit()
         return True
+
+
+# Ключи global_texts: непустое значение переопределяет .env (SETTINGS)
+GLOBAL_TEXT_SUPPORT_EMAIL = "support_email"
+GLOBAL_TEXT_SUPPORT_USERNAME = "support_username"
+
+
+async def get_effective_support_email() -> str:
+    """Email поддержки: из БД (global_texts), иначе из настроек окружения."""
+    raw = await get_global_text(GLOBAL_TEXT_SUPPORT_EMAIL)
+    if raw is not None and raw.strip():
+        return raw.strip()
+    return (get_settings().support_email or "").strip() or "support@example.com"
+
+
+async def get_effective_support_username() -> str:
+    """Username Telegram поддержки без @: БД или .env."""
+    raw = await get_global_text(GLOBAL_TEXT_SUPPORT_USERNAME)
+    if raw is not None and raw.strip():
+        return raw.strip().lstrip("@")
+    return (get_settings().support_username or "support").strip().lstrip("@") or "support"

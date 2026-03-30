@@ -5,8 +5,8 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command
 
 from src import texts
-from src.config import get_settings
 from src.keyboards.menu import get_main_menu_kb
+from src.services.admin_service import get_effective_support_email, get_effective_support_username
 from src.services.user import get_or_create_user, delete_user_data
 
 router = Router()
@@ -24,11 +24,11 @@ def _chunk_text(text: str, limit: int = MSG_LIMIT) -> list[str]:
     return chunks
 
 
-def _format_legal(template: str) -> str:
-    """Подставить support_email в шаблон, если есть плейсхолдер."""
-    s = get_settings()
+async def format_legal_template(template: str) -> str:
+    """Подставить support_email в шаблон (email из БД или .env)."""
+    email = await get_effective_support_email()
     try:
-        return template.format(support_email=s.support_email)
+        return template.format(support_email=email)
     except KeyError:
         return template
 
@@ -61,7 +61,7 @@ def get_documents_menu_kb() -> InlineKeyboardMarkup:
 @router.message(Command("privacy"))
 async def cmd_privacy(message: Message, user=None):
     """Политика конфиденциальности."""
-    text = _format_legal(texts.PRIVACY_TEXT)
+    text = await format_legal_template(texts.PRIVACY_TEXT)
     for chunk in _chunk_text(text):
         await message.answer(chunk)
 
@@ -69,7 +69,7 @@ async def cmd_privacy(message: Message, user=None):
 @router.message(Command("consent"))
 async def cmd_consent(message: Message, user=None):
     """Согласие на обработку ПД."""
-    text = _format_legal(texts.CONSENT_TEXT)
+    text = await format_legal_template(texts.CONSENT_TEXT)
     for chunk in _chunk_text(text):
         await message.answer(chunk)
 
@@ -90,11 +90,9 @@ async def cmd_delete_data(message: Message, user=None):
 async def cmd_support(message: Message):
     """Контакты поддержки."""
     try:
-        s = get_settings()
-        text = texts.LEGAL_SUPPORT_TEXT.format(
-            email=s.support_email,
-            username=s.support_username or "support",
-        )
+        email = await get_effective_support_email()
+        username = await get_effective_support_username()
+        text = texts.LEGAL_SUPPORT_TEXT.format(email=email, username=username)
     except KeyError:
         text = texts.LEGAL_SUPPORT_TEXT
     await message.answer(text)
@@ -117,7 +115,7 @@ async def cb_menu_documents(callback: CallbackQuery):
 async def cb_doc_privacy(callback: CallbackQuery):
     """Показать политику конфиденциальности."""
     await callback.answer()
-    text = _format_legal(texts.PRIVACY_TEXT)
+    text = await format_legal_template(texts.PRIVACY_TEXT)
     for chunk in _chunk_text(text):
         await callback.message.answer(chunk)
     await callback.message.answer("Документы:", reply_markup=get_documents_menu_kb())
@@ -127,7 +125,7 @@ async def cb_doc_privacy(callback: CallbackQuery):
 async def cb_doc_consent(callback: CallbackQuery):
     """Показать согласие на обработку ПД."""
     await callback.answer()
-    text = _format_legal(texts.CONSENT_TEXT)
+    text = await format_legal_template(texts.CONSENT_TEXT)
     for chunk in _chunk_text(text):
         await callback.message.answer(chunk)
     await callback.message.answer("Документы:", reply_markup=get_documents_menu_kb())
@@ -139,7 +137,7 @@ async def cb_doc_agreement(callback: CallbackQuery):
     await callback.answer()
     text = texts.AGREEMENT_TEXT
     if "{support_email}" in text:
-        text = _format_legal(text)
+        text = await format_legal_template(text)
     for chunk in _chunk_text(text):
         await callback.message.answer(chunk)
     await callback.message.answer("Документы:", reply_markup=get_documents_menu_kb())
@@ -171,11 +169,9 @@ async def cb_doc_cancel_delete(callback: CallbackQuery):
 async def cb_doc_support(callback: CallbackQuery):
     """Контакты поддержки."""
     try:
-        s = get_settings()
-        text = texts.LEGAL_SUPPORT_TEXT.format(
-            email=s.support_email,
-            username=s.support_username or "support",
-        )
+        email = await get_effective_support_email()
+        username = await get_effective_support_username()
+        text = texts.LEGAL_SUPPORT_TEXT.format(email=email, username=username)
     except KeyError:
         text = texts.LEGAL_SUPPORT_TEXT
     await callback.message.edit_text(text)

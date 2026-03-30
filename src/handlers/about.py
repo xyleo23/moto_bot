@@ -7,7 +7,11 @@ from aiogram.fsm.state import State, StatesGroup
 
 from src.config import get_settings
 from src.keyboards.menu import get_back_to_menu_kb
-from src.services.admin_service import get_global_text
+from src.services.admin_service import (
+    get_global_text,
+    get_effective_support_email,
+    get_effective_support_username,
+)
 from src.services.payment import create_payment
 from src.usecases.payment_metadata import donate_metadata
 from src.utils.text_format import split_plain_text_chunks
@@ -38,11 +42,12 @@ class DonateCustomStates(StatesGroup):
 @router.callback_query(F.data == "menu_about")
 async def cb_about(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    s = get_settings()
     text_db = await get_global_text("about_us")
     text = (text_db or DEFAULT_ABOUT).strip()
-    text += f"\n\n📧 Поддержка: {s.support_email}"
-    text += f"\n👤 Telegram: @{s.support_username}"
+    sup_email = await get_effective_support_email()
+    sup_user = await get_effective_support_username()
+    text += f"\n\n📧 Поддержка: {sup_email}"
+    text += f"\n👤 Telegram: @{sup_user}"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -53,7 +58,7 @@ async def cb_about(callback: CallbackQuery, state: FSMContext):
             ],
             [
                 InlineKeyboardButton(
-                    text="✉️ Написать в поддержку", url=f"https://t.me/{s.support_username}"
+                    text="✉️ Написать в поддержку", url=f"https://t.me/{sup_user}"
                 )
             ],
             [InlineKeyboardButton(text="❤️ Поддержать проект", callback_data="about_donate")],

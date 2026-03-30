@@ -93,8 +93,14 @@ class Settings(BaseSettings):
             return f"https://max.ru/{uname}"
         return "https://max.ru/"
 
-    support_username: str = Field(default="support", description="Support Telegram username")
-    support_email: str = Field(default="support@example.com", description="Support email")
+    support_username: str = Field(
+        default="support",
+        description="Support Telegram @username (fallback if not set in admin → БД)",
+    )
+    support_email: str = Field(
+        default="support@example.com",
+        description="Support email (fallback if not set in admin → БД)",
+    )
 
     # SOS
     sos_cooldown_minutes: int = Field(default=10, description="Minutes between SOS per user")

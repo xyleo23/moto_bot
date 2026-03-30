@@ -2,7 +2,7 @@
 
 import uuid
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -53,6 +53,10 @@ from src.services.admin_service import (
     get_broadcast_recipients,
     get_global_text,
     set_global_text,
+    get_effective_support_email,
+    get_effective_support_username,
+    GLOBAL_TEXT_SUPPORT_EMAIL,
+    GLOBAL_TEXT_SUPPORT_USERNAME,
 )
 from src.services.event_service import TYPE_LABELS, get_event_by_id
 from src.services.activity_log_service import get_logs, get_event_type_labels
@@ -97,6 +101,11 @@ class AdminSettingsStates(StatesGroup):
 
 class AdminTextAboutStates(StatesGroup):
     text = State()
+
+
+class AdminSupportContactStates(StatesGroup):
+    email = State()
+    username = State()
 
 
 class AdminTemplatesStates(StatesGroup):
@@ -458,6 +467,41 @@ async def msg_admin_contacts(message: Message, user=None):
     from src.keyboards.contacts import get_admin_contacts_menu_kb
 
     await message.answer("Контакты — управление", reply_markup=get_admin_contacts_menu_kb())
+
+
+@router.message(F.text.in_({"📞 Контакты поддержки", "📞 Поддержка (бот)"}))
+async def msg_admin_support_contact(message: Message, state: FSMContext, user=None):
+    if not _is_superadmin(message.from_user.id):
+        return
+    await state.clear()
+    email = await get_effective_support_email()
+    uname = await get_effective_support_username()
+    db_mail = await get_global_text(GLOBAL_TEXT_SUPPORT_EMAIL)
+    db_user = await get_global_text(GLOBAL_TEXT_SUPPORT_USERNAME)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏ Email", callback_data="admin_support_edit_email"
+                ),
+                InlineKeyboardButton(
+                    text="✏ Telegram @", callback_data="admin_support_edit_username"
+                ),
+            ],
+            _inline_payments_row(),
+            [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+        ]
+    )
+    await message.answer(
+        "<b>📞 Контакты поддержки</b>\n\n"
+        f"Пользователям сейчас показываются:\n📧 <code>{email}</code>\n"
+        f"👤 <code>@{uname}</code>\n\n"
+        f"<i>В БД (пусто = взять из .env):</i>\n"
+        f"email: <code>{db_mail or '—'}</code>\n"
+        f"username: <code>{db_user or '—'}</code>",
+        reply_markup=kb,
+    )
 
 
 @router.message(F.text.in_({"📝 О нас", "📝 Текст «О нас»"}))
@@ -1561,6 +1605,102 @@ async def admin_text_about_save(message: Message, state: FSMContext):
     await message.answer(
         f"✅ Текст «О нас» сохранён ({len(text)} символов).",
         reply_markup=get_admin_back_kb("admin_panel"),
+    )
+
+
+@router.callback_query(F.data == "admin_support_contact")
+async def cb_admin_support_contact(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    email = await get_effective_support_email()
+    uname = await get_effective_support_username()
+    db_mail = await get_global_text(GLOBAL_TEXT_SUPPORT_EMAIL)
+    db_user = await get_global_text(GLOBAL_TEXT_SUPPORT_USERNAME)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏ Email", callback_data="admin_support_edit_email"
+                ),
+                InlineKeyboardButton(
+                    text="✏ Telegram @", callback_data="admin_support_edit_username"
+                ),
+            ],
+            _inline_payments_row(),
+            [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+        ]
+    )
+    await callback.message.edit_text(
+        "<b>📞 Контакты поддержки</b>\n\n"
+        f"Пользователям сейчас показываются:\n📧 <code>{email}</code>\n"
+        f"👤 <code>@{uname}</code>\n\n"
+        f"<i>В БД (пусто = взять из .env):</i>\n"
+        f"email: <code>{db_mail or '—'}</code>\n"
+        f"username: <code>{db_user or '—'}</code>",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_support_edit_email")
+async def cb_admin_support_edit_email(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    await state.set_state(AdminSupportContactStates.email)
+    await callback.message.edit_text(
+        "Отправь email поддержки одним сообщением (например <code>info@site.ru</code>).",
+        reply_markup=get_admin_back_kb("admin_support_contact"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_support_edit_username")
+async def cb_admin_support_edit_username(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    await state.set_state(AdminSupportContactStates.username)
+    await callback.message.edit_text(
+        "Отправь username в Telegram <b>без @</b> (как в ссылке t.me/username).",
+        reply_markup=get_admin_back_kb("admin_support_contact"),
+    )
+    await callback.answer()
+
+
+@router.message(AdminSupportContactStates.email, F.text)
+async def admin_support_contact_save_email(message: Message, state: FSMContext):
+    if not _is_superadmin(message.from_user.id):
+        await state.clear()
+        return
+    em = message.text.strip()[:320]
+    if "@" not in em:
+        await message.answer("Нужен email с символом @.")
+        return
+    await set_global_text(GLOBAL_TEXT_SUPPORT_EMAIL, em)
+    await state.clear()
+    await message.answer(
+        "✅ Email поддержки сохранён.",
+        reply_markup=get_admin_back_kb("admin_support_contact"),
+    )
+
+
+@router.message(AdminSupportContactStates.username, F.text)
+async def admin_support_contact_save_username(message: Message, state: FSMContext):
+    if not _is_superadmin(message.from_user.id):
+        await state.clear()
+        return
+    un = message.text.strip().lstrip("@")[:64]
+    if not un:
+        await message.answer("Username не может быть пустым.")
+        return
+    await set_global_text(GLOBAL_TEXT_SUPPORT_USERNAME, un)
+    await state.clear()
+    await message.answer(
+        "✅ Username Telegram сохранён.",
+        reply_markup=get_admin_back_kb("admin_support_contact"),
     )
 
 
