@@ -39,31 +39,29 @@ def pop_max_outbound_by_user_id(token: ContextVarToken) -> None:
     _max_use_chat_id_var.reset(token)
 
 
-def max_message_query_params(
-    target: str, *, use_chat_id_param: bool | None = None
-) -> dict[str, int | str]:
+def push_max_messages_use_chat_id_param() -> ContextVarToken:
+    """Следующий POST /messages использует query ``chat_id=…`` (id диалога), а не ``user_id``."""
+    return _max_use_chat_id_var.set(True)
+
+
+def pop_max_messages_use_chat_id_param(token: ContextVarToken) -> None:
+    _max_use_chat_id_var.reset(token)
+
+
+def max_message_query_params(target: str) -> dict[str, int | str]:
     """Query params for POST /messages (for logs and diagnostics)."""
-    return dict(_message_target_params(target, use_chat_id_param))
+    return dict(_get_msg_params(target))
 
 
-def _message_target_params(target: str, use_chat_id_param: bool | None) -> dict[str, int | str]:
-    """MAX API: личный диалог — часто нужен chat_id; иначе user_id (см. max_parser)."""
+def _get_msg_params(target: str) -> dict[str, int | str]:
+    """MAX API expects integer for user_id/chat_id when numeric."""
     try:
         val = int(target)
     except (ValueError, TypeError):
         val = target
-    if use_chat_id_param is True:
-        return {"chat_id": val}
-    if use_chat_id_param is False:
-        return {"user_id": val}
     if _max_use_chat_id_var.get():
         return {"chat_id": val}
     return {"user_id": val}
-
-
-def _get_msg_params(target: str) -> dict[str, int | str]:
-    """Backward compat: resolve from ContextVar."""
-    return _message_target_params(target, None)
 
 
 def _build_max_keyboard(rows: list[KeyboardRow]) -> list | None:
@@ -221,8 +219,6 @@ class MaxAdapter(PlatformAdapter):
         text: str,
         keyboard: list[KeyboardRow] | None = None,
         parse_mode: str | None = "HTML",
-        *,
-        use_chat_id_param: bool | None = None,
     ):
         attachments = []
         max_kb = _build_max_keyboard(keyboard) if keyboard else None
@@ -233,12 +229,12 @@ class MaxAdapter(PlatformAdapter):
                     "payload": {"buttons": max_kb},
                 }
             )
-        body = {"text": text}
+        body = {"text": text, "notify": True}
         if attachments:
             body["attachments"] = attachments
         if parse_mode:
             body["format"] = parse_mode.lower()
-        params = _message_target_params(chat_id, use_chat_id_param)
+        params = _get_msg_params(chat_id)
         return await self._request(
             "POST",
             "/messages",
@@ -385,7 +381,7 @@ class MaxAdapter(PlatformAdapter):
             body["attachments"] = attachments
         if caption:
             body["format"] = "html"
-        params = _message_target_params(chat_id, None)
+        params = _get_msg_params(chat_id)
 
         delays = [1, 2, 4]  # seconds between retries for attachment.not.ready
         last_exc = None

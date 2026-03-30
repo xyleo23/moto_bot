@@ -10,14 +10,18 @@ MAX broadcasts use the MAX adapter's send_message API.
 import asyncio
 import html
 import re
+from collections.abc import Iterable
 
 from loguru import logger
 
 from src.platforms.max_adapter import (
     max_message_query_params,
+    pop_max_messages_use_chat_id_param,
     pop_max_outbound_by_user_id,
+    push_max_messages_use_chat_id_param,
     push_max_outbound_by_user_id,
 )
+from src.services.max_peer_chat import get_dialog_chat_id
 
 
 def _max_broadcast_plain_fallback(html_text: str) -> str:
@@ -108,80 +112,99 @@ def broadcast_background(
     return task
 
 
+def _max_broadcast_exclude_set(
+    exclude_id: int | None, exclude_ids: Iterable[int] | None
+) -> set[int]:
+    s: set[int] = set()
+    if exclude_id is not None:
+        s.add(int(exclude_id))
+    if exclude_ids:
+        s.update(int(x) for x in exclude_ids)
+    return s
+
+
 async def _do_max_broadcast(
     adapter,
-    recipients: list[tuple[int, str, bool]],
+    user_ids: list[int],
     text: str,
-    exclude_platform_user_id: int | None = None,
+    exclude_id: int | None = None,
+    exclude_ids: Iterable[int] | None = None,
     kb_rows=None,
 ) -> tuple[int, int]:
-    """Send `text` to MAX users.
+    """Send `text` to MAX users via the adapter.
 
-    ``recipients``: (platform_user_id, api_target_str, use_chat_id_param) —
-    см. get_city_max_broadcast_recipients: для лички нужен chat_id диалога.
+    Сначала пробуем POST /messages?chat_id=… из последнего диалога (max_peer_chat),
+    иначе ?user_id=… — в MAX они не всегда эквивалентны для доставки в чат.
     """
     _token = push_max_outbound_by_user_id()
     sent = 0
     failed = 0
+    excl = _max_broadcast_exclude_set(exclude_id, exclude_ids)
     try:
-        to_send = [
-            (puid, target, use_chat)
-            for puid, target, use_chat in recipients
-            if exclude_platform_user_id is None or puid != exclude_platform_user_id
-        ]
-        if to_send:
-            _p0, t0, c0 = to_send[0]
+        target_uids = [u for u in user_ids if u not in excl]
+        sample_uid = target_uids[0] if target_uids else None
+        if sample_uid is not None:
             logger.info(
-                "max_broadcast start: rows={} exclude_platform_user_id={} will_send_to={} "
-                "sample_query_params={}",
-                len(recipients),
-                exclude_platform_user_id,
-                to_send,
-                max_message_query_params(t0, use_chat_id_param=c0),
+                "max_broadcast start: in_city_max={} exclude={} will_send_to={} "
+                "sample_user_id_query_params={}",
+                len(user_ids),
+                sorted(excl),
+                target_uids,
+                max_message_query_params(str(sample_uid)),
             )
         else:
             logger.info(
-                "max_broadcast start: rows={} exclude_platform_user_id={} will_send_to=[]",
-                len(recipients),
-                exclude_platform_user_id,
+                "max_broadcast start: in_city_max={} exclude={} will_send_to=[] (nobody to notify)",
+                len(user_ids),
+                sorted(excl),
             )
-        for puid, target, use_chat in to_send:
-            try:
-                await adapter.send_message(
-                    target, text, kb_rows, use_chat_id_param=use_chat
-                )
-                sent += 1
-                logger.info(
-                    "max_broadcast: ok platform_user_id={} target={} use_chat_id={}",
-                    puid,
-                    target,
-                    use_chat,
-                )
-            except Exception as e:
-                logger.warning(
-                    "max_broadcast: HTML send failed platform_user_id={} target={}: {}",
-                    puid,
-                    target,
-                    e,
-                )
+        for uid in user_ids:
+            if uid in excl:
+                continue
+            peer = await get_dialog_chat_id(uid)
+            routes: list[tuple[str, str]] = []
+            if peer and peer != str(uid):
+                routes.append(("chat_id", peer))
+            routes.append(("user_id", str(uid)))
+
+            delivered = False
+            for via, addr in routes:
+                ctk = None
+                if via == "chat_id":
+                    ctk = push_max_messages_use_chat_id_param()
                 try:
-                    plain = _max_broadcast_plain_fallback(text)
-                    await adapter.send_message(
-                        target,
-                        plain or "(SOS)",
-                        kb_rows,
-                        parse_mode=None,
-                        use_chat_id_param=use_chat,
-                    )
+                    try:
+                        await adapter.send_message(addr, text, kb_rows)
+                    except Exception as e:
+                        logger.warning(
+                            "max_broadcast: HTML failed uid={} via={} addr={}: {}",
+                            uid,
+                            via,
+                            addr,
+                            e,
+                        )
+                        plain = _max_broadcast_plain_fallback(text)
+                        await adapter.send_message(
+                            addr, plain or "(SOS)", kb_rows, parse_mode=None
+                        )
                     sent += 1
-                    logger.info("max_broadcast: plain fallback ok platform_user_id={}", puid)
+                    delivered = True
+                    logger.info("max_broadcast: ok uid={} via={}", uid, via)
+                    break
                 except Exception as e2:
                     logger.warning(
-                        "max_broadcast: plain send failed platform_user_id={}: {}",
-                        puid,
+                        "max_broadcast: send failed uid={} via={} addr={}: {}",
+                        uid,
+                        via,
+                        addr,
                         e2,
                     )
-                    failed += 1
+                finally:
+                    if ctk is not None:
+                        pop_max_messages_use_chat_id_param(ctk)
+
+            if not delivered:
+                failed += 1
             await asyncio.sleep(_SEND_DELAY)
     finally:
         pop_max_outbound_by_user_id(_token)
@@ -192,18 +215,20 @@ async def _do_max_broadcast(
 
 def broadcast_max_background(
     adapter,
-    recipients: list[tuple[int, str, bool]],
+    user_ids: list[int],
     text: str,
-    exclude_platform_user_id: int | None = None,
+    exclude_id: int | None = None,
+    exclude_ids: Iterable[int] | None = None,
     kb_rows=None,
 ) -> asyncio.Task:
     """Schedule a MAX broadcast as a fire-and-forget background task."""
     task = asyncio.create_task(
         _do_max_broadcast(
             adapter,
-            recipients,
+            user_ids,
             text,
-            exclude_platform_user_id=exclude_platform_user_id,
+            exclude_id=exclude_id,
+            exclude_ids=exclude_ids,
             kb_rows=kb_rows,
         )
     )

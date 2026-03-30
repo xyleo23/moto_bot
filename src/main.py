@@ -98,6 +98,9 @@ async def run_telegram(shared_bot=None):
         from src.services import max_last_event_context
 
         max_last_event_context.set_redis_client(redis)
+        from src.services import max_peer_chat
+
+        max_peer_chat.set_redis_client(redis)
     except Exception as e:
         logger.warning(f"Redis unavailable ({e}), using MemoryStorage")
         from aiogram.fsm.storage.memory import MemoryStorage
@@ -271,6 +274,9 @@ async def run_max(shared_adapter=None):
         from src.services.sos_service import set_redis_client
 
         set_redis_client(redis)
+        from src.services import max_peer_chat
+
+        max_peer_chat.set_redis_client(redis)
     except Exception as e:
         logger.warning("Redis unavailable for MAX reg state (%s), using in-memory fallback", e)
     if not settings.max_bot_token:

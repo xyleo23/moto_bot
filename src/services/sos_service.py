@@ -127,46 +127,27 @@ async def get_city_telegram_user_ids(city_id: UUID) -> list[int]:
 
 
 async def get_city_max_user_ids(city_id: UUID) -> list[int]:
-    """Get MAX messenger user IDs for cross-platform SOS broadcast."""
-    from src.models.user import User, Platform
-    from sqlalchemy import select
+    """MAX platform_user_id для SOS в городе.
 
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        result = await session.execute(
-            select(User.platform_user_id).where(
-                User.city_id == city_id,
-                User.platform == Platform.MAX,
-                User.is_blocked.is_(False),
-            )
-        )
-        return [r[0] for r in result.fetchall()]
-
-
-async def get_city_max_broadcast_recipients(
-    city_id: UUID,
-) -> list[tuple[int, str, bool]]:
-    """Для POST /messages: (platform_user_id, target_id_str, use_chat_id_query_param).
-
-    Если известен max_dialog_chat_id — шлём в диалог через chat_id; иначе fallback user_id.
+    Берём всех, у кого *любая* запись User с этим city_id, и добавляем все MAX-аккаунты
+    их канонической связки (TG+MAX), чтобы не терять MAX, если city_id был только на TG.
     """
     from src.models.user import User, Platform
     from sqlalchemy import select
+    from src.services.user import effective_user_id, get_all_platform_identities
 
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await session.execute(
-            select(User.platform_user_id, User.max_dialog_chat_id).where(
-                User.city_id == city_id,
-                User.platform == Platform.MAX,
-                User.is_blocked.is_(False),
-            )
+            select(User).where(User.city_id == city_id, User.is_blocked.is_(False))
         )
-        out: list[tuple[int, str, bool]] = []
-        for uid, dchat in result.all():
-            uid_i = int(uid)
-            if dchat is not None:
-                out.append((uid_i, str(int(dchat)), True))
-            else:
-                out.append((uid_i, str(uid_i), False))
-        return out
+        rows = list(result.scalars().all())
+
+    canonicals: set[UUID] = {effective_user_id(u) for u in rows}
+    max_ids: set[int] = set()
+    for canon in canonicals:
+        for ident in await get_all_platform_identities(canon):
+            if ident.platform == Platform.MAX and not ident.is_blocked:
+                max_ids.add(int(ident.platform_user_id))
+
+    return sorted(max_ids)
