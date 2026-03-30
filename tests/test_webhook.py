@@ -1,10 +1,28 @@
 """Webhook handler tests (unit, mocked)."""
 
+import hashlib
+import hmac
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.webhooks import handle_health
+
+_TEST_SECRET = "test_key"
+
+
+def _yookassa_headers(body: bytes, secret: str = _TEST_SECRET) -> dict:
+    """X-Content-Signature for YooKassa HMAC-SHA256 body signing."""
+    sig = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return {"X-Content-Signature": sig}
+
+
+def _webhook_settings(**kwargs):
+    mock_s = MagicMock()
+    mock_s.yookassa_secret_key = kwargs.get("yookassa_secret_key", _TEST_SECRET)
+    mock_s.webhook_trust_proxy = kwargs.get("webhook_trust_proxy", False)
+    mock_s.webhook_require_signature = kwargs.get("webhook_require_signature", True)
+    return mock_s
 
 
 def _read_json(resp):
@@ -53,16 +71,17 @@ async def test_health_endpoint_degraded():
 
 @pytest.mark.asyncio
 async def test_webhook_rejects_invalid_json():
-    """Webhook returns 400 for malformed body when the request is from YooKassa IP."""
+    """Webhook returns 400 for malformed body after valid signature."""
     from src.webhooks import handle_yookassa_webhook
 
+    raw = b"not json"
     request = AsyncMock()
-    request.read = AsyncMock(return_value=b"not json")
-    request.headers = {}
-    # Without trusted IP/signature the handler rejects before JSON parse (401).
-    request.remote = "185.71.76.1"  # YooKassa range — same as test_webhook_ignores_non_succeeded
+    request.read = AsyncMock(return_value=raw)
+    request.headers = _yookassa_headers(raw)
+    request.remote = "185.71.76.1"
 
-    status, body = await handle_yookassa_webhook(request)
+    with patch("src.webhooks.get_settings", return_value=_webhook_settings()):
+        status, body = await handle_yookassa_webhook(request)
     assert status == 400
     assert "error" in body
 
@@ -73,21 +92,39 @@ async def test_webhook_ignores_non_succeeded():
     import json
     from src.webhooks import handle_yookassa_webhook
 
+    payload = json.dumps(
+        {
+            "event": "payment.canceled",
+            "object": {"id": "pay_123"},
+        }
+    ).encode()
     request = AsyncMock()
-    request.read = AsyncMock(
-        return_value=json.dumps(
-            {
-                "event": "payment.canceled",
-                "object": {"id": "pay_123"},
-            }
-        ).encode()
-    )
-    request.headers = {}
-    request.remote = "185.71.76.1"  # YooKassa IP
+    request.read = AsyncMock(return_value=payload)
+    request.headers = _yookassa_headers(payload)
+    request.remote = "185.71.76.1"
 
-    status, body = await handle_yookassa_webhook(request)
+    with patch("src.webhooks.get_settings", return_value=_webhook_settings()):
+        status, body = await handle_yookassa_webhook(request)
     assert status == 200
     assert body.get("status") == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_without_signature_when_required():
+    """With webhook_require_signature=True, missing signature returns 401."""
+    import json
+    from src.webhooks import handle_yookassa_webhook
+
+    payload = json.dumps({"event": "payment.canceled", "object": {"id": "pay_1"}}).encode()
+    request = AsyncMock()
+    request.read = AsyncMock(return_value=payload)
+    request.headers = {}
+    request.remote = "185.71.76.1"
+
+    with patch("src.webhooks.get_settings", return_value=_webhook_settings(webhook_require_signature=True)):
+        status, body = await handle_yookassa_webhook(request)
+    assert status == 401
+    assert body.get("error") == "Unauthorized"
 
 
 @pytest.mark.asyncio
@@ -96,24 +133,18 @@ async def test_webhook_trust_proxy_x_real_ip():
     import json
     from src.webhooks import handle_yookassa_webhook
 
+    payload = json.dumps(
+        {
+            "event": "payment.canceled",
+            "object": {"id": "pay_123"},
+        }
+    ).encode()
     request = AsyncMock()
-    request.read = AsyncMock(
-        return_value=json.dumps(
-            {
-                "event": "payment.canceled",
-                "object": {"id": "pay_123"},
-            }
-        ).encode()
-    )
-    request.headers = {"X-Real-IP": "185.71.76.1"}
+    request.read = AsyncMock(return_value=payload)
+    request.headers = {**_yookassa_headers(payload), "X-Real-IP": "185.71.76.1"}
     request.remote = "127.0.0.1"
 
-    with patch("src.webhooks.get_settings") as gs:
-        mock_s = MagicMock()
-        mock_s.yookassa_secret_key = "test_key"
-        mock_s.webhook_trust_proxy = True
-        gs.return_value = mock_s
-
+    with patch("src.webhooks.get_settings", return_value=_webhook_settings(webhook_trust_proxy=True)):
         status, body = await handle_yookassa_webhook(request)
     assert status == 200
     assert body.get("status") == "ignored"

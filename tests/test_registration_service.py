@@ -339,3 +339,24 @@ async def test_passenger_db_error_returns_db_error():
 
     assert result == "db_error"
     mock_session.rollback.assert_awaited_once()
+
+
+def test_normalize_registration_phone_russia_trunk_8():
+    from src.services.registration_service import normalize_registration_phone
+
+    assert normalize_registration_phone("8 (900) 123-45-67") == "+79001234567"
+    assert normalize_registration_phone("89001234567") == "+79001234567"
+
+
+def test_normalize_registration_phone_10_digit_mobile():
+    from src.services.registration_service import normalize_registration_phone
+
+    assert normalize_registration_phone("9001234567") == "+79001234567"
+
+
+def test_registration_phone_lookup_variants_legacy():
+    from src.services.registration_service import registration_phone_lookup_variants
+
+    v = registration_phone_lookup_variants("+79001234567")
+    assert "+79001234567" in v
+    assert "89001234567" in v

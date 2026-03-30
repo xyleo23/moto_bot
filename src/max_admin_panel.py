@@ -126,6 +126,16 @@ async def _max_motopair_moderate_ok(actor: User) -> bool:
     return await is_city_admin(actor.platform_user_id, actor.city_id, platform=Platform.MAX)
 
 
+async def _max_motopair_report_target_ok(actor: User, target_id: uuid.UUID) -> bool:
+    """Суперадмин — любой город; админ города — только цель из своего города."""
+    if await is_effective_superadmin_user(actor):
+        return True
+    target = await get_user_by_id(target_id)
+    if not target or not actor.city_id:
+        return False
+    return target.city_id == actor.city_id
+
+
 async def _max_ev_report_ok(actor: User, ev) -> bool:
     if await is_effective_superadmin_user(actor):
         return True
@@ -177,7 +187,14 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             return True
         uid_s = data.replace("admin_report_accept_", "", 1)
         try:
-            await hide_profile(uuid.UUID(uid_s))
+            tid = uuid.UUID(uid_s)
+        except ValueError:
+            return True
+        if not await _max_motopair_report_target_ok(user, tid):
+            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            return True
+        try:
+            await hide_profile(tid)
         except ValueError:
             pass
         await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_ACCEPTED, _append_shortcut(None))
@@ -185,6 +202,14 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
 
     if data.startswith("admin_report_reject_"):
         if not await _max_motopair_moderate_ok(user):
+            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            return True
+        uid_s = data.replace("admin_report_reject_", "", 1)
+        try:
+            tid = uuid.UUID(uid_s)
+        except ValueError:
+            return True
+        if not await _max_motopair_report_target_ok(user, tid):
             await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
             return True
         await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_REJECTED, _append_shortcut(None))
@@ -196,8 +221,11 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             return True
         uid_s = data.replace("admin_report_block_", "", 1)
         try:
-            uuid.UUID(uid_s)
+            tid = uuid.UUID(uid_s)
         except ValueError:
+            return True
+        if not await _max_motopair_report_target_ok(user, tid):
+            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
             return True
         await reg_state.set_state(
             user.platform_user_id,
@@ -887,6 +915,10 @@ async def handle_max_admin_fsm_text(
             tu = uuid.UUID(str(tid))
         except ValueError:
             await reg_state.clear_state(user_id)
+            return
+        if not await _max_motopair_report_target_ok(u, tu):
+            await reg_state.clear_state(user_id)
+            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
             return
         await block_user(tu, reason=reason)
         await send_text_to_all_identities(

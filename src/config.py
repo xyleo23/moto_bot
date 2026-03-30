@@ -57,6 +57,10 @@ class Settings(BaseSettings):
         default=False,
         description="Behind nginx: trust X-Real-IP / X-Forwarded-For for YooKassa IP check",
     )
+    webhook_require_signature: bool = Field(
+        default=True,
+        description="Require valid YooKassa X-Content-Signature for webhook acceptance",
+    )
 
     # App — str избегает JSON-парсинга; @property не участвует в env-загрузке
     superadmin_ids_raw: str = Field(

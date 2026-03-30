@@ -4,6 +4,7 @@ from uuid import UUID
 from datetime import datetime, date
 
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from src.models.base import get_session_factory
 from src.models.event import Event, EventRegistration, EventType, RideType
@@ -300,6 +301,9 @@ async def create_event(
 
 async def register_for_event(event_id: UUID, user_id: UUID, role: str) -> tuple[bool, str]:
     """Register user for event. Returns (ok, error_msg)."""
+    if role not in ("pilot", "passenger"):
+        return False, "Некорректная роль."
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         existing = await session.execute(
@@ -312,7 +316,11 @@ async def register_for_event(event_id: UUID, user_id: UUID, role: str) -> tuple[
             return False, "Ты уже записан."
         reg = EventRegistration(event_id=event_id, user_id=user_id, role=role)
         session.add(reg)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return False, "Ты уже записан."
         return True, ""
 
 

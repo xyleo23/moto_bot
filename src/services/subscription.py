@@ -3,6 +3,7 @@
 from datetime import date, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from src.models.base import get_session_factory
 from src.models.subscription import Subscription, SubscriptionSettings, SubscriptionType
@@ -50,6 +51,13 @@ async def activate_subscription(user_id, period: str, payment_id: str) -> bool:
         sub_type = SubscriptionType.SEASON
 
     async with session_factory() as session:
+        # Idempotency: if this payment was already processed, treat as success.
+        existing = await session.execute(
+            select(Subscription).where(Subscription.payment_id == payment_id).limit(1)
+        )
+        if existing.scalar_one_or_none() is not None:
+            return True
+
         sub = Subscription(
             user_id=user_id,
             type=sub_type,
@@ -57,7 +65,17 @@ async def activate_subscription(user_id, period: str, payment_id: str) -> bool:
             payment_id=payment_id,
         )
         session.add(sub)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # Concurrent duplicate activation for the same payment_id.
+            await session.rollback()
+            dup = await session.execute(
+                select(Subscription).where(Subscription.payment_id == payment_id).limit(1)
+            )
+            if dup.scalar_one_or_none() is not None:
+                return True
+            return False
 
     from src.services.activity_log_service import log_event
     from src.models.activity_log import ActivityEventType

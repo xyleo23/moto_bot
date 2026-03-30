@@ -2899,7 +2899,14 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
 
     from_canon = effective_user_id(from_user)
     replier_eff = effective_user_id(user)
-    await process_like(replier_eff, from_canon, is_like=True)
+    like_res = await process_like(replier_eff, from_canon, is_like=True)
+    if not like_res.get("matched"):
+        await adapter.send_message(
+            chat_id,
+            "Сначала нужен взаимный лайк в ленте мотопары.",
+            get_back_to_menu_rows(),
+        )
+        return
     from_text, original_liker_photo = await get_profile_info_text(from_canon)
     to_text, replier_photo = await get_profile_info_text(replier_eff)
 

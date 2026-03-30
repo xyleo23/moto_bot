@@ -101,11 +101,18 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
     sig_valid = _verify_yookassa_signature(body, signature, settings.yookassa_secret_key or "")
     ip_valid = _is_yookassa_ip(remote_ip)
 
-    if not sig_valid and not ip_valid:
-        logger.warning(
-            "YooKassa webhook rejected: invalid signature and untrusted IP %s", remote_ip
-        )
-        return 401, {"error": "Unauthorized"}
+    if getattr(settings, "webhook_require_signature", True):
+        # Secure-by-default: only signed webhooks are accepted.
+        if not sig_valid:
+            logger.warning("YooKassa webhook rejected: invalid signature (ip=%s)", remote_ip)
+            return 401, {"error": "Unauthorized"}
+    else:
+        # Legacy fallback mode: valid signature OR trusted source IP.
+        if not sig_valid and not ip_valid:
+            logger.warning(
+                "YooKassa webhook rejected: invalid signature and untrusted IP %s", remote_ip
+            )
+            return 401, {"error": "Unauthorized"}
 
     # ── Parse payload ─────────────────────────────────────────────────────────
     try:

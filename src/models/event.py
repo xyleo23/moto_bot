@@ -3,7 +3,7 @@
 import uuid
 import enum
 from datetime import datetime
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Enum, Boolean
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Enum, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, generate_uuid
@@ -57,3 +57,7 @@ class EventRegistration(Base):
     seeking_pair: Mapped[bool] = mapped_column(Boolean, default=False)
     matched_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "user_id", name="uq_event_registration_event_user"),
+    )

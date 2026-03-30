@@ -16,6 +16,7 @@ from src.keyboards.contacts import (
 )
 from src.services.useful_contacts_service import (
     can_manage_contacts,
+    can_manage_contact_effective,
     create_contact,
     get_contact_by_id,
     update_contact,
@@ -256,6 +257,9 @@ async def cb_admin_contact_view(callback: CallbackQuery, user=None):
     if not c:
         await callback.answer("Не найден.", show_alert=True)
         return
+    if not await can_manage_contact_effective(user, c):
+        await callback.answer("Доступ запрещён.", show_alert=True)
+        return
     text = (
         f"<b>{c.name}</b>\n"
         f"Категория: {CAT_LABELS.get(c.category.value, c.category.value)}\n"
@@ -276,6 +280,13 @@ async def cb_admin_contact_del(callback: CallbackQuery, user=None):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_del_", "")
+    c = await get_contact_by_id(uuid.UUID(cid))
+    if not c:
+        await callback.answer("Не найден.", show_alert=True)
+        return
+    if not await can_manage_contact_effective(user, c):
+        await callback.answer("Доступ запрещён.", show_alert=True)
+        return
     ok = await delete_contact(uuid.UUID(cid))
     if ok:
         await callback.message.edit_text(
@@ -298,6 +309,9 @@ async def cb_admin_contact_edit(callback: CallbackQuery, state: FSMContext, user
     c = await get_contact_by_id(uuid.UUID(cid))
     if not c:
         await callback.answer("Контакт не найден.", show_alert=True)
+        return
+    if not await can_manage_contact_effective(user, c):
+        await callback.answer("Доступ запрещён.", show_alert=True)
         return
     await state.clear()
     await callback.message.edit_text(
@@ -326,6 +340,9 @@ async def cb_admin_contact_edit_field(callback: CallbackQuery, state: FSMContext
     c = await get_contact_by_id(uuid.UUID(cid))
     if not c:
         await callback.answer("Контакт не найден.", show_alert=True)
+        return
+    if not await can_manage_contact_effective(user, c):
+        await callback.answer("Доступ запрещён.", show_alert=True)
         return
     prompts = {
         "name": "Введи новое название:",
@@ -371,6 +388,15 @@ async def cb_admin_contact_edit_value_category(
     if data.get("contact_edit_field") != "category" or data.get("contact_edit_id") != cid:
         await callback.answer()
         return
+    contact = await get_contact_by_id(uuid.UUID(cid))
+    if not contact:
+        await state.clear()
+        await callback.answer("Контакт не найден.", show_alert=True)
+        return
+    if not await can_manage_contact_effective(user, contact):
+        await state.clear()
+        await callback.answer("Доступ запрещён.", show_alert=True)
+        return
     ok = await update_contact(uuid.UUID(cid), category=cat)
     await state.clear()
     if ok:
@@ -398,6 +424,11 @@ async def admin_contact_edit_value_message(message: Message, state: FSMContext, 
     field = data.get("contact_edit_field")
     if not cid or not field or field == "category":
         await state.clear()
+        return
+    contact = await get_contact_by_id(uuid.UUID(cid))
+    if not contact or not await can_manage_contact_effective(user, contact):
+        await state.clear()
+        await message.answer("Доступ запрещён.")
         return
     text = message.text.strip()
     if text.lower() in ("пропустить", "skip", "-") and field != "name":

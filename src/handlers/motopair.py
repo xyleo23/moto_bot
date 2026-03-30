@@ -97,7 +97,7 @@ async def cb_motopair_filter_open(callback: CallbackQuery, user=None):
         await callback.answer()
         return
     role = "pilot" if "pilot" in callback.data else "passenger"
-    current = await get_filter(user.id, role)
+    current = await get_filter(effective_user_id(user), role)
     label = "пилотов" if role == "pilot" else "двоек"
     await callback.message.edit_text(
         f"Фильтр для анкет {label}:\n\nВыбери параметры:",
@@ -123,7 +123,8 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
     param = parts[1]
     value = parts[2] if len(parts) > 2 else None
 
-    current = await get_filter(user.id, role)
+    eff_uid = effective_user_id(user)
+    current = await get_filter(eff_uid, role)
     label = "пилотов" if role == "pilot" else "двоек"
 
     if param == "apply":
@@ -153,7 +154,7 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
         return
 
     if param == "reset":
-        await clear_filter(user.id, role)
+        await clear_filter(eff_uid, role)
         try:
             await callback.message.edit_text(
                 f"Фильтр сброшен. Анкеты {label}:",
@@ -188,7 +189,7 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
     elif param == "height":
         current["height_max"] = int(value) if value and value != "0" else None
 
-    await set_filter(user.id, role, current)
+    await set_filter(eff_uid, role, current)
     try:
         await callback.message.edit_text(
             f"Фильтр для анкет {label}:\n\nВыбери параметры:",
@@ -476,7 +477,7 @@ async def cb_admin_report_accept(callback: CallbackQuery, user=None):
     """Admin accepts a report — hides the reported profile (soft-ban)."""
     from src.services.motopair_service import hide_profile
     from src.config import get_settings
-    from src.services.admin_service import is_city_admin
+    from src.services.admin_service import is_city_admin, get_user_by_id
 
     settings = get_settings()
     is_sa = callback.from_user.id in settings.superadmin_ids
@@ -495,6 +496,12 @@ async def cb_admin_report_accept(callback: CallbackQuery, user=None):
         await callback.answer("Ошибка.")
         return
 
+    if is_ca and user and user.city_id:
+        target = await get_user_by_id(uid)
+        if not target or target.city_id != user.city_id:
+            await callback.answer("Доступ запрещён.", show_alert=True)
+            return
+
     await hide_profile(uid)
     await callback.message.edit_text(texts.MOTOPAIR_REPORT_ACCEPTED)
     await callback.answer("Анкета скрыта.")
@@ -504,7 +511,7 @@ async def cb_admin_report_accept(callback: CallbackQuery, user=None):
 async def cb_admin_report_reject(callback: CallbackQuery, user=None):
     """Admin rejects a report — profile remains visible."""
     from src.config import get_settings
-    from src.services.admin_service import is_city_admin
+    from src.services.admin_service import is_city_admin, get_user_by_id
 
     settings = get_settings()
     is_sa = callback.from_user.id in settings.superadmin_ids
@@ -516,6 +523,18 @@ async def cb_admin_report_reject(callback: CallbackQuery, user=None):
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
 
+    uid_str = callback.data.replace("admin_report_reject_", "")
+    try:
+        uid = uuid.UUID(uid_str)
+    except ValueError:
+        await callback.answer("Ошибка.")
+        return
+    if is_ca and user and user.city_id:
+        target = await get_user_by_id(uid)
+        if not target or target.city_id != user.city_id:
+            await callback.answer("Доступ запрещён.", show_alert=True)
+            return
+
     await callback.message.edit_text(texts.MOTOPAIR_REPORT_REJECTED)
     await callback.answer("Жалоба отклонена.")
 
@@ -524,7 +543,7 @@ async def cb_admin_report_reject(callback: CallbackQuery, user=None):
 async def cb_admin_report_block(callback: CallbackQuery, state: FSMContext, user=None):
     """Admin initiates full account block for the reported user."""
     from src.config import get_settings
-    from src.services.admin_service import is_city_admin
+    from src.services.admin_service import is_city_admin, get_user_by_id
 
     settings = get_settings()
     is_sa = callback.from_user.id in settings.superadmin_ids
@@ -543,6 +562,12 @@ async def cb_admin_report_block(callback: CallbackQuery, state: FSMContext, user
         await callback.answer("Ошибка.")
         return
 
+    if is_ca and user and user.city_id:
+        target = await get_user_by_id(uid)
+        if not target or target.city_id != user.city_id:
+            await callback.answer("Доступ запрещён.", show_alert=True)
+            return
+
     await state.set_state(CityAdminBlockStates.reason)
     await state.update_data(block_target_user_id=str(uid))
     await callback.message.edit_text(
@@ -555,7 +580,7 @@ async def cb_admin_report_block(callback: CallbackQuery, state: FSMContext, user
 async def city_admin_block_reason(message: Message, state: FSMContext, user=None):
     """Admin entered block reason — block the user and notify superadmin."""
     from src.config import get_settings
-    from src.services.admin_service import is_city_admin, block_user
+    from src.services.admin_service import is_city_admin, block_user, get_user_by_id
     from src.models.base import get_session_factory
     from src.models.user import User
     from sqlalchemy import select
@@ -583,6 +608,12 @@ async def city_admin_block_reason(message: Message, state: FSMContext, user=None
     except ValueError:
         await message.answer("Ошибка ID пользователя.")
         return
+
+    if is_ca and user and user.city_id:
+        target_user = await get_user_by_id(target_uuid)
+        if not target_user or target_user.city_id != user.city_id:
+            await message.answer("Доступ запрещён.")
+            return
 
     reason = message.text.strip()[:500]
 
@@ -810,7 +841,10 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
         return
 
     from_canon = effective_user_id(from_user)
-    await process_like(effective_user_id(user), from_canon, is_like=True)
+    res = await process_like(effective_user_id(user), from_canon, is_like=True)
+    if not res.get("matched"):
+        await callback.answer("Нужно дождаться взаимного лайка.", show_alert=True)
+        return
     from_text, _ = await get_profile_info_text(from_canon)
     from src.services.motopair_service import get_contact_footer_html
 

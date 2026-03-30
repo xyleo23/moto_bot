@@ -167,8 +167,18 @@ async def get_user_profile_display(user: User) -> str:
 
 
 async def delete_user_data(user: User) -> None:
-    """Удалить все персональные данные пользователя (ФЗ-152, запрос /delete_data)."""
+    """Удалить все персональные данные пользователя (ФЗ-152, запрос /delete_data).
+
+    Учитывает кросс-платформенную связку: данные хранятся под каноническим id,
+    удаляются все записи User (TG + MAX), связанные с этим аккаунтом.
+    """
     from sqlalchemy import select, update
+
+    canonical_id = effective_user_id(user)
+    identities = await get_all_platform_identities(canonical_id)
+    identity_ids = [u.id for u in identities]
+    secondary_ids = [u.id for u in identities if u.linked_user_id]
+
     from src.models.like import Like, LikeBlacklist
     from src.models.phone_change_request import PhoneChangeRequest
     from src.models.subscription import Subscription
@@ -183,14 +193,15 @@ async def delete_user_data(user: User) -> None:
 
     session_factory = get_session_factory()
     async with session_factory() as session:
-        uid = user.id
-        # 1. EventPairRequest
+        uid = canonical_id
+        # 1. EventPairRequest (все id из кластера)
         await session.execute(
             delete(EventPairRequest).where(
-                (EventPairRequest.from_user_id == uid) | (EventPairRequest.to_user_id == uid)
+                (EventPairRequest.from_user_id.in_(identity_ids))
+                | (EventPairRequest.to_user_id.in_(identity_ids))
             )
         )
-        # 2. EventRegistration — где user участник или matched
+        # 2. EventRegistration — канонический участник / matched
         await session.execute(delete(EventRegistration).where(EventRegistration.user_id == uid))
         await session.execute(
             update(EventRegistration)
@@ -210,24 +221,35 @@ async def delete_user_data(user: User) -> None:
             await session.execute(delete(Event).where(Event.creator_id == uid))
         # 4. Like, LikeBlacklist
         await session.execute(
-            delete(Like).where((Like.from_user_id == uid) | (Like.to_user_id == uid))
+            delete(Like).where(
+                (Like.from_user_id.in_(identity_ids)) | (Like.to_user_id.in_(identity_ids))
+            )
         )
         await session.execute(
             delete(LikeBlacklist).where(
-                (LikeBlacklist.user_id == uid) | (LikeBlacklist.blocked_user_id == uid)
+                (LikeBlacklist.user_id.in_(identity_ids))
+                | (LikeBlacklist.blocked_user_id.in_(identity_ids))
             )
         )
         # 5. PhoneChangeRequest, Subscription, SosAlert, ActivityLog, CityAdmin
-        await session.execute(delete(PhoneChangeRequest).where(PhoneChangeRequest.user_id == uid))
+        await session.execute(
+            delete(PhoneChangeRequest).where(PhoneChangeRequest.user_id.in_(identity_ids))
+        )
         await session.execute(delete(Subscription).where(Subscription.user_id == uid))
         await session.execute(delete(SosAlert).where(SosAlert.user_id == uid))
-        await session.execute(delete(ActivityLog).where(ActivityLog.user_id == uid))
-        await session.execute(delete(CityAdmin).where(CityAdmin.user_id == uid))
+        await session.execute(
+            delete(ActivityLog).where(ActivityLog.user_id.in_(identity_ids))
+        )
+        await session.execute(delete(CityAdmin).where(CityAdmin.user_id.in_(identity_ids)))
         # 6. UsefulContact (созданные пользователем)
-        await session.execute(delete(UsefulContact).where(UsefulContact.created_by == uid))
-        # 7. Profile
+        await session.execute(
+            delete(UsefulContact).where(UsefulContact.created_by.in_(identity_ids))
+        )
+        # 7. Profile (всегда под каноническим id)
         await session.execute(delete(ProfilePilot).where(ProfilePilot.user_id == uid))
         await session.execute(delete(ProfilePassenger).where(ProfilePassenger.user_id == uid))
-        # 8. User
-        await session.execute(delete(User).where(User.id == uid))
+        # 8. User: сначала вторичные записи (MAX/TG с linked_user_id), затем каноническая
+        for sid in secondary_ids:
+            await session.execute(delete(User).where(User.id == sid))
+        await session.execute(delete(User).where(User.id == canonical_id))
         await session.commit()

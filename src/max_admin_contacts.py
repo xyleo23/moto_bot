@@ -21,6 +21,7 @@ from src.services.admin_multichannel_notify import tg_inline_markup_to_max_rows
 from src.services.user import get_or_create_user
 from src.services.useful_contacts_service import (
     CAT_LABELS,
+    can_manage_contact_effective,
     create_contact,
     delete_contact,
     get_admin_contacts_list,
@@ -204,6 +205,9 @@ async def max_contacts_try_dispatch(
         if not c:
             await adapter.send_message(chat_id, "Не найден.", _append_shortcut(None))
             return True
+        if not await can_manage_contact_effective(user, c):
+            await _deny(adapter, chat_id)
+            return True
         await adapter.send_message(
             chat_id,
             _contact_view_text(c),
@@ -216,6 +220,13 @@ async def max_contacts_try_dispatch(
         try:
             cuid = uuid.UUID(cid_s)
         except ValueError:
+            return True
+        c = await get_contact_by_id(cuid)
+        if not c:
+            await adapter.send_message(chat_id, "Не найден.", _append_shortcut(None))
+            return True
+        if not await can_manage_contact_effective(user, c):
+            await _deny(adapter, chat_id)
             return True
         ok = await delete_contact(cuid)
         if ok:
@@ -237,6 +248,9 @@ async def max_contacts_try_dispatch(
         c = await get_contact_by_id(cuid)
         if not c:
             await adapter.send_message(chat_id, "Контакт не найден.", _append_shortcut(None))
+            return True
+        if not await can_manage_contact_effective(user, c):
+            await _deny(adapter, chat_id)
             return True
         await reg_state.clear_state(user.platform_user_id)
         await adapter.send_message(
@@ -261,6 +275,9 @@ async def max_contacts_try_dispatch(
         c = await get_contact_by_id(cuid)
         if not c:
             await adapter.send_message(chat_id, "Контакт не найден.", _append_shortcut(None))
+            return True
+        if not await can_manage_contact_effective(user, c):
+            await _deny(adapter, chat_id)
             return True
         prompts = {
             "name": "Введи новое название:",
@@ -401,6 +418,11 @@ async def handle_max_contact_fsm_text(
         except ValueError:
             await reg_state.clear_state(user_id)
             return
+        contact = await get_contact_by_id(cuid)
+        if not contact or not await can_manage_contact_effective(u, contact):
+            await reg_state.clear_state(user_id)
+            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            return
         if field != "name" and raw.lower() in ("пропустить", "skip", "-"):
             raw = ""
         elif field == "name" and not raw:
@@ -451,6 +473,11 @@ async def handle_max_contact_category_fsm_callback(
         cuid = uuid.UUID(cid_s)
     except ValueError:
         await reg_state.clear_state(user_id)
+        return True
+    contact = await get_contact_by_id(cuid)
+    if not contact or not await can_manage_contact_effective(u, contact):
+        await reg_state.clear_state(user_id)
+        await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
         return True
     ok = await update_contact(cuid, category=cat)
     await reg_state.clear_state(user_id)

@@ -68,6 +68,35 @@ async def can_manage_contacts_effective(session_user: User) -> bool:
     return False
 
 
+async def can_manage_contact_effective(session_user: User, contact: UsefulContact) -> bool:
+    """Object-level ACL: may this user manage this specific contact."""
+    from src.services.admin_service import is_effective_superadmin_user
+    from src.models.user import effective_user_id
+    from src.services.user import get_all_platform_identities
+
+    if await is_effective_superadmin_user(session_user):
+        return True
+    if not contact or not contact.city_id:
+        return False
+
+    canon = effective_user_id(session_user)
+    identities = await get_all_platform_identities(canon)
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        for iu in identities:
+            r = await session.execute(
+                select(CityAdmin)
+                .where(
+                    CityAdmin.user_id == iu.id,
+                    CityAdmin.city_id == contact.city_id,
+                )
+                .limit(1)
+            )
+            if r.scalar_one_or_none() is not None:
+                return True
+    return False
+
+
 async def can_manage_contacts(
     user_id: UUID, city_id: UUID | None, superadmin_ids: list[int]
 ) -> bool:

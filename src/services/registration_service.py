@@ -42,12 +42,30 @@ def _parse_driving_since(value) -> "date | None":  # noqa: F821 (avoid circular 
     return None
 
 
+def registration_phone_lookup_variants(normalized: str) -> list[str]:
+    """Possible stored forms for the same subscriber (E.164 + legacy 8… without +)."""
+    if not normalized:
+        return []
+    variants = {normalized}
+    d = normalized[1:] if normalized.startswith("+") else normalized
+    if len(d) == 11 and d.startswith("7"):
+        variants.add("8" + d[1:])
+        variants.add("+8" + d[1:])
+    return list(variants)
+
+
 async def _find_canonical_user_by_phone(
     session, phone: str, exclude_platform: Platform
 ) -> "UUID | None":
     """Find the canonical user ID that owns a profile with the given phone on another platform."""
+    norm = normalize_registration_phone(phone)
+    variants = registration_phone_lookup_variants(norm)
+    if not variants:
+        return None
     # Search pilot profiles
-    r = await session.execute(select(ProfilePilot.user_id).where(ProfilePilot.phone == phone))
+    r = await session.execute(
+        select(ProfilePilot.user_id).where(ProfilePilot.phone.in_(variants)).limit(1)
+    )
     uid = r.scalar_one_or_none()
     if uid:
         # Verify the owning user is on a different platform
@@ -59,7 +77,9 @@ async def _find_canonical_user_by_phone(
 
     # Search passenger profiles
     r = await session.execute(
-        select(ProfilePassenger.user_id).where(ProfilePassenger.phone == phone)
+        select(ProfilePassenger.user_id)
+        .where(ProfilePassenger.phone.in_(variants))
+        .limit(1)
     )
     uid = r.scalar_one_or_none()
     if uid:
@@ -72,13 +92,21 @@ async def _find_canonical_user_by_phone(
 
 
 def normalize_registration_phone(raw: str) -> str:
-    """Same rules as finish_* registration (leading +, max 20 chars)."""
-    p = str(raw or "").strip()[:20]
-    if not p:
+    """E.164-style: strip formatting, optional RU trunk fix, leading +, max 20 chars (DB)."""
+    s = str(raw or "").strip()
+    if not s:
         return ""
-    if not p.startswith("+"):
-        p = "+" + p
-    return p
+    digits = "".join(c for c in s if c.isdigit())
+    if not digits:
+        return ""
+    # Russia: 8XXXXXXXXXXX (11 digits) -> 7XXXXXXXXXX
+    if len(digits) == 11 and digits[0] == "8":
+        digits = "7" + digits[1:]
+    # Russia: 10-digit mobile starting with 9 -> assume country code 7
+    if len(digits) == 10 and digits[0] == "9":
+        digits = "7" + digits
+    out = "+" + digits
+    return out[:20]
 
 
 def mask_registration_phone_hint(phone: str) -> str:
@@ -286,7 +314,7 @@ async def finish_pilot_registration(
         list(data.keys()),
     )
 
-    phone = str(data.get("phone") or "").strip()[:20]
+    phone = normalize_registration_phone(str(data.get("phone") or ""))
     if not phone or len(phone) < 5:
         logger.warning("pilot reg: invalid phone %r", data.get("phone"))
         return "invalid_phone"
@@ -402,7 +430,7 @@ async def finish_passenger_registration(
         logger.warning("passenger reg: missing fields %s", missing)
         return "missing_fields"
 
-    phone_str = str(data.get("phone") or "").strip()[:20]
+    phone_str = normalize_registration_phone(str(data.get("phone") or ""))
     if not phone_str or len(phone_str) < 5:
         logger.warning("passenger reg: invalid phone %r", data.get("phone"))
         return "invalid_phone"
