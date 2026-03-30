@@ -92,6 +92,20 @@ def get_main_menu_shortcut_row() -> KeyboardRow:
     return [Button("🏠 Главное меню", payload="menu_main")]
 
 
+def append_main_menu_shortcut_row(rows: list | None) -> list:
+    """Добавить строку «Главное меню» к клавиатуре MAX (единый паттерн админки)."""
+    out = list(rows or [])
+    out.append(get_main_menu_shortcut_row())
+    return out
+
+
+def max_kb_from_tg_inline(markup) -> list | None:
+    """Telegram InlineKeyboardMarkup → строки кнопок MAX (без копипасты _kb/_kb_max)."""
+    from src.services.admin_multichannel_notify import tg_inline_markup_to_max_rows
+
+    return tg_inline_markup_to_max_rows(markup)
+
+
 def get_match_max_rows(telegram_username: str | None) -> list[KeyboardRow]:
     """Кнопка «Написать» для MAX после взаимного лайка (только t.me)."""
     rows: list[KeyboardRow] = []

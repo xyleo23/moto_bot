@@ -12,12 +12,11 @@ from src.keyboards.contacts import (
     get_admin_contact_edit_kb,
     get_admin_contacts_menu_kb,
 )
-from src.keyboards.shared import get_main_menu_shortcut_row
+from src.keyboards.shared import append_main_menu_shortcut_row, get_main_menu_shortcut_row, max_kb_from_tg_inline
 from src.models.user import User
 from src.platforms.base import Button
 from src.platforms.max_adapter import MaxAdapter
 from src.services import max_registration_state as reg_state
-from src.services.admin_multichannel_notify import tg_inline_markup_to_max_rows
 from src.services.user import get_or_create_user
 from src.services.useful_contacts_service import (
     CAT_LABELS,
@@ -36,16 +35,6 @@ _VALID_CATS = frozenset(
 _EDIT_FIELDS = frozenset({"name", "description", "phone", "link", "address", "category"})
 
 
-def _kb(m: InlineKeyboardMarkup | None) -> list | None:
-    return tg_inline_markup_to_max_rows(m)
-
-
-def _append_shortcut(rows: list | None) -> list:
-    out = list(rows or [])
-    out.append(get_main_menu_shortcut_row())
-    return out
-
-
 def _contact_view_text(c) -> str:
     return (
         f"<b>{c.name}</b>\n"
@@ -61,7 +50,7 @@ async def _deny(adapter: MaxAdapter, chat_id: str) -> None:
     await adapter.send_message(
         chat_id,
         "Доступ запрещён.",
-        _append_shortcut([[Button("« Меню", payload="menu_main")]]),
+        append_main_menu_shortcut_row([[Button("« Меню", payload="menu_main")]]),
     )
 
 
@@ -80,7 +69,7 @@ async def max_contacts_try_dispatch(
         await adapter.send_message(
             chat_id,
             "📇 <b>Контакты</b> — управление",
-            _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contacts_menu_kb())),
         )
         return True
 
@@ -95,7 +84,7 @@ async def max_contacts_try_dispatch(
                 await adapter.send_message(
                     chat_id,
                     "Нет городов в базе.",
-                    _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
+                    append_main_menu_shortcut_row([[Button("« Назад", payload="admin_contacts")]]),
                 )
                 return True
             rows = [
@@ -111,7 +100,7 @@ async def max_contacts_try_dispatch(
             await adapter.send_message(
                 chat_id,
                 "Сначала выбери город в профиле.",
-                _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
+                append_main_menu_shortcut_row([[Button("« Назад", payload="admin_contacts")]]),
             )
             return True
         await reg_state.set_state(
@@ -122,7 +111,7 @@ async def max_contacts_try_dispatch(
         await adapter.send_message(
             chat_id,
             "Выбери категорию:",
-            _append_shortcut(_kb(get_admin_contact_categories_kb("admin_contact_add"))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_categories_kb("admin_contact_add"))),
         )
         return True
 
@@ -136,7 +125,7 @@ async def max_contacts_try_dispatch(
         await adapter.send_message(
             chat_id,
             "Выбери категорию:",
-            _append_shortcut(_kb(get_admin_contact_categories_kb("admin_contact_add"))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_categories_kb("admin_contact_add"))),
         )
         return True
 
@@ -154,7 +143,7 @@ async def max_contacts_try_dispatch(
             await adapter.send_message(
                 chat_id,
                 "Город не выбран.",
-                _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
+                append_main_menu_shortcut_row([[Button("« Назад", payload="admin_contacts")]]),
             )
             return True
         await reg_state.set_state(
@@ -174,7 +163,7 @@ async def max_contacts_try_dispatch(
             await adapter.send_message(
                 chat_id,
                 "Город не выбран.",
-                _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
+                append_main_menu_shortcut_row([[Button("« Назад", payload="admin_contacts")]]),
             )
             return True
         contacts = await get_admin_contacts_list(user.city_id)
@@ -182,7 +171,7 @@ async def max_contacts_try_dispatch(
             await adapter.send_message(
                 chat_id,
                 "Контактов нет.",
-                _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+                append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contacts_menu_kb())),
             )
             return True
         rows = []
@@ -192,7 +181,7 @@ async def max_contacts_try_dispatch(
                 [Button(f"{c.name} ({label})", payload=f"admin_contact_view_{c.id}")]
             )
         rows.append([Button("« Назад", payload="admin_contacts")])
-        await adapter.send_message(chat_id, "Контакты:", _append_shortcut(rows))
+        await adapter.send_message(chat_id, "Контакты:", append_main_menu_shortcut_row(rows))
         return True
 
     if data.startswith("admin_contact_view_"):
@@ -203,7 +192,7 @@ async def max_contacts_try_dispatch(
             return True
         c = await get_contact_by_id(cuid)
         if not c:
-            await adapter.send_message(chat_id, "Не найден.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Не найден.", append_main_menu_shortcut_row(None))
             return True
         if not await can_manage_contact_effective(user, c):
             await _deny(adapter, chat_id)
@@ -211,7 +200,7 @@ async def max_contacts_try_dispatch(
         await adapter.send_message(
             chat_id,
             _contact_view_text(c),
-            _append_shortcut(_kb(get_admin_contact_edit_kb(cid_s))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cid_s))),
         )
         return True
 
@@ -223,7 +212,7 @@ async def max_contacts_try_dispatch(
             return True
         c = await get_contact_by_id(cuid)
         if not c:
-            await adapter.send_message(chat_id, "Не найден.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Не найден.", append_main_menu_shortcut_row(None))
             return True
         if not await can_manage_contact_effective(user, c):
             await _deny(adapter, chat_id)
@@ -233,10 +222,10 @@ async def max_contacts_try_dispatch(
             await adapter.send_message(
                 chat_id,
                 "Контакт удалён.",
-                _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+                append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contacts_menu_kb())),
             )
         else:
-            await adapter.send_message(chat_id, "Ошибка.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Ошибка.", append_main_menu_shortcut_row(None))
         return True
 
     if data.startswith("admin_contact_edit_"):
@@ -247,7 +236,7 @@ async def max_contacts_try_dispatch(
             return True
         c = await get_contact_by_id(cuid)
         if not c:
-            await adapter.send_message(chat_id, "Контакт не найден.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Контакт не найден.", append_main_menu_shortcut_row(None))
             return True
         if not await can_manage_contact_effective(user, c):
             await _deny(adapter, chat_id)
@@ -256,7 +245,7 @@ async def max_contacts_try_dispatch(
         await adapter.send_message(
             chat_id,
             f"Поля контакта <b>{c.name}</b>:",
-            _append_shortcut(_kb(get_admin_contact_edit_fields_kb(cid_s))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_fields_kb(cid_s))),
         )
         return True
 
@@ -274,7 +263,7 @@ async def max_contacts_try_dispatch(
             return True
         c = await get_contact_by_id(cuid)
         if not c:
-            await adapter.send_message(chat_id, "Контакт не найден.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Контакт не найден.", append_main_menu_shortcut_row(None))
             return True
         if not await can_manage_contact_effective(user, c):
             await _deny(adapter, chat_id)
@@ -295,8 +284,8 @@ async def max_contacts_try_dispatch(
             await adapter.send_message(
                 chat_id,
                 "Выбери категорию:",
-                _append_shortcut(
-                    _kb(get_admin_contact_categories_kb(f"admin_contact_ev_{cid_s}"))
+                append_main_menu_shortcut_row(
+                    max_kb_from_tg_inline(get_admin_contact_categories_kb(f"admin_contact_ev_{cid_s}"))
                 ),
             )
             return True
@@ -337,7 +326,7 @@ async def handle_max_contact_fsm_text(
         cat = data.get("category")
         if step == "name":
             if not raw:
-                await adapter.send_message(chat_id, "Введи название.", _append_shortcut(None))
+                await adapter.send_message(chat_id, "Введи название.", append_main_menu_shortcut_row(None))
                 return
             data["name"] = raw[:200]
             data["step"] = "description"
@@ -354,7 +343,7 @@ async def handle_max_contact_fsm_text(
             data["description"] = raw[:1000] if raw else None
             data["step"] = "phone"
             await reg_state.set_state(user_id, state, data)
-            await adapter.send_message(chat_id, "Телефон (или «Пропустить»):", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Телефон (или «Пропустить»):", append_main_menu_shortcut_row(None))
             return
         if step == "phone":
             if raw.lower() in ("пропустить", "skip", "-"):
@@ -362,7 +351,7 @@ async def handle_max_contact_fsm_text(
             data["phone"] = raw[:50] if raw else None
             data["step"] = "link"
             await reg_state.set_state(user_id, state, data)
-            await adapter.send_message(chat_id, "Ссылка (или «Пропустить»):", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Ссылка (или «Пропустить»):", append_main_menu_shortcut_row(None))
             return
         if step == "link":
             if raw.lower() in ("пропустить", "skip", "-"):
@@ -370,7 +359,7 @@ async def handle_max_contact_fsm_text(
             data["link"] = raw[:500] if raw else None
             data["step"] = "address"
             await reg_state.set_state(user_id, state, data)
-            await adapter.send_message(chat_id, "Адрес (или «Пропустить»):", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Адрес (или «Пропустить»):", append_main_menu_shortcut_row(None))
             return
         if step == "address":
             if raw.lower() in ("пропустить", "skip", "-"):
@@ -381,7 +370,7 @@ async def handle_max_contact_fsm_text(
                 contact_city_id = _uuid.UUID(raw_city_id)
             except (ValueError, TypeError):
                 await reg_state.clear_state(user_id)
-                await adapter.send_message(chat_id, "Ошибка: неверный ID города.", _append_shortcut(None))
+                await adapter.send_message(chat_id, "Ошибка: неверный ID города.", append_main_menu_shortcut_row(None))
                 return
             c = await create_contact(
                 city_id=contact_city_id,
@@ -398,13 +387,13 @@ async def handle_max_contact_fsm_text(
                 await adapter.send_message(
                     chat_id,
                     f"✅ Контакт добавлен: {c.name}",
-                    _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+                    append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contacts_menu_kb())),
                 )
             else:
                 await adapter.send_message(
                     chat_id,
                     "Ошибка при сохранении.",
-                    _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+                    append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contacts_menu_kb())),
                 )
             return
 
@@ -421,12 +410,12 @@ async def handle_max_contact_fsm_text(
         contact = await get_contact_by_id(cuid)
         if not contact or not await can_manage_contact_effective(u, contact):
             await reg_state.clear_state(user_id)
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return
         if field != "name" and raw.lower() in ("пропустить", "skip", "-"):
             raw = ""
         elif field == "name" and not raw:
-            await adapter.send_message(chat_id, "Название не может быть пустым.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Название не может быть пустым.", append_main_menu_shortcut_row(None))
             return
         kw = {field: raw if raw else None}
         ok = await update_contact(cuid, **kw)
@@ -436,13 +425,13 @@ async def handle_max_contact_fsm_text(
             await adapter.send_message(
                 chat_id,
                 f"✅ Обновлено.\n\n{_contact_view_text(c)}",
-                _append_shortcut(_kb(get_admin_contact_edit_kb(cid_s))),
+                append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cid_s))),
             )
         else:
             await adapter.send_message(
                 chat_id,
                 "Ошибка.",
-                _append_shortcut(_kb(get_admin_contacts_menu_kb())),
+                append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contacts_menu_kb())),
             )
 
 
@@ -477,7 +466,7 @@ async def handle_max_contact_category_fsm_callback(
     contact = await get_contact_by_id(cuid)
     if not contact or not await can_manage_contact_effective(u, contact):
         await reg_state.clear_state(user_id)
-        await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+        await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
         return True
     ok = await update_contact(cuid, category=cat)
     await reg_state.clear_state(user_id)
@@ -486,9 +475,9 @@ async def handle_max_contact_category_fsm_callback(
         await adapter.send_message(
             chat_id,
             f"✅ Категория обновлена.\n\n{_contact_view_text(c)}",
-            _append_shortcut(_kb(get_admin_contact_edit_kb(cid_s))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cid_s))),
         )
     else:
-        await adapter.send_message(chat_id, "Ошибка.", _append_shortcut(None))
+        await adapter.send_message(chat_id, "Ошибка.", append_main_menu_shortcut_row(None))
     return True
 

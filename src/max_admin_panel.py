@@ -19,7 +19,6 @@ from src.models.user import Platform, User
 from src.platforms.base import Button
 from src.platforms.max_adapter import MaxAdapter
 from src.services import max_registration_state as reg_state
-from src.services.admin_multichannel_notify import tg_inline_markup_to_max_rows
 from src.services.admin_phone_actions import phone_change_approve, phone_change_reject
 from src.services.activity_log_service import get_logs
 from src.services.admin_service import (
@@ -64,10 +63,6 @@ from src.keyboards.shared import get_main_menu_shortcut_row
 from src import texts
 
 
-def _kb_max(kb: InlineKeyboardMarkup | None) -> list | None:
-    return tg_inline_markup_to_max_rows(kb)
-
-
 def _city_admin_root_max() -> list:
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -76,7 +71,7 @@ def _city_admin_root_max() -> list:
             [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
         ]
     )
-    return _kb_max(kb) or []
+    return max_kb_from_tg_inline(kb) or []
 
 
 async def show_max_admin_root(adapter: MaxAdapter, chat_id: str, user: User) -> None:
@@ -99,7 +94,7 @@ async def show_max_admin_root(adapter: MaxAdapter, chat_id: str, user: User) -> 
     )
     if is_sa:
         text = "⚙️ <b>Админ-панель</b>\n\nВыбери раздел (данные общие с Telegram):"
-        rows = _kb_max(get_admin_main_kb()) or []
+        rows = max_kb_from_tg_inline(get_admin_main_kb()) or []
         await adapter.send_message(chat_id, text, rows)
         return
     text = "⚙️ <b>Админ города</b>\n\nВыбери раздел:"
@@ -142,12 +137,6 @@ async def _max_ev_report_ok(actor: User, ev) -> bool:
     return await is_effective_city_admin_of(actor, ev.city_id)
 
 
-def _append_shortcut(rows: list | None) -> list:
-    out = list(rows or [])
-    out.append(get_main_menu_shortcut_row())
-    return out
-
-
 async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data: str) -> bool:
     """Обработать callback админки. True если событие поглощено."""
     if not (data.startswith("admin_") or data.startswith("cam_")):
@@ -161,29 +150,29 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
     # ——— Модерация заявок (суперадмин / админ города) ———
     if data.startswith("admin_phone_approve_"):
         if not await _max_superadmin(user):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(_kb_max(get_admin_back_kb("menu_main"))))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_back_kb("menu_main"))))
             return True
         rid = data.replace("admin_phone_approve_", "", 1)
         ok, msg = await phone_change_approve(
             rid, user, telegram_bot=tg_bot, max_adapter=max_ad
         )
-        await adapter.send_message(chat_id, msg, _append_shortcut([[Button("« Админка", payload="admin_panel")]]))
+        await adapter.send_message(chat_id, msg, append_main_menu_shortcut_row([[Button("« Админка", payload="admin_panel")]]))
         return True
 
     if data.startswith("admin_phone_reject_"):
         if not await _max_superadmin(user):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
         rid = data.replace("admin_phone_reject_", "", 1)
         ok, msg = await phone_change_reject(
             rid, user, telegram_bot=tg_bot, max_adapter=max_ad
         )
-        await adapter.send_message(chat_id, msg, _append_shortcut([[Button("« Админка", payload="admin_panel")]]))
+        await adapter.send_message(chat_id, msg, append_main_menu_shortcut_row([[Button("« Админка", payload="admin_panel")]]))
         return True
 
     if data.startswith("admin_report_accept_"):
         if not await _max_motopair_moderate_ok(user):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
         uid_s = data.replace("admin_report_accept_", "", 1)
         try:
@@ -191,18 +180,18 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         except ValueError:
             return True
         if not await _max_motopair_report_target_ok(user, tid):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
         try:
             await hide_profile(tid)
         except ValueError:
             pass
-        await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_ACCEPTED, _append_shortcut(None))
+        await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_ACCEPTED, append_main_menu_shortcut_row(None))
         return True
 
     if data.startswith("admin_report_reject_"):
         if not await _max_motopair_moderate_ok(user):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
         uid_s = data.replace("admin_report_reject_", "", 1)
         try:
@@ -210,14 +199,14 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         except ValueError:
             return True
         if not await _max_motopair_report_target_ok(user, tid):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
-        await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_REJECTED, _append_shortcut(None))
+        await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_REJECTED, append_main_menu_shortcut_row(None))
         return True
 
     if data.startswith("admin_report_block_"):
         if not await _max_motopair_moderate_ok(user):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
         uid_s = data.replace("admin_report_block_", "", 1)
         try:
@@ -225,7 +214,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         except ValueError:
             return True
         if not await _max_motopair_report_target_ok(user, tid):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
         await reg_state.set_state(
             user.platform_user_id,
@@ -247,10 +236,10 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             return True
         ev = await get_event_by_id(eid)
         if not ev or not await _max_ev_report_ok(user, ev):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
         await set_event_hidden(ev.id, True)
-        await adapter.send_message(chat_id, texts.EVENT_REPORT_ACCEPTED, _append_shortcut(None))
+        await adapter.send_message(chat_id, texts.EVENT_REPORT_ACCEPTED, append_main_menu_shortcut_row(None))
         return True
 
     if data.startswith("admin_evreport_reject_"):
@@ -261,14 +250,14 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             return True
         ev = await get_event_by_id(eid)
         if not ev or not await _max_ev_report_ok(user, ev):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
-        await adapter.send_message(chat_id, texts.EVENT_REPORT_REJECTED, _append_shortcut(None))
+        await adapter.send_message(chat_id, texts.EVENT_REPORT_REJECTED, append_main_menu_shortcut_row(None))
         return True
 
     if data.startswith("cam_"):
         if not await _max_superadmin(user):
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return True
         parsed = get_city_admin_remove(data.replace("cam_", "", 1))
         if not parsed:
@@ -302,13 +291,13 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             f"SOS-сигналов: {stats.get('sos', 0)}\n"
             f"Мероприятий: {stats.get('events', 0)}"
         )
-        await adapter.send_message(chat_id, t, _append_shortcut(_kb_max(tg_admin._admin_stats_markup())))
+        await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(tg_admin._admin_stats_markup())))
         return True
 
     if data == "admin_users" and await _max_superadmin(user):
         users, total = await get_users_list(limit=tg_admin.USERS_PAGE_SIZE, offset=0)
         text, kb = tg_admin._build_users_page(users, total, 0, payment_row=True)
-        await adapter.send_message(chat_id, text, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, text, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return True
 
     if data.startswith("admin_users_p") and await _max_superadmin(user):
@@ -318,7 +307,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             page = 0
         users, total = await get_users_list(limit=tg_admin.USERS_PAGE_SIZE, offset=page * tg_admin.USERS_PAGE_SIZE)
         text, kb = tg_admin._build_users_page(users, total, page, payment_row=True)
-        await adapter.send_message(chat_id, text, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, text, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return True
 
     if data == "admin_users_search" and await _max_superadmin(user):
@@ -338,7 +327,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             return True
         u = await get_user_by_id(uu)
         if not u:
-            await adapter.send_message(chat_id, "Не найден.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Не найден.", append_main_menu_shortcut_row(None))
             return True
         t = (
             f"<b>Пользователь</b>\n"
@@ -349,7 +338,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             f"Статус: {'🔒 Заблокирован' if u.is_blocked else '✅ Активен'}\n"
             f"Причина: {u.block_reason or '—'}"
         )
-        await adapter.send_message(chat_id, t, _append_shortcut(_kb_max(get_user_action_kb(uid_s, u.is_blocked))))
+        await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(get_user_action_kb(uid_s, u.is_blocked))))
         return True
 
     if (
@@ -381,7 +370,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             f"<b>Пользователь</b>\nID: {u.platform_user_id}\n"
             f"Статус: {'🔒 Заблокирован' if u.is_blocked else '✅ Активен'}"
         )
-        await adapter.send_message(chat_id, t, _append_shortcut(_kb_max(get_user_action_kb(uid_s, u.is_blocked))))
+        await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(get_user_action_kb(uid_s, u.is_blocked))))
         return True
 
     if data.startswith("admin_sub_extend_") and await _max_superadmin(user):
@@ -402,7 +391,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
 
     if data == "admin_cities" and await _max_superadmin(user):
         text, kb = await tg_admin._admin_cities_list_text_kb()
-        await adapter.send_message(chat_id, text, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, text, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return True
 
     if data.startswith("admin_city_toggle_") and await _max_superadmin(user):
@@ -412,7 +401,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         if city:
             await update_city(uuid.UUID(cid), is_active=not city.is_active)
         text, kb = await tg_admin._admin_cities_list_text_kb()
-        await adapter.send_message(chat_id, text, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, text, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return True
 
     if data.startswith("admin_city_edit_") and await _max_superadmin(user):
@@ -461,7 +450,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             ]
         )
         t = f"🏙 {city.name}\nСтатус: {'активен' if city.is_active else 'неактивен'}"
-        await adapter.send_message(chat_id, t, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return True
 
     if data == "admin_city_admins" and await _max_superadmin(user):
@@ -471,7 +460,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         ]
         rows_m.append([Button("« Назад", payload="admin_panel")])
         await adapter.send_message(
-            chat_id, "Выбери город:", _append_shortcut(rows_m)
+            chat_id, "Выбери город:", append_main_menu_shortcut_row(rows_m)
         )
         return True
 
@@ -503,7 +492,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             if admins
             else "Админов нет."
         )
-        await adapter.send_message(chat_id, t, _append_shortcut(rows_btn))
+        await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(rows_btn))
         return True
 
     if data.startswith("admin_ca_add_") and await _max_superadmin(user):
@@ -546,7 +535,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             if events
             else "Мероприятий нет."
         )
-        await adapter.send_message(chat_id, t, _append_shortcut(rows))
+        await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(rows))
         return True
 
     if (
@@ -566,12 +555,12 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         if not ev:
             return True
         if not await can_admin_events_user(user, ev.city_id):
-            await adapter.send_message(chat_id, "Нет доступа.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Нет доступа.", append_main_menu_shortcut_row(None))
             return True
         can_edit = await can_admin_events_user(user, ev.city_id)
         t = tg_admin._admin_event_text(ev)
         await adapter.send_message(
-            chat_id, t, _append_shortcut(_kb_max(get_admin_event_kb(eid_s, can_edit, ev.is_recommended, ev.is_official)))
+            chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_event_kb(eid_s, can_edit, ev.is_recommended, ev.is_official)))
         )
         return True
 
@@ -587,7 +576,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             ev = await get_event_by_id(euu)
             t = tg_admin._admin_event_text(ev)
             await adapter.send_message(
-                chat_id, t, _append_shortcut(_kb_max(get_admin_event_kb(eid_s, True, ev.is_recommended, ev.is_official)))
+                chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_event_kb(eid_s, True, ev.is_recommended, ev.is_official)))
             )
         return True
 
@@ -603,7 +592,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             ev = await get_event_by_id(euu)
             t = tg_admin._admin_event_text(ev)
             await adapter.send_message(
-                chat_id, t, _append_shortcut(_kb_max(get_admin_event_kb(eid_s, True, ev.is_recommended, ev.is_official)))
+                chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_event_kb(eid_s, True, ev.is_recommended, ev.is_official)))
             )
         return True
 
@@ -623,13 +612,13 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
                 await notify_event_participants_cancelled(
                     pids, msg, telegram_bot=tg_bot, max_adapter=max_ad
                 )
-            await adapter.send_message(chat_id, "Мероприятие отменено.", _append_shortcut([[Button("« Мероприятия", payload="admin_events")]]))
+            await adapter.send_message(chat_id, "Мероприятие отменено.", append_main_menu_shortcut_row([[Button("« Мероприятия", payload="admin_events")]]))
         return True
 
     if data == "admin_settings" and await _max_superadmin(user):
         s = await get_subscription_settings()
         await adapter.send_message(
-            chat_id, tg_admin._settings_text(s), _append_shortcut(_kb_max(get_settings_kb(s)))
+            chat_id, tg_admin._settings_text(s), append_main_menu_shortcut_row(max_kb_from_tg_inline(get_settings_kb(s)))
         )
         return True
 
@@ -643,7 +632,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             await fn(s)
             s = await get_subscription_settings()
             await adapter.send_message(
-                chat_id, tg_admin._settings_text(s), _append_shortcut(_kb_max(get_settings_kb(s)))
+                chat_id, tg_admin._settings_text(s), append_main_menu_shortcut_row(max_kb_from_tg_inline(get_settings_kb(s)))
             )
             return True
 
@@ -656,7 +645,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         await update_subscription_settings(event_motorcade_limit_per_month=val)
         s = await get_subscription_settings()
         await adapter.send_message(
-            chat_id, tg_admin._settings_text(s), _append_shortcut(_kb_max(get_settings_kb(s)))
+            chat_id, tg_admin._settings_text(s), append_main_menu_shortcut_row(max_kb_from_tg_inline(get_settings_kb(s)))
         )
         return True
 
@@ -677,7 +666,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         await adapter.send_message(
             chat_id,
             f"Мотопробегов/мес (с подпиской). Сейчас: {cur}",
-            _append_shortcut(_kb_max(kb)),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)),
         )
         return True
 
@@ -700,14 +689,14 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
     if data == "admin_logs" and await _max_superadmin(user):
         logs, total = await get_logs(limit=tg_admin.LOGS_PAGE_SIZE, offset=0)
         text, kb = tg_admin._build_logs_page(logs, total, 0, None)
-        await adapter.send_message(chat_id, text, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, text, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return True
 
     if data.startswith("admin_logs_t_") and await _max_superadmin(user):
         et = data.replace("admin_logs_t_", "", 1) or None
         logs, total = await get_logs(event_type=et, limit=tg_admin.LOGS_PAGE_SIZE, offset=0)
         text, kb = tg_admin._build_logs_page(logs, total, 0, et)
-        await adapter.send_message(chat_id, text, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, text, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return True
 
     if data.startswith("admin_logs_p") and await _max_superadmin(user):
@@ -722,7 +711,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             event_type=et, limit=tg_admin.LOGS_PAGE_SIZE, offset=page * tg_admin.LOGS_PAGE_SIZE
         )
         text, kb = tg_admin._build_logs_page(logs, total, page, et)
-        await adapter.send_message(chat_id, text, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, text, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return True
 
     if data == "admin_broadcast" and await _max_superadmin(user):
@@ -739,7 +728,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
             )
         rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
         await adapter.send_message(
-            chat_id, "Сегмент рассылки:", _append_shortcut(_kb_max(InlineKeyboardMarkup(inline_keyboard=rows)))
+            chat_id, "Сегмент рассылки:", append_main_menu_shortcut_row(max_kb_from_tg_inline(InlineKeyboardMarkup(inline_keyboard=rows)))
         )
         return True
 
@@ -778,7 +767,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         await adapter.send_message(
             chat_id,
             f"<b>Текст «О нас»</b>\n\n{cur or '(не задан)'}",
-            _append_shortcut(_kb_max(kb)),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)),
         )
         return True
 
@@ -801,7 +790,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         await adapter.send_message(
             chat_id,
             "<b>Шаблоны уведомлений</b>\n\nВыбери шаблон.",
-            _append_shortcut(_kb_max(InlineKeyboardMarkup(inline_keyboard=rows))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(InlineKeyboardMarkup(inline_keyboard=rows))),
         )
         return True
 
@@ -844,7 +833,7 @@ async def handle_max_admin_fsm_text(
         await adapter.send_message(
             chat_id,
             msg,
-            _append_shortcut([[Button("« Назад", payload=back_payload)], get_main_menu_shortcut_row()]),
+            append_main_menu_shortcut_row([[Button("« Назад", payload=back_payload)]]),
         )
 
     if state == "admin:city_name":
@@ -853,7 +842,7 @@ async def handle_max_admin_fsm_text(
             return
         name = (text or "").strip()[:100]
         if not name:
-            await adapter.send_message(chat_id, "Пустое название.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Пустое название.", append_main_menu_shortcut_row(None))
             return
         action = data.get("action")
         if action == "add":
@@ -874,7 +863,7 @@ async def handle_max_admin_fsm_text(
         try:
             pid = int((text or "").strip())
         except ValueError:
-            await adapter.send_message(chat_id, "Нужно число (platform_user_id).", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Нужно число (platform_user_id).", append_main_menu_shortcut_row(None))
             return
         from sqlalchemy import select
         from src.models.base import get_session_factory
@@ -890,7 +879,7 @@ async def handle_max_admin_fsm_text(
             await adapter.send_message(
                 chat_id,
                 "Пользователь с таким ID не найден. Сначала пусть напишет боту.",
-                _append_shortcut([[Button("« Назад", payload=f"admin_ca_city_{cid}")]]),
+                append_main_menu_shortcut_row([[Button("« Назад", payload=f"admin_ca_city_{cid}")]]),
             )
             return
         ok, err = await add_city_admin(uuid.UUID(str(cid)), target.id)
@@ -898,7 +887,7 @@ async def handle_max_admin_fsm_text(
         await adapter.send_message(
             chat_id,
             "✅ Админ добавлен." if ok else f"❌ {err}",
-            _append_shortcut([[Button("« Назад", payload=f"admin_ca_city_{cid}")]]),
+            append_main_menu_shortcut_row([[Button("« Назад", payload=f"admin_ca_city_{cid}")]]),
         )
         return
 
@@ -918,7 +907,7 @@ async def handle_max_admin_fsm_text(
             return
         if not await _max_motopair_report_target_ok(u, tu):
             await reg_state.clear_state(user_id)
-            await adapter.send_message(chat_id, "Доступ запрещён.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Доступ запрещён.", append_main_menu_shortcut_row(None))
             return
         await block_user(tu, reason=reason)
         await send_text_to_all_identities(
@@ -929,7 +918,7 @@ async def handle_max_admin_fsm_text(
             parse_mode="HTML",
         )
         await reg_state.clear_state(user_id)
-        await adapter.send_message(chat_id, texts.ADMIN_BLOCK_DONE, _append_shortcut([[Button("« Админка", payload="admin_panel")]]))
+        await adapter.send_message(chat_id, texts.ADMIN_BLOCK_DONE, append_main_menu_shortcut_row([[Button("« Админка", payload="admin_panel")]]))
         return
 
     if state == "admin:extend_sub":
@@ -942,12 +931,12 @@ async def handle_max_admin_fsm_text(
             if days < 1 or days > 365:
                 raise ValueError
         except ValueError:
-            await adapter.send_message(chat_id, "Число от 1 до 365.", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Число от 1 до 365.", append_main_menu_shortcut_row(None))
             return
         ok, msg = await extend_subscription(uuid.UUID(str(uid_s)), days)
         await reg_state.clear_state(user_id)
         await adapter.send_message(
-            chat_id, f"✅ {msg}", _append_shortcut([[Button("« Пользователи", payload="admin_users")]])
+            chat_id, f"✅ {msg}", append_main_menu_shortcut_row([[Button("« Пользователи", payload="admin_users")]])
         )
         return
 
@@ -961,7 +950,7 @@ async def handle_max_admin_fsm_text(
         )
         text_p, kb = tg_admin._build_users_page(users, total, 0, payment_row=True)
         await reg_state.clear_state(user_id)
-        await adapter.send_message(chat_id, text_p, _append_shortcut(_kb_max(kb)))
+        await adapter.send_message(chat_id, text_p, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)))
         return
 
     if state == "admin:bc_msg":
@@ -990,7 +979,7 @@ async def handle_max_admin_fsm_text(
         await adapter.send_message(
             chat_id,
             f"Получателей: {n} (Telegram: {len(r_tg)}, MAX: {len(r_max)}). Отправить?",
-            _append_shortcut(_kb_max(get_broadcast_confirm_kb())),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_broadcast_confirm_kb())),
         )
         return
 
@@ -1021,7 +1010,7 @@ async def handle_max_admin_fsm_text(
             if kop < 0:
                 raise ValueError
         except ValueError:
-            await adapter.send_message(chat_id, "Нужно неотрицательное целое число (копейки).", _append_shortcut(None))
+            await adapter.send_message(chat_id, "Нужно неотрицательное целое число (копейки).", append_main_menu_shortcut_row(None))
             return
         field = data.get("field")
         kw = {}
@@ -1040,7 +1029,7 @@ async def handle_max_admin_fsm_text(
         await adapter.send_message(
             chat_id,
             "✅ Сохранено.\n\n" + tg_admin._settings_text(s),
-            _append_shortcut(_kb_max(get_settings_kb(s))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_settings_kb(s))),
         )
         return
 
@@ -1072,7 +1061,7 @@ async def handle_max_admin_fsm_callback(
     seg = fd.get("segment") or {}
     await reg_state.clear_state(user_id)
     if not text_bc:
-        await adapter.send_message(chat_id, "Нет текста.", _append_shortcut(None))
+        await adapter.send_message(chat_id, "Нет текста.", append_main_menu_shortcut_row(None))
         return True
     tg_bot = _get_tg_bot()
     max_ad = get_max_adapter() or adapter
@@ -1100,6 +1089,6 @@ async def handle_max_admin_fsm_callback(
     await adapter.send_message(
         chat_id,
         f"✅ Рассылка: отправлено {sent}, ошибок {failed}",
-        _append_shortcut(_kb_max(get_admin_back_kb("admin_panel"))),
+        append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_back_kb("admin_panel"))),
     )
     return True

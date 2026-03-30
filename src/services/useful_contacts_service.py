@@ -42,42 +42,12 @@ def format_useful_contact_html(c: dict) -> str:
     return "\n".join(parts)
 
 
-async def can_manage_contacts_effective(session_user: User) -> bool:
-    """Суперадмин (с учётом связки TG/MAX) или админ текущего города по любой связанной записи User."""
-    from src.services.admin_service import is_effective_superadmin_user
+async def _is_effective_city_admin_for_city_id(session_user: User, city_id: UUID | None) -> bool:
+    """Любая связанная запись User — CityAdmin этого города."""
+    if not city_id:
+        return False
     from src.models.user import effective_user_id
     from src.services.user import get_all_platform_identities
-
-    if await is_effective_superadmin_user(session_user):
-        return True
-    if not session_user.city_id:
-        return False
-    canon = effective_user_id(session_user)
-    identities = await get_all_platform_identities(canon)
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        for iu in identities:
-            r = await session.execute(
-                select(CityAdmin).where(
-                    CityAdmin.user_id == iu.id,
-                    CityAdmin.city_id == session_user.city_id,
-                ).limit(1)
-            )
-            if r.scalar_one_or_none() is not None:
-                return True
-    return False
-
-
-async def can_manage_contact_effective(session_user: User, contact: UsefulContact) -> bool:
-    """Object-level ACL: may this user manage this specific contact."""
-    from src.services.admin_service import is_effective_superadmin_user
-    from src.models.user import effective_user_id
-    from src.services.user import get_all_platform_identities
-
-    if await is_effective_superadmin_user(session_user):
-        return True
-    if not contact or not contact.city_id:
-        return False
 
     canon = effective_user_id(session_user)
     identities = await get_all_platform_identities(canon)
@@ -88,13 +58,35 @@ async def can_manage_contact_effective(session_user: User, contact: UsefulContac
                 select(CityAdmin)
                 .where(
                     CityAdmin.user_id == iu.id,
-                    CityAdmin.city_id == contact.city_id,
+                    CityAdmin.city_id == city_id,
                 )
                 .limit(1)
             )
             if r.scalar_one_or_none() is not None:
                 return True
     return False
+
+
+async def can_manage_contacts_effective(session_user: User) -> bool:
+    """Суперадмин (с учётом связки TG/MAX) или админ текущего города по любой связанной записи User."""
+    from src.services.admin_service import is_effective_superadmin_user
+
+    if await is_effective_superadmin_user(session_user):
+        return True
+    if not session_user.city_id:
+        return False
+    return await _is_effective_city_admin_for_city_id(session_user, session_user.city_id)
+
+
+async def can_manage_contact_effective(session_user: User, contact: UsefulContact) -> bool:
+    """Object-level ACL: may this user manage this specific contact."""
+    from src.services.admin_service import is_effective_superadmin_user
+
+    if await is_effective_superadmin_user(session_user):
+        return True
+    if not contact or not contact.city_id:
+        return False
+    return await _is_effective_city_admin_for_city_id(session_user, contact.city_id)
 
 
 async def can_manage_contacts(
