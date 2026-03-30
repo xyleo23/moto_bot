@@ -21,6 +21,7 @@ from src.platforms.max_adapter import MaxAdapter
 from src.services import max_registration_state as reg_state
 from src.services.admin_phone_actions import phone_change_approve, phone_change_reject
 from src.services.activity_log_service import get_logs
+from src.utils.text_format import split_plain_text_chunks
 from src.services.admin_service import (
     add_city_admin,
     admin_cancel_event,
@@ -762,26 +763,51 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
 
     if data == "admin_text_about" and await _max_superadmin(user):
         cur = await get_global_text("about_us")
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="✏ Изменить", callback_data="admin_text_about_edit")],
-                [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
-            ]
-        )
+        kb = tg_admin._about_admin_panel_kb()
         await adapter.send_message(
             chat_id,
-            f"<b>Текст «О нас»</b>\n\n{cur or '(не задан)'}",
+            tg_admin._about_admin_panel_caption(cur),
             append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)),
         )
         return True
 
     if data == "admin_text_about_edit" and await _max_superadmin(user):
+        from html import escape
+
         await reg_state.set_state(user.platform_user_id, "admin:about_text", {})
         cur = await get_global_text("about_us")
+        clipped = escape((cur or "")[:4000])
         await adapter.send_message(
             chat_id,
-            f"Отправь новый текст для «О нас». Сейчас:\n\n{cur or ''}",
+            "Отправь новый основной текст для «О нас» (до 5000 символов). "
+            "Контакты внизу настраиваются в «Контакты поддержки».\n\n"
+            f"Сейчас:\n{clipped}",
             [[Button("« Отмена", payload="admin_text_about")], get_main_menu_shortcut_row()],
+        )
+        return True
+
+    if data == "admin_text_about_preview" and await _max_superadmin(user):
+        from src.handlers.about import get_about_display_full_text
+
+        full = await get_about_display_full_text()
+        chunks = split_plain_text_chunks(full, max_len=3500)
+        await adapter.send_message(
+            chat_id,
+            "👁 Так раздел «О нас» видят пользователи (как в TG, без кнопок доната в одной строке с меню):",
+            [get_main_menu_shortcut_row()],
+        )
+        for part in chunks:
+            await adapter.send_message(chat_id, part, [get_main_menu_shortcut_row()])
+        return True
+
+    if data == "admin_text_about_reset" and await _max_superadmin(user):
+        await set_global_text("about_us", "")
+        cur = await get_global_text("about_us")
+        kb = tg_admin._about_admin_panel_kb()
+        await adapter.send_message(
+            chat_id,
+            "✅ Сброшено к тексту по умолчанию.\n\n" + tg_admin._about_admin_panel_caption(cur),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(kb)),
         )
         return True
 
@@ -1040,8 +1066,11 @@ async def handle_max_admin_fsm_text(
         if not await _max_superadmin(u):
             await reg_state.clear_state(user_id)
             return
-        await set_global_text("about_us", (text or "").strip()[:5000] or "О нас")
-        await _done("✅ Текст «О нас» сохранён.", "admin_panel")
+        await set_global_text("about_us", (text or "").strip()[:5000])
+        await _done(
+            "✅ Текст «О нас» сохранён. Пустое значение = текст по умолчанию.",
+            "admin_panel",
+        )
         return
 
     if state == "admin:support_email":

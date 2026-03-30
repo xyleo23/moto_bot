@@ -1,6 +1,8 @@
 """About us, support, donations — Stage 9."""
 
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.enums import ParseMode
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -39,17 +41,29 @@ class DonateCustomStates(StatesGroup):
     amount = State()
 
 
-@router.callback_query(F.data == "menu_about")
-async def cb_about(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
+ABOUT_PARSE_MODE = ParseMode.HTML
+
+
+async def get_about_body_raw() -> str:
     text_db = await get_global_text("about_us")
-    text = (text_db or DEFAULT_ABOUT).strip()
+    return (text_db or DEFAULT_ABOUT).strip()
+
+
+async def get_about_display_full_text() -> str:
+    """Текст раздела для пользователей (основной блок + контакты поддержки)."""
+    body = await get_about_body_raw()
     sup_email = await get_effective_support_email()
     sup_user = await get_effective_support_username()
-    text += f"\n\n📧 Поддержка: {sup_email}"
-    text += f"\n👤 Telegram: @{sup_user}"
+    return (
+        body
+        + f"\n\n📧 Поддержка: {sup_email}"
+        + f"\n👤 Telegram: @{sup_user}"
+    )
 
-    kb = InlineKeyboardMarkup(
+
+async def build_about_reply_markup_telegram() -> InlineKeyboardMarkup:
+    sup_user = await get_effective_support_username()
+    return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
@@ -65,10 +79,36 @@ async def cb_about(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
         ]
     )
+
+
+async def send_about_to_chat(message: Message, state: FSMContext | None) -> None:
+    """Ответ в чат как у inline «О нас»: полный текст, кнопки, HTML."""
+    if state is not None:
+        await state.clear()
+    text = await get_about_display_full_text()
+    kb = await build_about_reply_markup_telegram()
     chunks = split_plain_text_chunks(text, max_len=3800)
-    await callback.message.edit_text(chunks[0], reply_markup=kb)
+    await message.answer(chunks[0], reply_markup=kb, parse_mode=ABOUT_PARSE_MODE)
     for extra in chunks[1:]:
-        await callback.message.answer(extra)
+        await message.answer(extra, parse_mode=ABOUT_PARSE_MODE)
+
+
+@router.callback_query(F.data == "menu_about")
+async def cb_about(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text = await get_about_display_full_text()
+    kb = await build_about_reply_markup_telegram()
+    chunks = split_plain_text_chunks(text, max_len=3800)
+    try:
+        await callback.message.edit_text(
+            chunks[0], reply_markup=kb, parse_mode=ABOUT_PARSE_MODE
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            chunks[0], reply_markup=kb, parse_mode=ABOUT_PARSE_MODE
+        )
+    for extra in chunks[1:]:
+        await callback.message.answer(extra, parse_mode=ABOUT_PARSE_MODE)
     await callback.answer()
 
 

@@ -1,7 +1,9 @@
 """Admin panel — Stage 8."""
 
 import uuid
+from html import escape
 from aiogram import Router, F
+from aiogram.enums import ParseMode
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -120,6 +122,43 @@ def _inline_payments_row():
     from aiogram.types import InlineKeyboardButton
 
     return [InlineKeyboardButton(text="💰 Подписки и оплаты", callback_data="admin_settings")]
+
+
+def _about_admin_panel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✏ Изменить", callback_data="admin_text_about_edit"),
+                InlineKeyboardButton(text="👁 Предпросмотр", callback_data="admin_text_about_preview"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Сбросить к умолчанию", callback_data="admin_text_about_reset"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📞 Контакты поддержки", callback_data="admin_support_contact"
+                )
+            ],
+            _inline_payments_row(),
+            [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+        ]
+    )
+
+
+def _about_admin_panel_caption(text: str | None) -> str:
+    raw = text if (text and text.strip()) else "(не задан — пользователям покажется текст по умолчанию)"
+    clipped = raw if len(raw) <= 3500 else raw[:3497] + "…"
+    return (
+        "<b>Текст «О нас»</b>\n"
+        "<i>Редактируется только основной блок. Внизу у пользователей автоматически "
+        "добавляются email и Telegram из «Контакты поддержки».</i>\n\n"
+        f"<pre>{escape(clipped)}</pre>\n\n"
+        "Допустим HTML в тексте: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, "
+        "<code>&lt;a href=\"…\"&gt;</code>. Символ <code>&lt;</code> в обычном тексте "
+        "пиши как <code>&amp;lt;</code>."
+    )
 
 
 @router.message(Command("admin"))
@@ -510,18 +549,10 @@ async def msg_admin_text_about(message: Message, state: FSMContext, user=None):
         return
     await state.clear()
     text = await get_global_text("about_us")
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✏ Изменить", callback_data="admin_text_about_edit")],
-            _inline_payments_row(),
-            [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
-        ]
-    )
     await message.answer(
-        f"<b>Текст «О нас»</b> (показывается в разделе О нас):\n\n{text or '(не задан)'}",
-        reply_markup=kb,
+        _about_admin_panel_caption(text),
+        reply_markup=_about_admin_panel_kb(),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -1564,18 +1595,10 @@ async def cb_admin_text_about(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Доступ запрещён.")
         return
     text = await get_global_text("about_us")
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✏ Изменить", callback_data="admin_text_about_edit")],
-            _inline_payments_row(),
-            [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
-        ]
-    )
     await callback.message.edit_text(
-        f"<b>Текст «О нас»</b> (показывается в разделе О нас):\n\n{text or '(не задан)'}",
-        reply_markup=kb,
+        _about_admin_panel_caption(text),
+        reply_markup=_about_admin_panel_kb(),
+        parse_mode=ParseMode.HTML,
     )
     await callback.answer()
 
@@ -1588,10 +1611,63 @@ async def cb_admin_text_about_edit(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminTextAboutStates.text)
     text = await get_global_text("about_us")
     await callback.message.edit_text(
-        f"Отправь новый текст для «О нас». Сейчас:\n\n{text or ''}\n\nОтправь сообщение с новым текстом.",
+        "Отправь новый <b>основной</b> текст для «О нас» (до 5000 символов). "
+        "Контакты поддержки внизу настраиваются отдельно.\n\n"
+        f"<pre>{escape((text or '')[:4000])}</pre>",
         reply_markup=get_admin_back_kb("admin_text_about"),
+        parse_mode=ParseMode.HTML,
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_text_about_preview")
+async def cb_admin_text_about_preview(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    from src.handlers.about import (
+        build_about_reply_markup_telegram,
+        get_about_display_full_text,
+    )
+    from src.utils.text_format import split_plain_text_chunks
+
+    text = await get_about_display_full_text()
+    kb = await build_about_reply_markup_telegram()
+    chunks = split_plain_text_chunks(text, max_len=3800)
+    await callback.bot.send_message(
+        callback.from_user.id,
+        "👁 <b>Так раздел «О нас» видят пользователи в Telegram:</b>",
+        parse_mode=ParseMode.HTML,
+    )
+    await callback.bot.send_message(
+        callback.from_user.id,
+        chunks[0],
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML,
+    )
+    for part in chunks[1:]:
+        await callback.bot.send_message(
+            callback.from_user.id,
+            part,
+            parse_mode=ParseMode.HTML,
+        )
+    await callback.answer("Предпросмотр отправлен в этот чат.")
+
+
+@router.callback_query(F.data == "admin_text_about_reset")
+async def cb_admin_text_about_reset(callback: CallbackQuery, state: FSMContext):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    await state.clear()
+    await set_global_text("about_us", "")
+    await callback.answer("Сброшено: снова показывается текст по умолчанию.")
+    text = await get_global_text("about_us")
+    await callback.message.edit_text(
+        _about_admin_panel_caption(text),
+        reply_markup=_about_admin_panel_kb(),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @router.message(AdminTextAboutStates.text, F.text)
@@ -1599,11 +1675,11 @@ async def admin_text_about_save(message: Message, state: FSMContext):
     if not _is_superadmin(message.from_user.id):
         await state.clear()
         return
-    text = message.text.strip()[:5000]
-    await set_global_text("about_us", text or "О нас")
+    text = (message.text or "").strip()[:5000]
+    await set_global_text("about_us", text)
     await state.clear()
     await message.answer(
-        f"✅ Текст «О нас» сохранён ({len(text)} символов).",
+        f"✅ Текст «О нас» сохранён ({len(text)} символов). Пустое значение = текст по умолчанию.",
         reply_markup=get_admin_back_kb("admin_panel"),
     )
 

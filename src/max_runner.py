@@ -4070,16 +4070,9 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
 
 
 async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
-    from src.services.admin_service import (
-        get_global_text,
-        get_effective_support_email,
-        get_effective_support_username,
-    )
+    from src.handlers.about import get_about_display_full_text
 
-    text_db = await get_global_text("about_us")
-    default = "Бот мото-сообщества Екатеринбурга."
-    text = (text_db or default).strip()
-    text += f"\n\n📧 {await get_effective_support_email()}\n👤 @{await get_effective_support_username()}"
+    text = await get_about_display_full_text()
     kb = [
         [Button("❤️ Поддержать проект", payload="max_donate")],
         get_main_menu_shortcut_row(),
