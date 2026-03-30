@@ -44,51 +44,6 @@ def normalize_max_callback_payload(cb: dict) -> str:
     return str(p) if p else ""
 
 
-def extract_max_dialog_chat_id_from_raw(raw: dict) -> int | None:
-    """recipient.chat_id личного диалога с ботом (может отличаться от user_id)."""
-    if not isinstance(raw, dict):
-        return None
-    msg = raw.get("message")
-    if not isinstance(msg, dict):
-        return None
-    rec = msg.get("recipient") or {}
-    if rec.get("chat_type", "dialog") != "dialog":
-        return None
-    cid = rec.get("chat_id")
-    if cid is None:
-        return None
-    try:
-        return int(cid)
-    except (TypeError, ValueError):
-        return None
-
-
-def extract_max_sender_platform_user_id(raw: dict) -> int | None:
-    """user_id человека, с которым связан апдейт (не бот)."""
-    if not isinstance(raw, dict):
-        return None
-    cb = raw.get("callback")
-    if isinstance(cb, dict):
-        u = cb.get("user") or {}
-        x = u.get("user_id")
-        if x is not None:
-            return int(x)
-    msg = raw.get("message")
-    if isinstance(msg, dict):
-        s = msg.get("sender") or {}
-        if s.get("is_bot"):
-            return None
-        x = s.get("user_id")
-        if x is not None:
-            return int(x)
-    if raw.get("update_type") == "user_added":
-        u = raw.get("user") or {}
-        x = u.get("user_id")
-        if x is not None:
-            return int(x)
-    return None
-
-
 def normalize_max_callback_id(cb: dict, raw: dict) -> str:
     for obj in (cb, raw):
         if not isinstance(obj, dict):

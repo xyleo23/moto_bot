@@ -28,6 +28,7 @@ router = Router()
 
 
 class ContactAddStates(StatesGroup):
+    city = State()
     category = State()
     name = State()
     description = State()
@@ -60,14 +61,52 @@ async def cb_admin_contacts(callback: CallbackQuery, user=None):
 
 @router.callback_query(F.data == "admin_contact_add")
 async def cb_admin_contact_add_start(callback: CallbackQuery, state: FSMContext, user=None):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from src.services.admin_service import get_cities
+
     if not user or not await can_manage_contacts(
         user.id, user.city_id, get_settings().superadmin_ids
     ):
         await callback.answer("Доступ запрещён.")
         return
-    if not user or not user.city_id:
-        await callback.answer("Город не выбран.", show_alert=True)
-        return
+
+    # Superadmins can choose any city; regular city admins use their own city
+    is_superadmin = (
+        hasattr(user, "platform_user_id")
+        and user.platform_user_id in get_settings().superadmin_ids
+    )
+    if is_superadmin:
+        cities = await get_cities()
+        if not cities:
+            await callback.answer("Нет городов в базе.", show_alert=True)
+            return
+        rows = [
+            [InlineKeyboardButton(text=c.name, callback_data=f"admin_contact_city_{c.id}")]
+            for c in cities
+        ]
+        rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_contacts")])
+        await state.set_state(ContactAddStates.city)
+        await callback.message.edit_text(
+            "Выбери город для нового контакта:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+    else:
+        if not user.city_id:
+            await callback.answer("Город не выбран.", show_alert=True)
+            return
+        await state.update_data(contact_city_id=str(user.city_id))
+        await state.set_state(ContactAddStates.category)
+        await callback.message.edit_text(
+            "Выбери категорию:",
+            reply_markup=get_admin_contact_categories_kb("admin_contact_add"),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_contact_city_"), ContactAddStates.city)
+async def cb_admin_contact_city_select(callback: CallbackQuery, state: FSMContext, user=None):
+    city_id_str = callback.data.replace("admin_contact_city_", "")
+    await state.update_data(contact_city_id=city_id_str)
     await state.set_state(ContactAddStates.category)
     await callback.message.edit_text(
         "Выбери категорию:",
@@ -127,6 +166,8 @@ async def admin_contact_add_link(message: Message, state: FSMContext, user=None)
 
 @router.message(ContactAddStates.address, F.text)
 async def admin_contact_add_address(message: Message, state: FSMContext, user=None):
+    import uuid as _uuid
+
     text = message.text.strip()
     if text.lower() in ("пропустить", "skip", "-"):
         text = None
@@ -134,8 +175,19 @@ async def admin_contact_add_address(message: Message, state: FSMContext, user=No
     data = await state.get_data()
     await state.clear()
 
+    # Use FSM-stored city (set in city selection step or defaulted to user.city_id)
+    raw_city_id = data.get("contact_city_id") or (str(user.city_id) if user and user.city_id else None)
+    if not raw_city_id:
+        await message.answer("Ошибка: город не выбран.", reply_markup=get_admin_contacts_menu_kb())
+        return
+    try:
+        contact_city_id = _uuid.UUID(raw_city_id)
+    except (ValueError, TypeError):
+        await message.answer("Ошибка: неверный ID города.", reply_markup=get_admin_contacts_menu_kb())
+        return
+
     c = await create_contact(
-        city_id=user.city_id,
+        city_id=contact_city_id,
         created_by=user.id,
         category=data["category"],
         name=data["name"],

@@ -90,8 +90,12 @@ async def get_next_profile(
     role: str,
     offset: int = 0,
     filters: dict | None = None,
+    viewer_city_id=None,
 ):
-    """Get next profile, excluding liked/blacklisted. Optionally apply filters."""
+    """Get next profile, excluding liked/blacklisted. Optionally apply filters.
+
+    viewer_city_id: when provided, only profiles from users in the same city are returned.
+    """
     f = filters or {}
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -119,6 +123,8 @@ async def get_next_profile(
                 )
                 .order_by(ProfilePilot.raised_at.desc())
             )
+            if viewer_city_id is not None:
+                stmt = stmt.where(User.city_id == viewer_city_id)
             stmt = _apply_filter_pilot(stmt, f)
         else:
             stmt = (
@@ -133,6 +139,8 @@ async def get_next_profile(
                 )
                 .order_by(ProfilePassenger.raised_at.desc())
             )
+            if viewer_city_id is not None:
+                stmt = stmt.where(User.city_id == viewer_city_id)
             stmt = _apply_filter_passenger(stmt, f)
 
         stmt = stmt.offset(offset).limit(2)
@@ -358,6 +366,46 @@ async def get_profile_info_text(user_id: UUID) -> tuple[str, str | None]:
             return text, pp.photo_file_id
 
         return "Профиль не найден", None
+
+
+async def get_contact_footer_html(canonical_user_id: UUID) -> str:
+    """Returns phone + TG link block for use in both TG and MAX mutual like notifications."""
+    from html import escape
+
+    from src.models.user import Platform
+    from src.services.user import get_all_platform_identities
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        pilot = await session.execute(
+            select(ProfilePilot).where(ProfilePilot.user_id == canonical_user_id)
+        )
+        p = pilot.scalar_one_or_none()
+        phone = p.phone if p else None
+        if not phone:
+            passenger = await session.execute(
+                select(ProfilePassenger).where(ProfilePassenger.user_id == canonical_user_id)
+            )
+            pp = passenger.scalar_one_or_none()
+            if pp:
+                phone = pp.phone
+
+    lines: list[str] = []
+    if phone:
+        lines.append(f"📞 <b>Телефон:</b> {escape(phone)}")
+
+    identities = await get_all_platform_identities(canonical_user_id)
+    tg_u = next(
+        (u for u in identities if u.platform == Platform.TELEGRAM and u.platform_username),
+        None,
+    )
+    if tg_u and tg_u.platform_username:
+        un = tg_u.platform_username.lstrip("@")
+        lines.append(f'✈️ Telegram: <a href="https://t.me/{escape(un)}">@{escape(un)}</a>')
+
+    if not lines:
+        return ""
+    return "\n\n<i>Контакт для связи:</i>\n" + "\n".join(lines)
 
 
 async def contact_footer_html_for_max_notifications(canonical_user_id: UUID) -> str:

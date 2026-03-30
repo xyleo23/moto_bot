@@ -2895,11 +2895,17 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
     if not from_user:
         await adapter.send_message(chat_id, "Пользователь не найден.", get_back_to_menu_rows())
         return
+    from src.services.motopair_service import get_contact_footer_html as _get_contact_footer
+
     from_canon = effective_user_id(from_user)
-    await process_like(effective_user_id(user), from_canon, is_like=True)
+    replier_eff = effective_user_id(user)
+    await process_like(replier_eff, from_canon, is_like=True)
     from_text, original_liker_photo = await get_profile_info_text(from_canon)
-    to_text, replier_photo = await get_profile_info_text(effective_user_id(user))
-    msg_self = await get_template("template_mutual_like_self", profile=from_text)
+    to_text, replier_photo = await get_profile_info_text(replier_eff)
+
+    msg_self_base = await get_template("template_mutual_like_self", profile=from_text)
+    from_contact = await _get_contact_footer(from_canon)
+    msg_self = msg_self_base + from_contact
     await max_send_message_with_optional_profile_photo(
         adapter,
         chat_id,
@@ -2908,7 +2914,10 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
         original_liker_photo,
         _get_tg_bot(),
     )
-    msg_target = await get_template("template_mutual_like_reply", profile=to_text)
+
+    msg_target_base = await get_template("template_mutual_like_reply", profile=to_text)
+    replier_contact = await _get_contact_footer(replier_eff)
+    msg_target_tg = msg_target_base + replier_contact
     tg_mk = []
     if user.platform_username:
         tg_mk.append(
@@ -2928,10 +2937,10 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
                 )
             ]
         )
-    max_suffix = await contact_footer_html_for_max_notifications(effective_user_id(user))
+    max_suffix = await contact_footer_html_for_max_notifications(replier_eff)
     await send_text_to_all_identities(
         from_canon,
-        msg_target,
+        msg_target_tg,
         telegram_bot=_get_tg_bot(),
         max_adapter=get_max_adapter(),
         tg_reply_markup=InlineKeyboardMarkup(inline_keyboard=tg_mk) if tg_mk else None,
@@ -2960,7 +2969,10 @@ async def handle_motopair_list(
         )
         return
 
-    profile, has_more = await get_next_profile(effective_user_id(user), role, offset=offset)
+    city_id = getattr(user, "city_id", None)
+    profile, has_more = await get_next_profile(
+        effective_user_id(user), role, offset=offset, viewer_city_id=city_id
+    )
     if not profile:
         await adapter.send_message(
             chat_id,
@@ -2997,6 +3009,7 @@ async def handle_motopair_like(
         get_user_for_profile,
         process_like,
         contact_footer_html_for_max_notifications,
+        get_contact_footer_html,
     )
 
     try:
@@ -3029,8 +3042,12 @@ async def handle_motopair_like(
             data={"target_user_id": str(target_user.id), "from_user_id": str(eff_from)},
         )
 
+        from src.services.motopair_service import get_contact_footer_html
+
         from_text, match_photo = await get_profile_info_text(target_user.id)
-        msg_self = await get_template("template_mutual_like_self", profile=from_text)
+        msg_self_base = await get_template("template_mutual_like_self", profile=from_text)
+        matched_contact = await get_contact_footer_html(target_user.id)
+        msg_self = msg_self_base + matched_contact
         self_rows = get_match_max_rows(target_user.platform_username)
         await max_send_message_with_optional_profile_photo(
             adapter,
@@ -3042,7 +3059,9 @@ async def handle_motopair_like(
         )
 
         to_text, liker_photo = await get_profile_info_text(eff_from)
-        msg_target = await get_template("template_mutual_like_target", profile=to_text)
+        msg_target_base = await get_template("template_mutual_like_target", profile=to_text)
+        liker_contact = await get_contact_footer_html(eff_from)
+        msg_target_tg = msg_target_base + liker_contact
         tg_mk = []
         if user.platform_username:
             tg_mk.append(
@@ -3065,7 +3084,7 @@ async def handle_motopair_like(
         max_suffix_match = await contact_footer_html_for_max_notifications(eff_from)
         await send_text_to_all_identities(
             result["target_user_id"],
-            msg_target,
+            msg_target_tg,
             telegram_bot=_get_tg_bot(),
             max_adapter=get_max_adapter(),
             tg_reply_markup=InlineKeyboardMarkup(inline_keyboard=tg_mk) if tg_mk else None,
@@ -3945,6 +3964,8 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             "Выбери тариф и оплати по ссылке. После оплаты нажми «Я оплатил — проверить»."
         )
         kb = []
+        # Store both payment IDs so "Я оплатил" can check whichever was paid
+        fsm_data: dict = {}
         if monthly_payment and monthly_payment.get("confirmation_url"):
             kb.append(
                 [
@@ -3955,12 +3976,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
                     )
                 ]
             )
-            # Store monthly payment_id in FSM for check
-            await reg_state.set_state(
-                user.platform_user_id,
-                "pay:subscription",
-                {"payment_id": monthly_payment["id"], "period": "monthly"},
-            )
+            fsm_data["monthly_payment_id"] = monthly_payment["id"]
         if season_payment and season_payment.get("confirmation_url"):
             kb.append(
                 [
@@ -3971,6 +3987,9 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
                     )
                 ]
             )
+            fsm_data["season_payment_id"] = season_payment["id"]
+        if fsm_data:
+            await reg_state.set_state(user.platform_user_id, "pay:subscription", fsm_data)
         if kb:
             kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
         _tg_pay = get_settings().telegram_return_url
@@ -4121,12 +4140,8 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
     # ── Subscription check ────────────────────────────────────────────────────
     if data == "max_pay_sub_check":
         pay_data = await _pay_get(user.platform_user_id)
-        if (
-            not pay_data
-            or pay_data.get("type") not in ("subscription", None)
-            and "payment_id" not in pay_data
-        ):
-            # Try to check via FSM state (set in handle_profile)
+        if not pay_data:
+            # Try to check via FSM state (set in handle_profile / renew)
             fsm = await reg_state.get_state(user.platform_user_id)
             if fsm and fsm.get("state") == "pay:subscription":
                 pay_data = fsm.get("data", {})
@@ -4138,23 +4153,43 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
                 )
                 return True
 
-        payment_id = pay_data.get("payment_id")
-        period = pay_data.get("period", "monthly")
-        if not payment_id:
-            await adapter.send_message(chat_id, "Платёж не найден.", get_back_to_menu_rows())
-            return True
-
         from src.services.payment import check_payment_status
 
-        status = await check_payment_status(payment_id)
-        if status == "succeeded":
+        # Check both season and monthly payments — user may have paid either one.
+        # Season takes priority: if both somehow succeeded, activate season.
+        season_pid = pay_data.get("season_payment_id")
+        monthly_pid = pay_data.get("monthly_payment_id")
+        # Legacy FSM had a single "payment_id" field
+        legacy_pid = pay_data.get("payment_id")
+        legacy_period = pay_data.get("period", "monthly")
+
+        matched_pid: str | None = None
+        matched_period: str = "monthly"
+
+        if season_pid:
+            s = await check_payment_status(season_pid)
+            if s == "succeeded":
+                matched_pid = season_pid
+                matched_period = "season"
+        if matched_pid is None and monthly_pid:
+            s = await check_payment_status(monthly_pid)
+            if s == "succeeded":
+                matched_pid = monthly_pid
+                matched_period = "monthly"
+        if matched_pid is None and legacy_pid:
+            s = await check_payment_status(legacy_pid)
+            if s == "succeeded":
+                matched_pid = legacy_pid
+                matched_period = legacy_period
+
+        if matched_pid:
             from src.services.subscription import activate_subscription
 
-            ok = await activate_subscription(effective_user_id(user), period, payment_id)
+            ok = await activate_subscription(effective_user_id(user), matched_period, matched_pid)
             await reg_state.clear_state(user.platform_user_id)
             await _pay_clear(user.platform_user_id)
             if ok:
-                period_label = "1 месяц" if period == "monthly" else "год (365 дней)"
+                period_label = "1 месяц" if matched_period == "monthly" else "год (365 дней)"
                 await adapter.send_message(
                     chat_id,
                     f"✅ Подписка активирована на {period_label}! Добро пожаловать.",
@@ -4166,19 +4201,27 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
                     "Оплата прошла, но подписка не активировалась. Обратись в поддержку.",
                     get_back_to_menu_rows(),
                 )
-        elif status == "canceled":
-            await reg_state.clear_state(user.platform_user_id)
-            await _pay_clear(user.platform_user_id)
-            await adapter.send_message(chat_id, "❌ Платёж отменён.", get_back_to_menu_rows())
         else:
-            await adapter.send_message(
-                chat_id,
-                "Платёж ещё не обработан. Подожди несколько секунд и нажми «Я оплатил — проверить» снова.",
-                [
-                    [Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")],
-                    get_main_menu_shortcut_row(),
-                ],
-            )
+            # Check for explicit cancellation
+            all_canceled = True
+            for pid in filter(None, [season_pid, monthly_pid, legacy_pid]):
+                st = await check_payment_status(pid)
+                if st != "canceled":
+                    all_canceled = False
+                    break
+            if all_canceled and any([season_pid, monthly_pid, legacy_pid]):
+                await reg_state.clear_state(user.platform_user_id)
+                await _pay_clear(user.platform_user_id)
+                await adapter.send_message(chat_id, "❌ Платёж отменён.", get_back_to_menu_rows())
+            else:
+                await adapter.send_message(
+                    chat_id,
+                    "Платёж ещё не обработан. Подожди несколько секунд и нажми «Я оплатил — проверить» снова.",
+                    [
+                        [Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")],
+                        get_main_menu_shortcut_row(),
+                    ],
+                )
         return True
 
     # ── Renew subscription ────────────────────────────────────────────────────
@@ -4217,7 +4260,9 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
             f"• Год (365 дн.) — {season_price // 100} ₽\n\n"
             "Оплати по ссылке и нажми «Я оплатил — проверить»."
         )
+        # Store both payment IDs so "Я оплатил" can check whichever was paid
         kb = []
+        renew_fsm: dict = {}
         if monthly_payment and monthly_payment.get("confirmation_url"):
             kb.append(
                 [
@@ -4228,11 +4273,7 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
                     )
                 ]
             )
-            await reg_state.set_state(
-                user.platform_user_id,
-                "pay:subscription",
-                {"payment_id": monthly_payment["id"], "period": "monthly"},
-            )
+            renew_fsm["monthly_payment_id"] = monthly_payment["id"]
         if season_payment and season_payment.get("confirmation_url"):
             kb.append(
                 [
@@ -4243,6 +4284,9 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
                     )
                 ]
             )
+            renew_fsm["season_payment_id"] = season_payment["id"]
+        if renew_fsm:
+            await reg_state.set_state(user.platform_user_id, "pay:subscription", renew_fsm)
         if kb:
             kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
         kb.append([Button("« Профиль", payload="menu_profile")])

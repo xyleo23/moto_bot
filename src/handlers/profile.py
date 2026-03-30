@@ -67,11 +67,13 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
     from src.models.subscription import Subscription
     from src.models.base import get_session_factory
     from sqlalchemy import select
+    from datetime import date
 
     await state.clear()
     display_text, photo_id = await get_profile_display(user)
 
-    # Check if user has an active subscription to decide which button to show
+    # Show "Продлить" when there is a non-expired active subscription,
+    # otherwise show "Оформить".
     sub_active = False
     if user:
         uid = effective_user_id(user)
@@ -82,6 +84,7 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
                 .where(
                     Subscription.user_id == uid,
                     Subscription.is_active.is_(True),
+                    Subscription.expires_at >= date.today(),
                 )
                 .limit(1)
             )

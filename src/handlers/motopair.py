@@ -233,7 +233,10 @@ async def _show_motopair_card_at(message: Message, user, role: str, offset: int)
 
     eff_id = effective_user_id(user)
     filters = await get_filter(eff_id, role)
-    profile, has_more = await get_next_profile(eff_id, role, offset=offset, filters=filters)
+    city_id = getattr(user, "city_id", None)
+    profile, has_more = await get_next_profile(
+        eff_id, role, offset=offset, filters=filters, viewer_city_id=city_id
+    )
 
     empty_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -674,6 +677,7 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
         )
         from_text, _ = await get_profile_info_text(target_user.id)
         to_text, liker_photo = await get_profile_info_text(eff_from)
+        from src.services.motopair_service import get_contact_footer_html
 
         if bot:
             from src.services.notification_templates import get_template
@@ -682,12 +686,15 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
             from src.keyboards.shared import get_match_max_rows
             from src.services.motopair_service import contact_footer_html_for_max_notifications
 
-            msg_target = await get_template("template_mutual_like_target", profile=to_text)
+            msg_target_base = await get_template("template_mutual_like_target", profile=to_text)
+            # Include contact info for TG (phone + username as HTML footer in message)
+            liker_contact = await get_contact_footer_html(eff_from)
+            msg_target_tg = msg_target_base + liker_contact
             tg_mk = get_match_kb(callback.from_user.username, callback.from_user.id)
             max_suffix = await contact_footer_html_for_max_notifications(eff_from)
             await send_text_to_all_identities(
                 result["target_user_id"],
-                msg_target,
+                msg_target_tg,
                 telegram_bot=bot,
                 max_adapter=get_max_adapter(),
                 tg_reply_markup=tg_mk,
@@ -698,7 +705,10 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
 
         from src.services.notification_templates import get_template
 
-        msg_self = await get_template("template_mutual_like_self", profile=from_text)
+        msg_self_base = await get_template("template_mutual_like_self", profile=from_text)
+        # Include contact info for the liker (phone + link to matched user)
+        matched_contact = await get_contact_footer_html(target_user.id)
+        msg_self = msg_self_base + matched_contact
         mk = get_match_kb(
             target_user.platform_username,
             target_user.platform_user_id,
@@ -711,10 +721,10 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
                     parse_mode="HTML",
                 )
             else:
-                await callback.message.edit_text(msg_self, reply_markup=mk)
+                await callback.message.edit_text(msg_self, reply_markup=mk, parse_mode="HTML")
         except Exception as e:
             logger.warning("cb_like mutual: edit failed: %s", e)
-            await callback.message.answer(msg_self, reply_markup=mk)
+            await callback.message.answer(msg_self, reply_markup=mk, parse_mode="HTML")
     else:
         if bot:
             from_text, from_photo = await get_profile_info_text(eff_from)
@@ -802,20 +812,24 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
     from_canon = effective_user_id(from_user)
     await process_like(effective_user_id(user), from_canon, is_like=True)
     from_text, _ = await get_profile_info_text(from_canon)
+    from src.services.motopair_service import get_contact_footer_html
 
     match_kb_target = get_match_kb(user.platform_username, user.platform_user_id)
     match_kb_self = get_match_kb(from_user.platform_username, from_user.platform_user_id)
 
+    replier_eff = effective_user_id(user)
     if bot:
-        to_text, replier_photo = await get_profile_info_text(effective_user_id(user))
+        to_text, replier_photo = await get_profile_info_text(replier_eff)
         from src.services.notification_templates import get_template
         from src.services.cross_platform_notify import send_text_to_all_identities
         from src.services.broadcast import get_max_adapter
         from src.keyboards.shared import get_match_max_rows
         from src.services.motopair_service import contact_footer_html_for_max_notifications
 
-        msg = await get_template("template_mutual_like_reply", profile=to_text)
-        max_suffix = await contact_footer_html_for_max_notifications(effective_user_id(user))
+        msg_base = await get_template("template_mutual_like_reply", profile=to_text)
+        replier_contact = await get_contact_footer_html(replier_eff)
+        msg = msg_base + replier_contact
+        max_suffix = await contact_footer_html_for_max_notifications(replier_eff)
         await send_text_to_all_identities(
             from_canon,
             msg,
@@ -829,7 +843,9 @@ async def cb_reply_like(callback: CallbackQuery, user=None, bot=None):
 
     from src.services.notification_templates import get_template
 
-    text_self = await get_template("template_mutual_like_self", profile=from_text)
+    text_self_base = await get_template("template_mutual_like_self", profile=from_text)
+    from_contact = await get_contact_footer_html(from_canon)
+    text_self = text_self_base + from_contact
     try:
         if callback.message.photo:
             await callback.message.edit_caption(

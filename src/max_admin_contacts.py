@@ -84,6 +84,28 @@ async def max_contacts_try_dispatch(
         return True
 
     if data == "admin_contact_add":
+        from src.config import get_settings
+        from src.services.admin_service import get_cities
+
+        is_sa = user.platform_user_id in get_settings().superadmin_ids
+        if is_sa:
+            cities = await get_cities()
+            if not cities:
+                await adapter.send_message(
+                    chat_id,
+                    "Нет городов в базе.",
+                    _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
+                )
+                return True
+            rows = [
+                [Button(c.name, payload=f"admin_contact_city_{c.id}")]
+                for c in cities
+            ]
+            rows.append([Button("« Назад", payload="admin_contacts")])
+            rows.append(get_main_menu_shortcut_row())
+            await adapter.send_message(chat_id, "Выбери город для нового контакта:", rows)
+            return True
+
         if not user.city_id:
             await adapter.send_message(
                 chat_id,
@@ -91,6 +113,25 @@ async def max_contacts_try_dispatch(
                 _append_shortcut([[Button("« Назад", payload="admin_contacts")]]),
             )
             return True
+        await reg_state.set_state(
+            user.platform_user_id,
+            "admin:contact_add_city",
+            {"city_id": str(user.city_id)},
+        )
+        await adapter.send_message(
+            chat_id,
+            "Выбери категорию:",
+            _append_shortcut(_kb(get_admin_contact_categories_kb("admin_contact_add"))),
+        )
+        return True
+
+    if data.startswith("admin_contact_city_"):
+        city_id_str = data.replace("admin_contact_city_", "")
+        await reg_state.set_state(
+            user.platform_user_id,
+            "admin:contact_add_city",
+            {"city_id": city_id_str},
+        )
         await adapter.send_message(
             chat_id,
             "Выбери категорию:",
@@ -102,7 +143,13 @@ async def max_contacts_try_dispatch(
         cat = data.replace("admin_contact_add_", "", 1)
         if cat not in _VALID_CATS:
             return True
-        if not user.city_id:
+        # Retrieve city_id: prefer city stored in FSM from city selection step
+        city_fsm = await reg_state.get_state(user.platform_user_id)
+        fsm_city_id = None
+        if city_fsm and city_fsm.get("state") == "admin:contact_add_city":
+            fsm_city_id = city_fsm.get("data", {}).get("city_id")
+        city_id_to_use = fsm_city_id or (str(user.city_id) if user.city_id else None)
+        if not city_id_to_use:
             await adapter.send_message(
                 chat_id,
                 "Город не выбран.",
@@ -112,7 +159,7 @@ async def max_contacts_try_dispatch(
         await reg_state.set_state(
             user.platform_user_id,
             "admin:contact_add",
-            {"category": cat, "step": "name"},
+            {"category": cat, "step": "name", "city_id": city_id_to_use},
         )
         await adapter.send_message(
             chat_id,
@@ -264,7 +311,9 @@ async def handle_max_contact_fsm_text(
     raw = (text or "").strip()
 
     if state == "admin:contact_add":
-        if not u.city_id:
+        # Use FSM-stored city_id (set during city selection) or fallback to user.city_id
+        raw_city_id = data.get("city_id") or (str(u.city_id) if u.city_id else None)
+        if not raw_city_id:
             await reg_state.clear_state(user_id)
             return
         step = data.get("step")
@@ -310,8 +359,15 @@ async def handle_max_contact_fsm_text(
             if raw.lower() in ("пропустить", "skip", "-"):
                 raw = ""
             data["address"] = raw[:500] if raw else None
+            import uuid as _uuid
+            try:
+                contact_city_id = _uuid.UUID(raw_city_id)
+            except (ValueError, TypeError):
+                await reg_state.clear_state(user_id)
+                await adapter.send_message(chat_id, "Ошибка: неверный ID города.", _append_shortcut(None))
+                return
             c = await create_contact(
-                city_id=u.city_id,
+                city_id=contact_city_id,
                 created_by=u.id,
                 category=cat,
                 name=data["name"],
