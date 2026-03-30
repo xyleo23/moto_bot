@@ -72,12 +72,11 @@ async def max_contacts_try_dispatch(
         return True
 
     if data == "admin_contact_add":
-        from src.config import get_settings
-        from src.services.admin_service import get_cities
+        from src.services.admin_service import get_all_cities, is_effective_superadmin_user
 
-        is_sa = user.platform_user_id in get_settings().superadmin_ids
+        is_sa = await is_effective_superadmin_user(user)
         if is_sa:
-            cities = await get_cities()
+            cities = await get_all_cities()
             if not cities:
                 await adapter.send_message(
                     chat_id,
@@ -86,12 +85,21 @@ async def max_contacts_try_dispatch(
                 )
                 return True
             rows = [
-                [Button(c.name, payload=f"admin_contact_city_{c.id}")]
+                [
+                    Button(
+                        (f"{c.name} · выкл" if not c.is_active else c.name),
+                        payload=f"admin_contact_city_{c.id}",
+                    )
+                ]
                 for c in cities
             ]
             rows.append([Button("« Назад", payload="admin_contacts")])
             rows.append(get_main_menu_shortcut_row())
-            await adapter.send_message(chat_id, "Выбери город для нового контакта:", rows)
+            await adapter.send_message(
+                chat_id,
+                "<b>Новый контакт</b>\n\nВыбери город (все города из админки; «выкл» — скрыт для пользователей в выборе города):",
+                rows,
+            )
             return True
 
         if not user.city_id:
@@ -108,7 +116,7 @@ async def max_contacts_try_dispatch(
         )
         await adapter.send_message(
             chat_id,
-            "Выбери категорию:",
+            "Контакт — для города из твоего профиля. Для другого города нужен суперадмин или аккаунт админа того города.\n\nВыбери категорию:",
             append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_categories_kb("admin_contact_add"))),
         )
         return True

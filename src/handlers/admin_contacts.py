@@ -58,7 +58,7 @@ async def cb_admin_contacts(callback: CallbackQuery, user=None):
 @router.callback_query(F.data == "admin_contact_add")
 async def cb_admin_contact_add_start(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from src.services.admin_service import get_cities, is_effective_superadmin_user
+    from src.services.admin_service import get_all_cities, is_effective_superadmin_user
 
     if not user or not await can_manage_contacts_effective(user):
         await callback.answer("Доступ запрещён.")
@@ -67,18 +67,24 @@ async def cb_admin_contact_add_start(callback: CallbackQuery, state: FSMContext,
     # Superadmins can choose any city; regular city admins use their own city
     is_superadmin = await is_effective_superadmin_user(user)
     if is_superadmin:
-        cities = await get_cities()
+        cities = await get_all_cities()
         if not cities:
             await callback.answer("Нет городов в базе.", show_alert=True)
             return
         rows = [
-            [InlineKeyboardButton(text=c.name, callback_data=f"admin_contact_city_{c.id}")]
+            [
+                InlineKeyboardButton(
+                    text=(f"{c.name} · выкл" if not c.is_active else c.name),
+                    callback_data=f"admin_contact_city_{c.id}",
+                )
+            ]
             for c in cities
         ]
         rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin_contacts")])
         await state.set_state(ContactAddStates.city)
         await callback.message.edit_text(
-            "Выбери город для нового контакта:",
+            "<b>Новый контакт</b>\n\nВыбери город (список из админки городов, в т.ч. скрытые для пользователей "
+            "отмечены «выкл»):",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         )
     else:
@@ -88,7 +94,8 @@ async def cb_admin_contact_add_start(callback: CallbackQuery, state: FSMContext,
         await state.update_data(contact_city_id=str(user.city_id))
         await state.set_state(ContactAddStates.category)
         await callback.message.edit_text(
-            "Выбери категорию:",
+            "Контакт будет привязан к <b>твоему городу в профиле</b>. Чтобы вести контакты другого города, "
+            "нужны права суперадмина или отдельный аккаунт админа этого города.\n\nВыбери категорию:",
             reply_markup=get_admin_contact_categories_kb("admin_contact_add"),
         )
     await callback.answer()
