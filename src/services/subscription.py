@@ -1,13 +1,20 @@
 """Subscription service."""
 
-from datetime import date, timedelta
+from __future__ import annotations
 
+from datetime import date, timedelta
+from typing import TYPE_CHECKING
+
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from src.models.base import get_session_factory
 from src.models.subscription import Subscription, SubscriptionSettings, SubscriptionType
 from src.models.user import User, effective_user_id
+
+if TYPE_CHECKING:
+    from aiogram.fsm.context import FSMContext
 
 
 async def check_subscription_required(user: User) -> bool:
@@ -36,6 +43,43 @@ async def check_subscription_required(user: User) -> bool:
         )
         sub = result.scalar_one_or_none()
         return sub is None
+
+
+async def reconcile_telegram_subscription_checkout(state: "FSMContext", user) -> bool:
+    """Перед сбросом FSM: если ждём оплату подписки в TG — проверить ЮKassa и активировать.
+
+    Нужно при «Назад» из экрана оплаты и при /start: иначе `state.clear()` теряет
+    payment_id, а вебхук мог не дойти.
+    """
+    if user is None:
+        return False
+    from src.handlers.subscription import SubscriptionPayStates
+    from src.services.payment import check_payment_status
+
+    if await state.get_state() != SubscriptionPayStates.awaiting.state:
+        return False
+
+    data = await state.get_data()
+    payment_id = data.get("sub_payment_id")
+    period = data.get("sub_period")
+    if not payment_id or not period:
+        return False
+
+    status = await check_payment_status(payment_id)
+    if status != "succeeded":
+        logger.info(
+            "TG subscription reconcile: payment %s status=%s (skip activation)",
+            payment_id,
+            status,
+        )
+        return False
+
+    period_arg = period if period == "monthly" else "season"
+    uid = effective_user_id(user)
+    ok = await activate_subscription(uid, period_arg, payment_id)
+    if ok:
+        logger.info("TG subscription reconcile: activated payment %s", payment_id)
+    return ok
 
 
 async def activate_subscription(user_id, period: str, payment_id: str) -> bool:

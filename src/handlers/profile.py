@@ -2,6 +2,7 @@
 
 from loguru import logger
 from aiogram import Router, F
+from aiogram.enums import ParseMode
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -9,6 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from src.keyboards.menu import get_back_to_menu_kb, get_city_select_kb
 from src import texts
 from src.models.user import effective_user_id
+from src.services.subscription import reconcile_telegram_subscription_checkout
 from src.utils.tg_callback_message import edit_text_or_send_new
 
 router = Router()
@@ -67,6 +69,12 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
     from sqlalchemy import select
     from datetime import date
 
+    sub_reconciled = False
+    try:
+        sub_reconciled = await reconcile_telegram_subscription_checkout(state, user)
+    except Exception as e:
+        logger.warning("menu_profile: subscription reconcile failed: %s", e)
+
     await state.clear()
     display_text, photo_id = await get_profile_display(user)
 
@@ -113,7 +121,10 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
     )
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
-    await callback.answer()
+    if sub_reconciled:
+        await callback.answer("✅ Оплата засчитана, подписка продлена.", show_alert=True)
+    else:
+        await callback.answer()
     if photo_id:
         try:
             await callback.message.delete()
@@ -258,9 +269,9 @@ async def cb_profile_raise(callback: CallbackQuery, state: FSMContext, user=None
         )
         await edit_text_or_send_new(
             callback,
-            f"💳 Поднятие анкеты платное: <b>{price_rub} ₽</b>\n\n"
-            f"Оплати и нажми «Я оплатил — проверить».",
+            f"💳 Поднятие анкеты платное: <b>{price_rub} ₽</b>",
             reply_markup=kb,
+            parse_mode=ParseMode.HTML,
         )
         await callback.answer()
         return

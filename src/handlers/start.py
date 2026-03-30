@@ -18,6 +18,7 @@ from src.keyboards.menu import (
     get_welcome_with_role_kb,
 )
 from src.services.user import has_profile, get_or_create_user
+from src.services.subscription import reconcile_telegram_subscription_checkout
 from src import texts
 
 router = Router()
@@ -26,6 +27,11 @@ router = Router()
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, user=None):
     try:
+        if user:
+            try:
+                await reconcile_telegram_subscription_checkout(state, user)
+            except Exception as e:
+                logger.warning("cmd_start: subscription reconcile failed: %s", e)
         await state.clear()
         if not user:
             user = await get_or_create_user(
@@ -57,7 +63,7 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
             reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
         )
         await message.answer(
-            f"{texts.WELCOME_RETURNING}{texts.MENU_INLINE_HINT}",
+            texts.WELCOME_RETURNING,
             reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
         )
     except Exception as e:
@@ -86,6 +92,11 @@ async def cmd_cancel(message: Message, state: FSMContext, user=None):
     """Cancel any active FSM flow and return to main menu."""
     current = await state.get_state()
     if current is not None:
+        if user:
+            try:
+                await reconcile_telegram_subscription_checkout(state, user)
+            except Exception as e:
+                logger.warning("cmd_cancel: subscription reconcile failed: %s", e)
         await state.clear()
     await message.answer(
         texts.FSM_CANCEL_TEXT,
@@ -251,9 +262,14 @@ async def cmd_admin(message: Message, state: FSMContext, user=None):
 async def cb_menu_main(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.exceptions import TelegramBadRequest
 
+    if user:
+        try:
+            await reconcile_telegram_subscription_checkout(state, user)
+        except Exception as e:
+            logger.warning("cb_menu_main: subscription reconcile failed: %s", e)
     await state.clear()
     menu_kb = await get_main_menu_kb_for_user(callback.from_user.id, user)
-    body = f"{texts.WELCOME_RETURNING}{texts.MENU_INLINE_HINT}"
+    body = texts.WELCOME_RETURNING
     try:
         await callback.message.edit_text(body, reply_markup=menu_kb)
     except TelegramBadRequest:
