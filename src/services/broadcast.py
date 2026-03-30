@@ -59,6 +59,8 @@ async def _do_broadcast(
     """
     sent = 0
     failed = 0
+    tg_targets = [u for u in user_ids if exclude_id is None or u != exclude_id]
+    logger.info("tg_broadcast start: will_send_to={}", tg_targets)
     for uid in user_ids:
         if exclude_id is not None and uid == exclude_id:
             continue
@@ -68,12 +70,13 @@ async def _do_broadcast(
                 kwargs["reply_markup"] = reply_markup
             await bot.send_message(uid, **kwargs)
             sent += 1
+            logger.info("tg_broadcast: ok uid={}", uid)
         except Exception as e:
             logger.warning(f"broadcast: could not send to {uid}: {e}")
             failed += 1
         await asyncio.sleep(_SEND_DELAY)
 
-    logger.info(f"broadcast done: sent={sent} failed={failed}")
+    logger.info(f"tg_broadcast done: sent={sent} failed={failed}")
     return sent, failed
 
 
@@ -122,21 +125,20 @@ async def _do_max_broadcast(
     sent = 0
     failed = 0
     try:
-        sample_uid = next(
-            (u for u in user_ids if exclude_id is None or u != exclude_id),
-            None,
-        )
+        target_uids = [u for u in user_ids if exclude_id is None or u != exclude_id]
+        sample_uid = target_uids[0] if target_uids else None
         if sample_uid is not None:
             logger.info(
-                "max_broadcast start: recipients={} exclude_id={} sample_uid={} query_params={}",
+                "max_broadcast start: in_city_max={} exclude_id={} will_send_to={} "
+                "sample_query_params={}",
                 len(user_ids),
                 exclude_id,
-                sample_uid,
+                target_uids,
                 max_message_query_params(str(sample_uid)),
             )
         else:
             logger.info(
-                "max_broadcast start: recipients={} exclude_id={} (no targets after exclude)",
+                "max_broadcast start: in_city_max={} exclude_id={} will_send_to=[] (nobody to notify)",
                 len(user_ids),
                 exclude_id,
             )
@@ -146,6 +148,7 @@ async def _do_max_broadcast(
             try:
                 await adapter.send_message(str(uid), text, kb_rows)
                 sent += 1
+                logger.info("max_broadcast: ok uid={}", uid)
             except Exception as e:
                 logger.warning("max_broadcast: HTML send failed uid={}: {}", uid, e)
                 try:
