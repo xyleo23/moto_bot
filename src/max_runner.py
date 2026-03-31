@@ -332,6 +332,9 @@ def _max_registration_text_to_callback(state: str, text: str) -> str | None:
     if state == "sos:comment" and t == texts.BTN_SKIP:
         return "sos_skip_comment"
 
+    if isinstance(state, str) and state.startswith("profile_edit:") and t == texts.BTN_SKIP:
+        return "max_profedit_skip"
+
     if state == "event_create:preview":
         if t == texts.PROFILE_BTN_SAVE:
             return "max_evcreate_preview_save"
@@ -674,6 +677,14 @@ async def _handle_fsm_message(
 
     if state == "profile:phone_change":
         await _max_profile_phone_change_text(adapter, chat_id, user_id, text)
+        return
+
+    if isinstance(state, str) and state.startswith("profile_edit:"):
+        u_pe = await get_or_create_user(platform="max", platform_user_id=user_id)
+        if u_pe:
+            from src.max_profile_edit import max_profile_edit_handle_message
+
+            await max_profile_edit_handle_message(adapter, chat_id, user_id, text, u_pe, fsm)
         return
 
     synth_cb = _max_registration_text_to_callback(state, text)
@@ -1315,6 +1326,14 @@ async def _handle_fsm_callback(
         if await handle_max_admin_fsm_callback(adapter, chat_id, user_id, cb_data, fsm):
             return True
 
+    if isinstance(state, str) and state.startswith("profile_edit:"):
+        u_pcb = await get_or_create_user(platform="max", platform_user_id=user_id)
+        if u_pcb:
+            from src.max_profile_edit import max_profile_edit_handle_callback
+
+            if await max_profile_edit_handle_callback(adapter, chat_id, user_id, cb_data, u_pcb, fsm):
+                return True
+
     # ── Cross-platform link (same phone as Telegram) ──────────────────────────
     if cb_data == "max_reg_cross_link_yes" and state in (
         "pilot:cross_link_confirm",
@@ -1872,28 +1891,6 @@ async def _max_route_menu_text_press(
     return False
 
 
-async def _handle_max_myid(adapter: MaxAdapter, chat_id: str, user) -> None:
-    """Показать MAX platform_user_id — для SUPERADMIN_IDS и добавления админом города."""
-    from src.config import get_settings
-    from src.services.admin_service import is_effective_superadmin_user
-
-    pid = int(user.platform_user_id)
-    s = get_settings()
-    in_env = pid in s.superadmin_ids
-    eff_sa = await is_effective_superadmin_user(user)
-    body = (
-        f"Твой <b>MAX user ID</b>: <code>{pid}</code>\n\n"
-        f"В SUPERADMIN_IDS (указан этот MAX ID): {'✅' if in_env else '❌'}\n"
-        f"Суперадмин (связка TG+MAX / список): {'✅' if eff_sa else '❌'}\n\n"
-        "<b>Суперадмин в MAX:</b> добавь это число в <code>SUPERADMIN_IDS</code> в .env на сервере "
-        "(через запятую с Telegram ID) и перезапусти бота.\n"
-        "<b>Админ города:</b> суперадмин в Telegram или MAX: "
-        "«Города → Админы городов → город → Добавить» — вставь это число. "
-        "Пользователь должен хотя раз написать боту в MAX."
-    )
-    await adapter.send_message(chat_id, body, await _main_menu_rows_for(user))
-
-
 async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
     """Handle text message or /start."""
     user = await get_or_create_user(
@@ -1921,11 +1918,6 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
 
     if text.startswith("/start") or text.lower() == "start":
         await handle_start(adapter, ev.chat_id, user)
-        return
-
-    _t_myid = text.lower()
-    if _t_myid == "/myid" or _t_myid.startswith("/myid "):
-        await _handle_max_myid(adapter, ev.chat_id, user)
         return
 
     # Выбор роли текстом (MAX иногда шлёт label кнопки вместо callback)
@@ -1962,8 +1954,14 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
     if _nav_cmd is None and text.startswith("/"):
         _slash = text.lower().lstrip("/").split()[0]
         if _slash in {
-            "events", "motopair", "contacts", "profile",
-            "about", "sos", "documents", "admin", "myid",
+            "events",
+            "motopair",
+            "contacts",
+            "profile",
+            "about",
+            "sos",
+            "documents",
+            "admin",
         }:
             _nav_cmd = _slash
 
@@ -2068,8 +2066,13 @@ async def handle_photo(adapter: MaxAdapter, ev: IncomingPhoto) -> None:
         return
 
     fsm = await reg_state.get_state(ev.user_id)
-    if fsm and fsm["state"] in ("pilot:photo", "passenger:photo"):
+    st = fsm.get("state") if fsm else None
+    if fsm and st in ("pilot:photo", "passenger:photo"):
         await _handle_fsm_photo(adapter, ev.chat_id, ev.user_id, ev.file_id, fsm)
+    elif fsm and isinstance(st, str) and st.startswith("profile_edit:") and st.endswith(":photo"):
+        from src.max_profile_edit import max_profile_edit_handle_photo
+
+        await max_profile_edit_handle_photo(adapter, ev.chat_id, ev.user_id, ev.file_id, user, fsm)
     else:
         await adapter.send_message(
             ev.chat_id,
@@ -2581,6 +2584,12 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
     if data.startswith("max_event_report_"):
         eid = data.replace("max_event_report_", "")
         await handle_event_report(adapter, chat_id, user, eid)
+        return
+
+    if data == "max_profile_edit":
+        from src.max_profile_edit import max_profile_edit_start
+
+        await max_profile_edit_start(adapter, chat_id, user)
         return
 
     # ── Payment callbacks ─────────────────────────────────────────────────────
@@ -4006,10 +4015,65 @@ async def handle_event_report(adapter: MaxAdapter, chat_id: str, user, event_id:
     await adapter.send_message(chat_id, texts.EVENT_REPORT_SENT, get_back_to_menu_rows())
 
 
+async def _max_reconcile_payment_state(user) -> None:
+    """Если оплата прошла в ЮKassa, а пользователь не нажал «Я оплатил», применить при следующем открытии профиля."""
+    from src.services.payment import check_payment_status
+    from src.services.subscription import activate_subscription
+    from src.services.motopair_service import raise_profile
+
+    uid = user.platform_user_id
+    canon = effective_user_id(user)
+
+    fsm = await reg_state.get_state(uid)
+    if fsm and fsm.get("state") == "pay:subscription":
+        pay_data = fsm.get("data") or {}
+        season_pid = pay_data.get("season_payment_id")
+        monthly_pid = pay_data.get("monthly_payment_id")
+        legacy_pid = pay_data.get("payment_id")
+        legacy_period = pay_data.get("period", "monthly")
+        matched_pid: str | None = None
+        matched_period = "monthly"
+        if season_pid and await check_payment_status(season_pid) == "succeeded":
+            matched_pid, matched_period = season_pid, "season"
+        if matched_pid is None and monthly_pid and await check_payment_status(monthly_pid) == "succeeded":
+            matched_pid, matched_period = monthly_pid, "monthly"
+        if matched_pid is None and legacy_pid and await check_payment_status(legacy_pid) == "succeeded":
+            matched_pid, matched_period = legacy_pid, legacy_period
+        if matched_pid:
+            await activate_subscription(canon, matched_period, matched_pid)
+            await reg_state.clear_state(uid)
+            await _pay_clear(uid)
+        else:
+            pids = [p for p in (season_pid, monthly_pid, legacy_pid) if p]
+            if pids:
+                all_canceled = True
+                for p in pids:
+                    if await check_payment_status(p) != "canceled":
+                        all_canceled = False
+                        break
+                if all_canceled:
+                    await reg_state.clear_state(uid)
+                    await _pay_clear(uid)
+
+    pay_data = await _pay_get(uid)
+    if pay_data and pay_data.get("type") == "raise_profile":
+        payment_id = pay_data.get("payment_id")
+        role = pay_data.get("role", "pilot")
+        if payment_id:
+            pst = await check_payment_status(payment_id)
+            if pst == "succeeded":
+                await _pay_clear(uid)
+                await raise_profile(canon, role)
+            elif pst == "canceled":
+                await _pay_clear(uid)
+
+
 async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
     from src.services.subscription import check_subscription_required
     from src.services.admin_service import get_subscription_settings
     from src.services.payment import create_payment
+
+    await _max_reconcile_payment_state(user)
 
     sub_settings = await get_subscription_settings()
     monthly_price = (
@@ -4083,11 +4147,6 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             await reg_state.set_state(user.platform_user_id, "pay:subscription", fsm_data)
         if kb:
             kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
-        _tg_pay = get_settings().telegram_return_url
-        if _tg_pay:
-            kb.append(
-                [Button("✏️ Редактировать анкету (Telegram)", type=ButtonType.URL, url=_tg_pay)]
-            )
         kb.append(get_main_menu_shortcut_row())
         logger.info(
             "profile_photo: paywall branch (фото не отправляем — только текст оплаты) max_uid={}",
@@ -4132,11 +4191,7 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         kb = [[Button("🔄 Продлить подписку", payload="max_profile_renew_sub")]]
         kb.append([Button(texts.PHONE_CHANGE_BTN, payload="max_profile_phone")])
         kb.append([Button("🏙️ Сменить город", payload="max_profile_city")])
-        tg_url = get_settings().telegram_return_url
-        if tg_url:
-            kb.append(
-                [Button("✏️ Редактировать анкету", type=ButtonType.URL, url=tg_url)],
-            )
+        kb.append([Button("✏️ Редактировать анкету", payload="max_profile_edit")])
         if raise_enabled:
             label = (
                 f"⬆️ Поднять анкету — {raise_price // 100} ₽"
