@@ -72,6 +72,7 @@ from src.utils.progress import progress_prefix
 from src import texts
 from src.usecases.payment_metadata import donate_metadata, subscription_metadata
 from src.utils.text_format import split_plain_text_chunks
+from src.ui_copy import BTN_MOTOCHAT, MOTOHUB_CHAT_URL
 
 # Module-level Telegram bot reference for cross-platform SOS broadcasts.
 # Injected at startup via set_tg_bot() when platform=both or platform=telegram.
@@ -4211,6 +4212,7 @@ async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
 
     text = await get_about_display_full_text()
     kb = [
+        [Button(BTN_MOTOCHAT, type=ButtonType.URL, url=MOTOHUB_CHAT_URL)],
         [Button("❤️ Поддержать проект", payload="max_donate")],
         get_main_menu_shortcut_row(),
     ]

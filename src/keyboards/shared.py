@@ -4,9 +4,11 @@ import uuid
 
 from src.platforms.base import Button, ButtonType, KeyboardRow
 from src.ui_copy import (
+    BTN_MOTOCHAT,
     EVENT_REGISTER_PASSENGER,
     EVENT_REGISTER_PILOT,
     EVENT_SEEK_PAIR,
+    MOTOHUB_CHAT_URL,
     ROLE_PASSENGER_BTN,
     ROLE_PILOT_BTN,
     SEEK_CONFIRM_PASSENGER,
@@ -25,6 +27,7 @@ def get_main_menu_rows(*, show_admin: bool = False) -> list[KeyboardRow]:
         [Button("📅 Мероприятия", type=ButtonType.MESSAGE)],
         [Button("👤 Мой профиль", type=ButtonType.MESSAGE)],
         [Button("ℹ️ О нас", type=ButtonType.MESSAGE)],
+        [Button(BTN_MOTOCHAT, type=ButtonType.URL, url=MOTOHUB_CHAT_URL)],
         [Button("📄 Документы", payload="menu_documents")],
     ]
     if show_admin:

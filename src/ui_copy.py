@@ -18,3 +18,7 @@ EVENT_SEEK_PAIR = "Ищу пару"
 SEEK_CONFIRM_PASSENGER = "Да, ищу двойку"
 SEEK_CONFIRM_PILOT = "Да, ищу пилота"
 SEEK_DECLINE = "Не ищу"
+
+# Сообщество (общий чат в Telegram)
+MOTOHUB_CHAT_URL = "https://t.me/motohub66_chat"
+BTN_MOTOCHAT = "💬 МотоЧат"

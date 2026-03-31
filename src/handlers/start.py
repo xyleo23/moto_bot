@@ -20,6 +20,7 @@ from src.keyboards.menu import (
 from src.services.user import has_profile, get_or_create_user
 from src.services.subscription import reconcile_telegram_subscription_checkout
 from src import texts
+from src.ui_copy import BTN_MOTOCHAT, MOTOHUB_CHAT_URL
 
 router = Router()
 
@@ -623,3 +624,20 @@ async def kb_about(message: Message, state: FSMContext, user=None):
     from src.handlers.about import send_about_to_chat
 
     await send_about_to_chat(message, state)
+
+
+@router.message(F.text == BTN_MOTOCHAT)
+async def kb_motochat(message: Message, state: FSMContext, user=None):
+    """Нижняя клавиатура: открыть общий чат сообщества."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await state.clear()
+    await message.answer(
+        f"{BTN_MOTOCHAT} — общий чат MotoHub в Telegram.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Вступить в чат", url=MOTOHUB_CHAT_URL)],
+                [InlineKeyboardButton(text="« Назад в меню", callback_data="menu_main")],
+            ]
+        ),
+    )
