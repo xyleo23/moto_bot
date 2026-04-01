@@ -2,9 +2,49 @@
 
 from __future__ import annotations
 
+import re
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from src.utils.text_format import truncate_smart
+
 PAGE_SIZE = 8
+
+# Telegram inline-кнопка ~64 символа; счётчики в начале, чтобы не терялись при обрезке в клиенте.
+TG_EVENT_LIST_BUTTON_MAX_LEN = 64
+
+
+def _compact_event_list_date(date_str: str) -> str:
+    """«04.04.2026 15:00» → «04.04 15:00» для экономии места на кнопке."""
+    s = (date_str or "").strip()
+    m = re.match(r"^(\d{2}\.\d{2})\.\d{4}\s+(\d{2}:\d{2})$", s)
+    if m:
+        return f"{m.group(1)} {m.group(2)}"
+    return s
+
+
+def format_telegram_event_list_button_text(
+    title: str,
+    date_str: str,
+    pilots: int,
+    passengers: int,
+    *,
+    max_len: int = TG_EVENT_LIST_BUTTON_MAX_LEN,
+) -> str:
+    """
+    Подпись кнопки списка мероприятий: сначала (П: Д:), затем усечённое название, компактная дата.
+    Так длинные названия не скрывают число записавшихся.
+    """
+    counts = f"(П:{pilots} Д:{passengers})"
+    date_c = _compact_event_list_date(date_str)
+    sep = " · "
+    tail = f"{sep}{date_c}"
+    head = counts + " "
+    middle_budget = max_len - len(head) - len(tail)
+    if middle_budget < 6:
+        middle_budget = 6
+    t = truncate_smart((title or "").strip(), middle_budget)
+    return head + t + tail
 
 _VALID_TYPES = frozenset({"all", "large", "motorcade", "run"})
 
@@ -62,7 +102,12 @@ def build_telegram_event_list_markup(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{e['title']} — {e['date']} (П:{e['pilots']} Д:{e['passengers']})",
+                    text=format_telegram_event_list_button_text(
+                        str(e.get("title") or ""),
+                        str(e.get("date") or ""),
+                        int(e.get("pilots") or 0),
+                        int(e.get("passengers") or 0),
+                    ),
                     callback_data=f"event_detail_{e['id']}",
                 ),
             ]

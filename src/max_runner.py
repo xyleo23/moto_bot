@@ -72,7 +72,12 @@ from src.utils.progress import progress_prefix
 from src import texts
 from src.usecases.payment_metadata import donate_metadata, subscription_metadata
 from src.utils.text_format import split_plain_text_chunks
-from src.ui_copy import BTN_MOTOCHAT, MOTOHUB_CHAT_URL
+from src.ui_copy import (
+    BTN_MOTOCHAT,
+    BTN_MOTOHUB_CHANNEL,
+    MOTOHUB_CHANNEL_URL,
+    MOTOHUB_CHAT_URL,
+)
 
 # Module-level Telegram bot reference for cross-platform SOS broadcasts.
 # Injected at startup via set_tg_bot() when platform=both or platform=telegram.
@@ -2029,6 +2034,15 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
 
         legal = await format_legal_template(texts.CONSENT_TEXT)
         for chunk in _chunk_text(legal):
+            await adapter.send_message(ev.chat_id, chunk, None)
+        return
+    if low.startswith("/agreement") or low == "agreement":
+        from src.handlers.legal import _chunk_text, format_legal_template
+
+        t_ag = texts.AGREEMENT_TEXT
+        if "{support_email}" in t_ag:
+            t_ag = await format_legal_template(t_ag)
+        for chunk in _chunk_text(t_ag):
             await adapter.send_message(ev.chat_id, chunk, None)
         return
     if low.startswith("/delete_data") or low.startswith("/deletedata"):
@@ -4212,6 +4226,7 @@ async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:
 
     text = await get_about_display_full_text()
     kb = [
+        [Button(BTN_MOTOHUB_CHANNEL, type=ButtonType.URL, url=MOTOHUB_CHANNEL_URL)],
         [Button(BTN_MOTOCHAT, type=ButtonType.URL, url=MOTOHUB_CHAT_URL)],
         [Button("❤️ Поддержать проект", payload="max_donate")],
         get_main_menu_shortcut_row(),

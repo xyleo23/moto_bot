@@ -209,6 +209,7 @@ async def run_telegram(shared_bot=None):
         BotCommand(command="about", description="ℹ️ О нас"),
         BotCommand(command="privacy", description="🔒 Политика конфиденциальности"),
         BotCommand(command="consent", description="✅ Согласие на обработку ПД"),
+        BotCommand(command="agreement", description="📄 Правила пользования (соглашение)"),
         BotCommand(command="delete_data", description="🗑 Удалить мои данные"),
         BotCommand(command="support", description="📞 Поддержка"),
     ]
@@ -341,6 +342,7 @@ async def run_max(shared_adapter=None):
                 {"name": "about", "description": "ℹ️ О нас"},
                 {"name": "privacy", "description": "🔒 Политика конфиденциальности"},
                 {"name": "consent", "description": "✅ Согласие на обработку ПД"},
+                {"name": "agreement", "description": "📄 Правила пользования (соглашение)"},
                 {"name": "delete_data", "description": "🗑 Удалить мои данные"},
                 {"name": "support", "description": "📞 Поддержка"},
             ]

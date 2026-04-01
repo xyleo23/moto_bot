@@ -8,7 +8,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from src.config import get_settings
-from src.ui_copy import BTN_MOTOCHAT, MOTOHUB_CHAT_URL
+from src.ui_copy import (
+    BTN_MOTOCHAT,
+    BTN_MOTOHUB_CHANNEL,
+    MOTOHUB_CHANNEL_URL,
+    MOTOHUB_CHAT_URL,
+)
 from src.keyboards.menu import get_back_to_menu_kb
 from src.services.admin_service import (
     get_global_text,
@@ -76,6 +81,7 @@ async def build_about_reply_markup_telegram() -> InlineKeyboardMarkup:
                     text="✉️ Написать в поддержку", url=f"https://t.me/{sup_user}"
                 )
             ],
+            [InlineKeyboardButton(text=BTN_MOTOHUB_CHANNEL, url=MOTOHUB_CHANNEL_URL)],
             [InlineKeyboardButton(text=BTN_MOTOCHAT, url=MOTOHUB_CHAT_URL)],
             [InlineKeyboardButton(text="❤️ Поддержать проект", callback_data="about_donate")],
             [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],

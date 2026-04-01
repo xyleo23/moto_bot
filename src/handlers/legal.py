@@ -74,6 +74,16 @@ async def cmd_consent(message: Message, user=None):
         await message.answer(chunk)
 
 
+@router.message(Command("agreement"))
+async def cmd_agreement(message: Message, user=None):
+    """Пользовательское соглашение (правила пользования)."""
+    text = texts.AGREEMENT_TEXT
+    if "{support_email}" in text:
+        text = await format_legal_template(text)
+    for chunk in _chunk_text(text):
+        await message.answer(chunk)
+
+
 @router.message(Command("delete_data"))
 async def cmd_delete_data(message: Message, user=None):
     """Запрос на удаление персональных данных."""
