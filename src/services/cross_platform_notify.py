@@ -15,6 +15,43 @@ if TYPE_CHECKING:
     pass
 
 
+async def _telegram_send_photo_or_text(
+    telegram_bot: Any,
+    chat_id: int,
+    text: str,
+    *,
+    photo_file_id: str | None,
+    reply_markup: Any | None,
+    parse_mode: str | None = "HTML",
+    log_ctx: str = "tg_cross_notify",
+) -> None:
+    """TG: фото + подпись, иначе текст. Если file_id с другой платформы (например MAX) — только текст."""
+    pm = parse_mode or "HTML"
+    if photo_file_id:
+        try:
+            await telegram_bot.send_photo(
+                chat_id,
+                photo_file_id,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=pm,
+            )
+            return
+        except Exception as e:
+            logger.info(
+                "{}: send_photo failed, sending text only chat_id={}: {}",
+                log_ctx,
+                chat_id,
+                e,
+            )
+    await telegram_bot.send_message(
+        chat_id,
+        text,
+        reply_markup=reply_markup,
+        parse_mode=parse_mode,
+    )
+
+
 async def max_send_message_with_optional_profile_photo(
     max_adapter: Any,
     chat_id: str,
@@ -75,21 +112,15 @@ async def send_text_to_all_identities(
     for u in identities:
         if u.platform == Platform.TELEGRAM and telegram_bot:
             try:
-                if photo_file_id:
-                    await telegram_bot.send_photo(
-                        u.platform_user_id,
-                        photo_file_id,
-                        caption=text,
-                        reply_markup=tg_reply_markup,
-                        parse_mode=parse_mode or "HTML",
-                    )
-                else:
-                    await telegram_bot.send_message(
-                        u.platform_user_id,
-                        text,
-                        reply_markup=tg_reply_markup,
-                        parse_mode=parse_mode,
-                    )
+                await _telegram_send_photo_or_text(
+                    telegram_bot,
+                    u.platform_user_id,
+                    text,
+                    photo_file_id=photo_file_id,
+                    reply_markup=tg_reply_markup,
+                    parse_mode=parse_mode,
+                    log_ctx="cross_notify",
+                )
             except Exception as e:
                 logger.warning("cross_notify TG uid=%s: %s", u.platform_user_id, e)
         elif u.platform == Platform.MAX and max_adapter:
@@ -123,21 +154,15 @@ async def notify_like_received_cross_platform(
     for u in identities:
         if u.platform == Platform.TELEGRAM and telegram_bot:
             try:
-                if from_photo:
-                    await telegram_bot.send_photo(
-                        u.platform_user_id,
-                        from_photo,
-                        caption=notify_text,
-                        reply_markup=tg_reply_markup,
-                        parse_mode="HTML",
-                    )
-                else:
-                    await telegram_bot.send_message(
-                        u.platform_user_id,
-                        notify_text,
-                        reply_markup=tg_reply_markup,
-                        parse_mode="HTML",
-                    )
+                await _telegram_send_photo_or_text(
+                    telegram_bot,
+                    u.platform_user_id,
+                    notify_text,
+                    photo_file_id=from_photo,
+                    reply_markup=tg_reply_markup,
+                    parse_mode="HTML",
+                    log_ctx="like_received",
+                )
             except Exception as e:
                 logger.warning("like_received TG uid=%s: %s", u.platform_user_id, e)
         elif u.platform == Platform.MAX and max_adapter:
