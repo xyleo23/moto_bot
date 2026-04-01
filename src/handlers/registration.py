@@ -28,8 +28,8 @@ from src.services.registration_service import (
 )
 from src.services.user import get_or_create_user
 from src.keyboards.menu import get_main_menu_kb_for_user, get_reply_keyboard_for_user
-from src.config import get_settings
 from src.utils.progress import progress_prefix
+from src.utils.validators import validate_profile_field
 from src import texts
 
 router = Router()
@@ -218,7 +218,12 @@ async def start_registration(message: Message, state: FSMContext, role: UserRole
 
 @router.message(PilotRegistration.name, F.text)
 async def pilot_name(message: Message, state: FSMContext, user=None):
-    await state.update_data(name=message.text.strip())
+    raw = message.text or ""
+    ok, err = validate_profile_field("name", raw)
+    if not ok:
+        await message.answer(err)
+        return
+    await state.update_data(name=raw.strip())
     await state.set_state(PilotRegistration.phone)
     await message.answer(
         progress_prefix(2, PILOT_TOTAL_STEPS) + texts.REG_ASK_PHONE,
@@ -322,26 +327,24 @@ async def tg_reg_cross_link_no(callback: CallbackQuery, state: FSMContext, user=
 
 @router.message(PilotRegistration.age, F.text)
 async def pilot_age(message: Message, state: FSMContext, user=None):
-    try:
-        age = int(message.text.strip())
-        if 18 <= age <= 80:
-            await state.update_data(age=age)
-            await state.set_state(PilotRegistration.gender)
-            await message.answer(
-                progress_prefix(4, PILOT_TOTAL_STEPS) + texts.REG_ASK_GENDER,
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(text="Муж", callback_data="gender_male"),
-                            InlineKeyboardButton(text="Жен", callback_data="gender_female"),
-                        ]
-                    ]
-                ),
-            )
-        else:
-            await message.answer(texts.REG_ERROR_AGE)
-    except ValueError:
-        await message.answer(texts.REG_ERROR_NOT_NUMBER)
+    ok, err = validate_profile_field("age", message.text or "")
+    if not ok:
+        await message.answer(err)
+        return
+    age = int(str(message.text).strip())
+    await state.update_data(age=age)
+    await state.set_state(PilotRegistration.gender)
+    await message.answer(
+        progress_prefix(4, PILOT_TOTAL_STEPS) + texts.REG_ASK_GENDER,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Муж", callback_data="gender_male"),
+                    InlineKeyboardButton(text="Жен", callback_data="gender_female"),
+                ]
+            ]
+        ),
+    )
 
 
 @router.message(PilotRegistration.age)
@@ -362,7 +365,12 @@ async def pilot_gender(callback: CallbackQuery, state: FSMContext, user=None):
 
 @router.message(PilotRegistration.bike_brand, F.text)
 async def pilot_bike_brand(message: Message, state: FSMContext):
-    await state.update_data(bike_brand=message.text.strip())
+    raw = message.text or ""
+    ok, err = validate_profile_field("moto_brand", raw)
+    if not ok:
+        await message.answer(err)
+        return
+    await state.update_data(bike_brand=raw.strip())
     await state.set_state(PilotRegistration.bike_model)
     await message.answer(progress_prefix(6, PILOT_TOTAL_STEPS) + texts.REG_ASK_BIKE_MODEL)
 
@@ -374,7 +382,12 @@ async def pilot_bike_brand_fallback(message: Message, state: FSMContext):
 
 @router.message(PilotRegistration.bike_model, F.text)
 async def pilot_bike_model(message: Message, state: FSMContext):
-    await state.update_data(bike_model=message.text.strip())
+    raw = message.text or ""
+    ok, err = validate_profile_field("moto_model", raw)
+    if not ok:
+        await message.answer(err)
+        return
+    await state.update_data(bike_model=raw.strip())
     await state.set_state(PilotRegistration.engine_cc)
     await message.answer(progress_prefix(7, PILOT_TOTAL_STEPS) + texts.REG_ASK_ENGINE_CC)
 
@@ -578,9 +591,9 @@ async def pilot_about(message: Message, state: FSMContext, user=None):
     if about.lower() in ("пропустить", "skip"):
         about = None
     else:
-        max_len = get_settings().about_text_max_length
-        if len(about) > max_len:
-            await message.answer(texts.REG_ERROR_ABOUT_TOO_LONG.format(max_len=max_len))
+        ok, err = validate_profile_field("about", message.text or "")
+        if not ok:
+            await message.answer(err)
             return
     await state.update_data(about=about)
     await state.set_state(PilotRegistration.preview)
@@ -704,7 +717,12 @@ async def _finish_pilot_registration(
 
 @router.message(PassengerRegistration.name, F.text)
 async def passenger_name(message: Message, state: FSMContext):
-    await state.update_data(name=message.text.strip())
+    raw = message.text or ""
+    ok, err = validate_profile_field("name", raw)
+    if not ok:
+        await message.answer(err)
+        return
+    await state.update_data(name=raw.strip())
     await state.set_state(PassengerRegistration.phone)
     await message.answer(
         progress_prefix(2, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_PHONE,
@@ -744,26 +762,24 @@ async def passenger_phone_fallback(message: Message, state: FSMContext):
 
 @router.message(PassengerRegistration.age, F.text)
 async def passenger_age(message: Message, state: FSMContext):
-    try:
-        age = int(message.text.strip())
-        if 18 <= age <= 80:
-            await state.update_data(age=age)
-            await state.set_state(PassengerRegistration.gender)
-            await message.answer(
-                progress_prefix(4, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_GENDER,
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(text="Муж", callback_data="pax_gender_male"),
-                            InlineKeyboardButton(text="Жен", callback_data="pax_gender_female"),
-                        ]
-                    ]
-                ),
-            )
-        else:
-            await message.answer(texts.REG_ERROR_AGE)
-    except ValueError:
-        await message.answer(texts.REG_ERROR_NOT_NUMBER)
+    ok, err = validate_profile_field("age", message.text or "")
+    if not ok:
+        await message.answer(err)
+        return
+    age = int(str(message.text).strip())
+    await state.update_data(age=age)
+    await state.set_state(PassengerRegistration.gender)
+    await message.answer(
+        progress_prefix(4, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_GENDER,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Муж", callback_data="pax_gender_male"),
+                    InlineKeyboardButton(text="Жен", callback_data="pax_gender_female"),
+                ]
+            ]
+        ),
+    )
 
 
 @router.message(PassengerRegistration.age)
@@ -902,9 +918,9 @@ async def passenger_about(message: Message, state: FSMContext, user=None):
     if about.lower() in ("пропустить", "skip"):
         about = None
     else:
-        max_len = get_settings().about_text_max_length
-        if len(about) > max_len:
-            await message.answer(texts.REG_ERROR_ABOUT_TOO_LONG.format(max_len=max_len))
+        ok, err = validate_profile_field("about", message.text or "")
+        if not ok:
+            await message.answer(err)
             return
     await state.update_data(about=about)
     await state.set_state(PassengerRegistration.preview)
