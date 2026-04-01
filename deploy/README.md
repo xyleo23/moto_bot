@@ -66,3 +66,28 @@ curl "https://api.telegram.org/bot<ТОКЕН>/deleteWebhook?drop_pending_update
 Репозиторий → **Settings** → **Secrets** → добавить `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`.
 
 Workflow при push в `main` выполняет `deploy.sh` (Docker).
+
+---
+
+## Боевой ЮKassa и чистая база перед запуском
+
+1. **Секреты только на сервере** в `.env` (не в git): `YOOKASSA_SHOP_ID` и `YOOKASSA_SECRET_KEY` из **боевого** магазина ЮKassa; ключ обычно с префиксом `live_`. `shop_id` у боевого магазина часто **другой**, чем у тестового — проверь в кабинете.
+
+2. **Webhook** в ЮKassa: URL вида `https://<твой-домен>/webhook/yookassa`, порт приложения (8080) проксируй через nginx. Если бот за reverse proxy — в `.env` задай `WEBHOOK_TRUST_PROXY=true`.
+
+3. **Очистка тестовых пользователей и связанных данных** (города, `subscription_settings`, `bot_settings`, шаблоны в `global_texts` не трогаются):
+   ```bash
+   cd /opt/moto_bot
+   docker compose -f docker-compose.prod.yml exec -T postgres \
+     psql -U postgres -d moto_bot -f - < deploy/sql/wipe_user_data.sql
+   ```
+
+4. **Redis** (сброс FSM и кэшей после тестов):
+   ```bash
+   docker compose -f docker-compose.prod.yml exec redis redis-cli FLUSHDB
+   ```
+
+5. **Перезапуск**:
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d --build
+   ```
