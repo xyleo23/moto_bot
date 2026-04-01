@@ -4220,8 +4220,60 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
         effective_user_id(user),
         sub_required,
     )
+
+    # Как в Telegram: анкета всегда видна; при отсутствии подписки добавляем оплату кнопками,
+    # а не заменяем экран одним текстом без фото (раньше в MAX «Мой профиль» выглядел как «не открывается»).
+    from src.services.profile_service import get_profile_display
+    from src.services.admin_service import get_subscription_settings as _get_sub_settings
+
+    try:
+        profile_text, photo_ref = await get_profile_display(user)
+    except Exception as e:
+        logger.warning(
+            "handle_profile: get_profile_display failed for user_id={}: {}",
+            effective_user_id(user),
+            e,
+        )
+        profile_text = "👤 Мой профиль\n\nНе удалось загрузить анкету."
+        photo_ref = None
+
     if sub_required:
-        # Offer both monthly and season subscription options
+        from src.services.subscription_messages import max_profile_subscription_block
+
+        paywall = await max_profile_subscription_block()
+        profile_text = (
+            profile_text
+            + "\n\n"
+            + paywall
+            + "\n\n"
+            f"• 1 месяц — {monthly_price // 100} ₽\n"
+            f"• Год (365 дн.) — {season_price // 100} ₽\n\n"
+            "Оплата по ссылке ниже. После оплаты нажми «Я оплатил — проверить»."
+        )
+
+    pr = photo_ref or ""
+    logger.info(
+        "profile_photo: after_display max_uid={} has_photo_ref={} ref_len={} ref_prefix={!r} sub_required={}",
+        user.platform_user_id,
+        bool(photo_ref),
+        len(pr),
+        pr[:20] if pr else "",
+        sub_required,
+    )
+
+    sub_settings2 = await _get_sub_settings()
+    raise_enabled = (
+        sub_settings2 and sub_settings2.raise_profile_enabled if sub_settings2 else False
+    )
+    raise_price = (
+        sub_settings2.raise_profile_price_kopecks
+        if sub_settings2 and sub_settings2.raise_profile_price_kopecks
+        else 0
+    )
+
+    kb: list = []
+    fsm_data: dict = {}
+    if sub_required:
         monthly_payment = await create_payment(
             amount_kopecks=monthly_price,
             description="Подписка на 1 месяц — мото-бот",
@@ -4234,19 +4286,6 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             metadata=subscription_metadata(user, "season", platform="max"),
             return_url=get_settings().max_return_url,
         )
-
-        from src.services.subscription_messages import max_profile_subscription_block
-
-        paywall = await max_profile_subscription_block()
-        text = (
-            "👤 Мой профиль\n\n" + paywall + "\n\n"
-            f"• 1 месяц — {monthly_price // 100} ₽\n"
-            f"• Год (365 дн.) — {season_price // 100} ₽\n\n"
-            "Выбери тариф и оплати по ссылке. После оплаты нажми «Я оплатил — проверить»."
-        )
-        kb = []
-        # Store both payment IDs so "Я оплатил" can check whichever was paid
-        fsm_data: dict = {}
         if monthly_payment and monthly_payment.get("confirmation_url"):
             kb.append(
                 [
@@ -4273,63 +4312,24 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             await reg_state.set_state(user.platform_user_id, "pay:subscription", fsm_data)
         if kb:
             kb.append([Button("✅ Я оплатил — проверить", payload="max_pay_sub_check")])
-        kb.append(get_main_menu_shortcut_row())
-        logger.info(
-            "profile_photo: paywall branch (фото не отправляем — только текст оплаты) max_uid={}",
-            user.platform_user_id,
-        )
-        await adapter.send_message(chat_id, text, kb)
     else:
-        # Subscription active — show profile menu (с фото как в мотопаре)
-        from src.services.profile_service import get_profile_display
-        from src.services.admin_service import get_subscription_settings as _get_sub_settings
+        kb.append([Button("🔄 Продлить подписку", payload="max_profile_renew_sub")])
 
-        try:
-            profile_text, photo_ref = await get_profile_display(user)
-        except Exception as e:
-            logger.warning(
-                "handle_profile: get_profile_display failed for user_id={}: {}",
-                effective_user_id(user),
-                e,
-            )
-            profile_text = "👤 Мой профиль\n\nПодписка активна."
-            photo_ref = None
-
-        pr = photo_ref or ""
-        logger.info(
-            "profile_photo: after_display max_uid={} has_photo_ref={} ref_len={} ref_prefix={!r}",
-            user.platform_user_id,
-            bool(photo_ref),
-            len(pr),
-            pr[:20] if pr else "",
+    kb.append([Button(texts.PHONE_CHANGE_BTN, payload="max_profile_phone")])
+    kb.append([Button("🏙️ Сменить город", payload="max_profile_city")])
+    kb.append([Button("✏️ Редактировать анкету", payload="max_profile_edit")])
+    if raise_enabled:
+        label = (
+            f"⬆️ Поднять анкету — {raise_price // 100} ₽"
+            if raise_price > 0
+            else "⬆️ Поднять анкету (бесплатно)"
         )
+        kb.append([Button(label, payload="max_profile_raise")])
+    kb.append(get_main_menu_shortcut_row())
 
-        sub_settings2 = await _get_sub_settings()
-        raise_enabled = (
-            sub_settings2 and sub_settings2.raise_profile_enabled if sub_settings2 else False
-        )
-        raise_price = (
-            sub_settings2.raise_profile_price_kopecks
-            if sub_settings2 and sub_settings2.raise_profile_price_kopecks
-            else 0
-        )
-
-        kb = [[Button("🔄 Продлить подписку", payload="max_profile_renew_sub")]]
-        kb.append([Button(texts.PHONE_CHANGE_BTN, payload="max_profile_phone")])
-        kb.append([Button("🏙️ Сменить город", payload="max_profile_city")])
-        kb.append([Button("✏️ Редактировать анкету", payload="max_profile_edit")])
-        if raise_enabled:
-            label = (
-                f"⬆️ Поднять анкету — {raise_price // 100} ₽"
-                if raise_price > 0
-                else "⬆️ Поднять анкету (бесплатно)"
-            )
-            kb.append([Button(label, payload="max_profile_raise")])
-        kb.append(get_main_menu_shortcut_row())
-
-        await _max_send_photo_caption_keyboard(
-            adapter, chat_id, photo_ref, profile_text, kb, log_ctx="profile_photo"
-        )
+    await _max_send_photo_caption_keyboard(
+        adapter, chat_id, photo_ref, profile_text, kb, log_ctx="profile_photo"
+    )
 
 
 async def handle_about(adapter: MaxAdapter, chat_id: str) -> None:

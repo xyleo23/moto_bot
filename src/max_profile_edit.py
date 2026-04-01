@@ -46,17 +46,7 @@ PAX_STEPS = ("name", "age", "weight", "height", "preferred_style", "photo", "abo
 
 
 async def max_profile_edit_start(adapter: MaxAdapter, chat_id: str, user: User) -> None:
-    from src.keyboards.shared import get_back_to_menu_rows
-    from src.services.subscription import check_subscription_required
-
-    if await check_subscription_required(user):
-        await adapter.send_message(
-            chat_id,
-            "Чтобы редактировать анкету, оформи подписку в профиле.",
-            get_back_to_menu_rows(),
-        )
-        return
-
+    """Старт редактирования — как в Telegram: подписка не блокирует вход в мастер."""
     uid = effective_user_id(user)
     if user.role == UserRole.PILOT:
         fields = await load_pilot_edit_fields(uid)
