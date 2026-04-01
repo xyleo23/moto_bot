@@ -5,6 +5,7 @@ from uuid import UUID
 from loguru import logger
 
 from aiogram import Router, F
+from aiogram.enums import ParseMode
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -162,11 +163,16 @@ async def cmd_profile(message: Message, state: FSMContext, user=None):
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     if photo_id:
         try:
-            await message.answer_photo(photo_id, caption=display_text, reply_markup=kb)
+            await message.answer_photo(
+                photo_id,
+                caption=display_text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML,
+            )
             return
         except Exception as e:
             logger.warning("cmd_profile: answer_photo failed: %s", e)
-    await message.answer(display_text, reply_markup=kb)
+    await message.answer(display_text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @router.message(Command("motopair"))
@@ -607,11 +613,16 @@ async def kb_profile(message: Message, state: FSMContext, user=None):
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     if photo_id:
         try:
-            await message.answer_photo(photo_id, caption=display_text, reply_markup=kb)
+            await message.answer_photo(
+                photo_id,
+                caption=display_text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML,
+            )
             return
         except Exception as e:
             logger.warning("kb_profile: answer_photo failed: %s", e)
-    await message.answer(display_text, reply_markup=kb)
+    await message.answer(display_text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @router.message(F.text == "🏠 Главное меню")

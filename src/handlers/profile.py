@@ -136,15 +136,20 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
                 photo=photo_id,
                 caption=display_text,
                 reply_markup=kb,
+                parse_mode=ParseMode.HTML,
             )
             return
         except Exception as e:
             logger.warning("menu_profile: send_photo failed, fallback to text: %s", e)
     try:
-        await callback.message.edit_text(display_text, reply_markup=kb)
+        await callback.message.edit_text(
+            display_text, reply_markup=kb, parse_mode=ParseMode.HTML
+        )
     except Exception as e:
         logger.debug("menu_profile: edit_text failed, send new message: %s", e)
-        await callback.message.answer(display_text, reply_markup=kb)
+        await callback.message.answer(
+            display_text, reply_markup=kb, parse_mode=ParseMode.HTML
+        )
 
 
 @router.callback_query(F.data == "profile_subscribe")
