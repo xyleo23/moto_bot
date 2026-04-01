@@ -693,6 +693,28 @@ async def _handle_fsm_message(
             await max_profile_edit_handle_message(adapter, chat_id, user_id, text, u_pe, fsm)
         return
 
+    if state == "bugreport:text":
+        t = (text or "").strip()[:4000]
+        if not t:
+            await adapter.send_message(
+                chat_id,
+                texts.BUG_REPORT_EMPTY,
+                [[Button("« Отмена", payload="menu_main")], get_main_menu_shortcut_row()],
+            )
+            return
+        data["bug_text"] = t
+        await reg_state.set_state(user_id, "bugreport:photo", data)
+        await adapter.send_message(
+            chat_id,
+            texts.BUG_REPORT_ASK_PHOTO,
+            [
+                [Button("Без скриншота", payload="bug_report_skip_photo")],
+                [Button("« Отмена", payload="menu_main")],
+                get_main_menu_shortcut_row(),
+            ],
+        )
+        return
+
     synth_cb = _max_registration_text_to_callback(state, text)
     if synth_cb and await _handle_fsm_callback(adapter, chat_id, user_id, synth_cb, fsm):
         return
@@ -1340,6 +1362,27 @@ async def _handle_fsm_callback(
             if await max_profile_edit_handle_callback(adapter, chat_id, user_id, cb_data, u_pcb, fsm):
                 return True
 
+    if cb_data == "bug_report_skip_photo" and state == "bugreport:photo":
+        await reg_state.clear_state(user_id)
+        u_sk = await get_or_create_user(platform="max", platform_user_id=user_id)
+        if u_sk:
+            from src.services.bug_report_service import send_bug_report_to_superadmins
+            from src.services.broadcast import get_max_adapter
+
+            await send_bug_report_to_superadmins(
+                u_sk,
+                (data.get("bug_text") or "").strip(),
+                photo_file_id=None,
+                telegram_bot=_get_tg_bot(),
+                max_adapter=get_max_adapter(),
+            )
+        await adapter.send_message(
+            chat_id,
+            texts.BUG_REPORT_THANKS,
+            await _main_menu_rows_for(u_sk) if u_sk else get_main_menu_rows(),
+        )
+        return True
+
     # ── Cross-platform link (same phone as Telegram) ──────────────────────────
     if cb_data == "max_reg_cross_link_yes" and state in (
         "pilot:cross_link_confirm",
@@ -1968,6 +2011,7 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
             "sos",
             "documents",
             "admin",
+            "bug",
         }:
             _nav_cmd = _slash
 
@@ -2019,6 +2063,14 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
         from src.max_admin_panel import show_max_admin_root
 
         await show_max_admin_root(adapter, ev.chat_id, user)
+        return
+    if cmd == "bug":
+        await reg_state.set_state(ev.user_id, "bugreport:text", {})
+        await adapter.send_message(
+            ev.chat_id,
+            texts.BUG_REPORT_ASK_TEXT,
+            [[Button("« Отмена", payload="menu_main")], get_main_menu_shortcut_row()],
+        )
         return
 
     low = text.lower()
@@ -2088,6 +2140,26 @@ async def handle_photo(adapter: MaxAdapter, ev: IncomingPhoto) -> None:
         from src.max_profile_edit import max_profile_edit_handle_photo
 
         await max_profile_edit_handle_photo(adapter, ev.chat_id, ev.user_id, ev.file_id, user, fsm)
+    elif fsm and st == "bugreport:photo":
+        d = fsm.get("data") or {}
+        await reg_state.clear_state(ev.user_id)
+        u_bg = user
+        if u_bg:
+            from src.services.bug_report_service import send_bug_report_to_superadmins
+            from src.services.broadcast import get_max_adapter
+
+            await send_bug_report_to_superadmins(
+                u_bg,
+                (d.get("bug_text") or "").strip(),
+                photo_file_id=ev.file_id,
+                telegram_bot=_get_tg_bot(),
+                max_adapter=get_max_adapter(),
+            )
+        await adapter.send_message(
+            ev.chat_id,
+            texts.BUG_REPORT_THANKS,
+            await _main_menu_rows_for(u_bg) if u_bg else get_main_menu_rows(),
+        )
     else:
         await adapter.send_message(
             ev.chat_id,
@@ -2313,6 +2385,21 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
             chat_id,
             "Отлично! Теперь выбери свою роль:",
             get_role_select_rows(),
+        )
+        return
+
+    if data == "menu_bug_report":
+        ex = await reg_state.get_state(ev.user_id)
+        if ex and ex.get("state") and ex.get("state") not in ("bugreport:text", "bugreport:photo"):
+            await adapter.send_message(
+                chat_id, texts.BUG_REPORT_BUSY, await _main_menu_rows_for(user)
+            )
+            return
+        await reg_state.set_state(ev.user_id, "bugreport:text", {})
+        await adapter.send_message(
+            chat_id,
+            texts.BUG_REPORT_ASK_TEXT,
+            [[Button("« Отмена", payload="menu_main")], get_main_menu_shortcut_row()],
         )
         return
 

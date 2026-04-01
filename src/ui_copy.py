@@ -24,3 +24,6 @@ MOTOHUB_CHANNEL_URL = "https://t.me/motohub66"
 BTN_MOTOHUB_CHANNEL = "📢 Канал MotoHub"
 MOTOHUB_CHAT_URL = "https://t.me/motohub66_chat"
 BTN_MOTOCHAT = "💬 МотоЧат"
+
+# Обратная связь
+BTN_BUG_REPORT = "🐞 Сообщить об ошибке"

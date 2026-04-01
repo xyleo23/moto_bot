@@ -75,6 +75,7 @@ async def run_telegram(shared_bot=None):
         profile_edit,
         about,
         legal,
+        bug_report,
         admin,
     )
     from src.handlers.middleware import BlockCheckMiddleware, BotInjectMiddleware
@@ -171,6 +172,7 @@ async def run_telegram(shared_bot=None):
     dp.include_router(profile_edit.router)
     dp.include_router(about.router)
     dp.include_router(legal.router)
+    dp.include_router(bug_report.router)
     dp.include_router(admin.router)
     from src.handlers import admin_contacts, subscription
 
@@ -212,6 +214,7 @@ async def run_telegram(shared_bot=None):
         BotCommand(command="agreement", description="📄 Правила пользования (соглашение)"),
         BotCommand(command="delete_data", description="🗑 Удалить мои данные"),
         BotCommand(command="support", description="📞 Поддержка"),
+        BotCommand(command="bug", description="🐞 Сообщить об ошибке"),
     ]
     await bot.set_my_commands(commands=user_commands, scope=BotCommandScopeDefault())
 
@@ -345,6 +348,7 @@ async def run_max(shared_adapter=None):
                 {"name": "agreement", "description": "📄 Правила пользования (соглашение)"},
                 {"name": "delete_data", "description": "🗑 Удалить мои данные"},
                 {"name": "support", "description": "📞 Поддержка"},
+                {"name": "bug", "description": "🐞 Сообщить об ошибке"},
             ]
         )
         logger.info("MAX bot commands registered")

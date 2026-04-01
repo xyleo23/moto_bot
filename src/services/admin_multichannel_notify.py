@@ -105,6 +105,103 @@ async def notify_superadmins_plain(
     )
 
 
+async def notify_superadmins_same_platform(
+    html: str,
+    source_platform: Platform,
+    *,
+    photo_file_id: str | None = None,
+    telegram_bot: Any | None = None,
+    max_adapter: Any | None = None,
+    telegram_markup: Any | None = None,
+) -> None:
+    """
+    Уведомить суперадминов только на той платформе, откуда пришёл репорт (TG → TG, MAX → MAX).
+    Если в БД нет записи User для sid, для Telegram используется отправка на numeric sid (как fallback).
+    """
+    settings = get_settings()
+    if not settings.superadmin_ids:
+        return
+    max_rows = tg_inline_markup_to_max_rows(telegram_markup)
+    session_factory = get_session_factory()
+
+    for sid in settings.superadmin_ids:
+        async with session_factory() as session:
+            r = await session.execute(select(User).where(User.platform_user_id == sid))
+            matches = list(r.scalars().all())
+        if not matches:
+            if source_platform == Platform.TELEGRAM and telegram_bot:
+                try:
+                    if photo_file_id:
+                        await telegram_bot.send_photo(
+                            sid,
+                            photo_file_id,
+                            caption=html,
+                            reply_markup=telegram_markup,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await telegram_bot.send_message(
+                            sid,
+                            html,
+                            reply_markup=telegram_markup,
+                            parse_mode="HTML",
+                        )
+                except Exception as e:
+                    logger.warning("notify_superadmin_same_platform fallback sid=%s: %s", sid, e)
+            continue
+        for u in matches:
+            if u.platform != source_platform:
+                continue
+            if u.platform == Platform.TELEGRAM and telegram_bot:
+                try:
+                    if photo_file_id:
+                        await telegram_bot.send_photo(
+                            u.platform_user_id,
+                            photo_file_id,
+                            caption=html,
+                            reply_markup=telegram_markup,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await telegram_bot.send_message(
+                            u.platform_user_id,
+                            html,
+                            reply_markup=telegram_markup,
+                            parse_mode="HTML",
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "notify_superadmin_same_platform TG uid=%s: %s",
+                        u.platform_user_id,
+                        e,
+                    )
+            elif u.platform == Platform.MAX and max_adapter:
+                try:
+                    if photo_file_id:
+                        from src.services.cross_platform_notify import (
+                            max_send_message_with_optional_profile_photo,
+                        )
+
+                        await max_send_message_with_optional_profile_photo(
+                            max_adapter,
+                            str(u.platform_user_id),
+                            html,
+                            max_rows,
+                            photo_file_id,
+                            telegram_bot,
+                        )
+                    else:
+                        await max_adapter.send_message(
+                            str(u.platform_user_id), html, max_rows
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "notify_superadmin_same_platform MAX uid=%s: %s",
+                        u.platform_user_id,
+                        e,
+                    )
+
+
 async def notify_city_admins_multichannel(
     city_id: UUID,
     html: str,

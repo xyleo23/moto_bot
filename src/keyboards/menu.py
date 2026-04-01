@@ -8,6 +8,7 @@ from aiogram.types import (
 )
 
 from src.ui_copy import (
+    BTN_BUG_REPORT,
     BTN_MOTOCHAT,
     BTN_MOTOHUB_CHANNEL,
     MOTOHUB_CHANNEL_URL,
@@ -31,6 +32,7 @@ def get_main_menu_kb(
         [InlineKeyboardButton(text="ℹ️ О нас", callback_data="menu_about")],
         [InlineKeyboardButton(text=BTN_MOTOHUB_CHANNEL, url=MOTOHUB_CHANNEL_URL)],
         [InlineKeyboardButton(text=BTN_MOTOCHAT, url=MOTOHUB_CHAT_URL)],
+        [InlineKeyboardButton(text=BTN_BUG_REPORT, callback_data="menu_bug_report")],
         [InlineKeyboardButton(text="📄 Документы", callback_data="menu_documents")],
     ]
     show = (
@@ -93,6 +95,7 @@ def get_persistent_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="ℹ️ О нас")],
             [KeyboardButton(text=BTN_MOTOHUB_CHANNEL)],
             [KeyboardButton(text=BTN_MOTOCHAT)],
+            [KeyboardButton(text=BTN_BUG_REPORT)],
         ],
         resize_keyboard=True,
         is_persistent=True,
