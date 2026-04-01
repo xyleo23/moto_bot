@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import uuid
 from html import escape
 
-from src.models.user import Platform, User
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+from src.models.user import Platform, User, effective_user_id
 from src.services.admin_multichannel_notify import notify_superadmins_multichannel
+
+
+def bug_report_admin_reply_markup(target_canonical_id: uuid.UUID) -> InlineKeyboardMarkup:
+    """Кнопка «Ответить» для суперадмина (тот же callback_data в TG и MAX)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💬 Ответить пользователю",
+                    callback_data=f"admin_bugreply_{target_canonical_id}",
+                )
+            ],
+        ]
+    )
 
 
 def platform_label_ru(platform: Platform) -> str:
@@ -35,9 +52,12 @@ async def send_bug_report_to_superadmins(
     max_adapter=None,
 ) -> None:
     """Текст всем суперадминам по их платформам; при наличии фото — вторым сообщением скрин."""
+    canon = effective_user_id(user)
+    reply_kb = bug_report_admin_reply_markup(canon)
     html = format_bug_report_html(user, description)
     await notify_superadmins_multichannel(
         html,
+        telegram_markup=reply_kb,
         telegram_bot=telegram_bot,
         max_adapter=max_adapter,
         telegram_parse_mode="HTML",
@@ -50,6 +70,7 @@ async def send_bug_report_to_superadmins(
         )
         await notify_superadmins_multichannel(
             cap,
+            telegram_markup=reply_kb,
             telegram_bot=telegram_bot,
             max_adapter=max_adapter,
             telegram_parse_mode="HTML",

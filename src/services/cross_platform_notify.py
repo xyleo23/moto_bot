@@ -52,6 +52,17 @@ async def _telegram_send_photo_or_text(
     )
 
 
+def _max_photo_error_retryable(exc: BaseException) -> bool:
+    s = str(exc).lower()
+    return (
+        "not.ready" in s
+        or "not.processed" in s
+        or "attachment" in s
+        or "timeout" in s
+        or "temporar" in s
+    )
+
+
 async def max_send_message_with_optional_profile_photo(
     max_adapter: Any,
     chat_id: str,
@@ -60,22 +71,43 @@ async def max_send_message_with_optional_profile_photo(
     photo_ref: str | None,
     telegram_bot: Any | None,
 ) -> None:
-    """MAX: картинка + подпись; file_id из Telegram подгружается через API MAX и мост TG→MAX."""
+    """MAX: картинка + подпись; file_id из Telegram подгружается через API MAX и мост TG→MAX.
+
+    После загрузки пользователем вложение часто «догружается» на стороне MAX — даём несколько
+    попыток с паузами (как в max_runner._max_send_photo_caption_keyboard).
+    """
     max_body = caption or ""
     if not photo_ref:
         await max_adapter.send_message(chat_id, max_body, keyboard)
         return
-    try:
-        await max_adapter.send_photo(chat_id, photo_ref, max_body, keyboard)
-        return
-    except Exception as e:
-        logger.info(
-            "MAX send_photo with profile ref failed, try TG→MAX bridge: %s",
-            e,
-        )
+
+    ref = str(photo_ref).strip()
+    delays_before_attempt = (0, 0.5, 1.0, 2.0, 3.5, 5.5)
+    last_err: BaseException | None = None
+    for d in delays_before_attempt:
+        if d:
+            await asyncio.sleep(d)
+        try:
+            await max_adapter.send_photo(chat_id, ref, max_body, keyboard)
+            return
+        except Exception as e:
+            last_err = e
+            if _max_photo_error_retryable(e):
+                logger.info(
+                    "MAX send_photo retryable (chat_id=%s): %s",
+                    chat_id,
+                    str(e)[:200],
+                )
+                continue
+            logger.info(
+                "MAX send_photo with profile ref failed, try TG→MAX bridge: %s",
+                e,
+            )
+            break
+
     token = None
     if telegram_bot:
-        token = await max_adapter.import_photo_from_telegram(telegram_bot, photo_ref)
+        token = await max_adapter.import_photo_from_telegram(telegram_bot, ref)
     if token:
         for delay in (0.35, 0.9, 1.8):
             await asyncio.sleep(delay)
@@ -89,6 +121,12 @@ async def max_send_message_with_optional_profile_photo(
                     continue
                 logger.warning("MAX send_photo after upload failed: %s", e2)
                 break
+    if last_err:
+        logger.warning(
+            "MAX bug/notify photo: text-only fallback chat_id=%s last_err=%s",
+            chat_id,
+            str(last_err)[:300],
+        )
     await max_adapter.send_message(chat_id, max_body, keyboard)
 
 

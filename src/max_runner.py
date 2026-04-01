@@ -669,6 +669,12 @@ async def _handle_fsm_message(
     state = fsm["state"]
     data = fsm["data"]
 
+    if state == "bugreply:wait":
+        from src.handlers.admin_bug_reply import max_admin_bug_reply_deliver_text
+
+        await max_admin_bug_reply_deliver_text(adapter, chat_id, user_id, text, fsm)
+        return
+
     if isinstance(state, str) and state.startswith("admin:contact"):
         from src.max_admin_contacts import handle_max_contact_fsm_text
 
@@ -1346,6 +1352,18 @@ async def _handle_fsm_callback(
     state = fsm.get("state")
     data = fsm.get("data", {})
     if not state:
+        return False
+
+    if state == "bugreply:wait":
+        if cb_data == "admin_bugreply_cancel":
+            await reg_state.clear_state(user_id)
+            u_br = await get_or_create_user(platform="max", platform_user_id=user_id)
+            await adapter.send_message(
+                chat_id,
+                texts.ADMIN_BUG_REPLY_CANCELLED,
+                await _main_menu_rows_for(u_br) if u_br else get_main_menu_rows(),
+            )
+            return True
         return False
 
     if isinstance(state, str) and state.startswith("admin:"):
@@ -2319,6 +2337,12 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
             list((ev.raw.get("callback") or {}).keys()) if isinstance(ev.raw, dict) else None,
             ev.raw.get("callback") if isinstance(ev.raw, dict) else None,
         )
+
+    if data and data.startswith("admin_bugreply_"):
+        from src.handlers.admin_bug_reply import max_admin_bug_reply_open_fsm
+
+        if await max_admin_bug_reply_open_fsm(adapter, chat_id, ev.user_id, user, data):
+            return
 
     # ── FSM callbacks (highest priority) ─────────────────────────────────────
     fsm = await reg_state.get_state(ev.user_id)

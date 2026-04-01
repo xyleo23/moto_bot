@@ -76,6 +76,7 @@ async def run_telegram(shared_bot=None):
         about,
         legal,
         bug_report,
+        admin_bug_reply,
         admin,
     )
     from src.handlers.middleware import BlockCheckMiddleware, BotInjectMiddleware
@@ -173,6 +174,7 @@ async def run_telegram(shared_bot=None):
     dp.include_router(about.router)
     dp.include_router(legal.router)
     dp.include_router(bug_report.router)
+    dp.include_router(admin_bug_reply.router)
     dp.include_router(admin.router)
     from src.handlers import admin_contacts, subscription
 
