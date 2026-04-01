@@ -2588,6 +2588,12 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         offset = int(parts[1]) if len(parts) > 1 else 0
         await handle_motopair_list(adapter, chat_id, user, role, offset)
         return
+    if data.startswith("motopair_restart_"):
+        role = data.removeprefix("motopair_restart_")
+        if role not in ("pilot", "passenger"):
+            role = "pilot"
+        await handle_motopair_list(adapter, chat_id, user, role, offset=0)
+        return
     if data.startswith("motopair_report_"):
         await handle_motopair_report_max(adapter, chat_id, user, data)
         return
@@ -3195,6 +3201,7 @@ async def handle_motopair_list(
             chat_id,
             texts.MOTOPAIR_NO_PROFILES,
             [
+                [Button("🔄 Посмотреть заново", payload=f"motopair_restart_{role}")],
                 [Button("« Мотопара", payload="menu_motopair")],
                 get_main_menu_shortcut_row(),
             ],

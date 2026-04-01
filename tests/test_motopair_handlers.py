@@ -33,4 +33,4 @@ def test_next_button_present_when_more_profiles():
 
 
 def test_empty_state_text_constant_exists():
-    assert "Новых анкет" in texts.MOTOPAIR_NO_PROFILES
+    assert "просмотрел" in texts.MOTOPAIR_NO_PROFILES

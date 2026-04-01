@@ -274,6 +274,12 @@ async def _show_motopair_card_at(message: Message, user, role: str, offset: int)
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text="🔄 Посмотреть заново",
+                    callback_data=f"motopair_restart_{role}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=texts.MOTOPAIR_RAISE_BTN,
                     callback_data="profile_raise",
                 )
@@ -915,6 +921,49 @@ async def cb_dislike(callback: CallbackQuery, user=None):
         next_offset = list_offset if result["blacklisted"] else list_offset + 1
         await callback.answer()
         await _show_motopair_card_at(callback.message, user, role, next_offset)
+    finally:
+        _MOTOPAIR_FEED_ACTION_USERS.discard(tg_uid)
+
+
+@router.callback_query(F.data.startswith("motopair_restart_"))
+async def cb_motopair_restart(callback: CallbackQuery, user=None):
+    from src.services.subscription import check_subscription_required
+    from src.services.subscription_messages import subscription_required_message
+
+    if not user:
+        await callback.answer("Ошибка.", show_alert=True)
+        return
+
+    role = callback.data.removeprefix("motopair_restart_")
+    if role not in ("pilot", "passenger"):
+        await callback.answer()
+        return
+
+    tg_uid = callback.from_user.id if callback.from_user else 0
+    if tg_uid in _MOTOPAIR_FEED_ACTION_USERS:
+        await callback.answer()
+        return
+    _MOTOPAIR_FEED_ACTION_USERS.add(tg_uid)
+    try:
+        if await check_subscription_required(user):
+            await callback.answer()
+            await callback.message.edit_text(
+                await subscription_required_message("motopair_cards"),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="Оформить подписку", callback_data="profile_subscribe"
+                            ),
+                            InlineKeyboardButton(text="◀️ Назад", callback_data="menu_motopair"),
+                        ]
+                    ]
+                ),
+            )
+            return
+
+        await callback.answer()
+        await _show_motopair_card_at(callback.message, user, role, 0)
     finally:
         _MOTOPAIR_FEED_ACTION_USERS.discard(tg_uid)
 
