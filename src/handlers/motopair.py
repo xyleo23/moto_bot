@@ -11,6 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from src.keyboards.menu import get_back_to_menu_kb
 from src.keyboards.motopair import (
+    CALLBACK_MOTOPAIR_MENU_PRESERVE,
     get_like_notification_kb,
     get_match_kb,
     get_filter_kb,
@@ -28,16 +29,15 @@ class CityAdminBlockStates(StatesGroup):
     reason = State()
 
 
-@router.callback_query(F.data == "menu_motopair")
-async def cb_motopair_menu(callback: CallbackQuery, user=None):
+async def _motopair_menu_intro_and_kb(user) -> tuple[str, InlineKeyboardMarkup]:
+    """Текст и клавиатура корня «Мотопара» (подписка или выбор категории)."""
     from src.services.subscription import check_subscription_required
+    from src.services.subscription_messages import subscription_required_message
 
     if user and await check_subscription_required(user):
-        from src.services.subscription_messages import subscription_required_message
-
-        await callback.message.edit_text(
+        return (
             await subscription_required_message("motopair_menu"),
-            reply_markup=InlineKeyboardMarkup(
+            InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -48,9 +48,6 @@ async def cb_motopair_menu(callback: CallbackQuery, user=None):
                 ]
             ),
         )
-        await callback.answer()
-        return
-
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=uc.MOTOPAIR_PILOTS, callback_data="motopair_pilots")],
@@ -62,7 +59,24 @@ async def cb_motopair_menu(callback: CallbackQuery, user=None):
             [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],
         ]
     )
-    await callback.message.edit_text("🏍 Мотопара\n\nВыбери категорию:", reply_markup=kb)
+    return ("🏍 Мотопара\n\nВыбери категорию:", kb)
+
+
+@router.callback_query(F.data == "menu_motopair")
+async def cb_motopair_menu(callback: CallbackQuery, user=None):
+    intro, kb = await _motopair_menu_intro_and_kb(user)
+    try:
+        await callback.message.edit_text(intro, reply_markup=kb)
+    except TelegramBadRequest:
+        await callback.message.answer(intro, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data == CALLBACK_MOTOPAIR_MENU_PRESERVE)
+async def cb_motopair_menu_preserve(callback: CallbackQuery, user=None):
+    """Меню мотопары новым сообщением — чтобы не затирать карточку взаимного лайка / уведомление о лайке."""
+    intro, kb = await _motopair_menu_intro_and_kb(user)
+    await callback.message.answer(intro, reply_markup=kb)
     await callback.answer()
 
 

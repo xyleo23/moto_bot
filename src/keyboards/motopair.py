@@ -2,6 +2,9 @@
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# Не редактировать сообщение с контактом/лайком — открыть меню мотопары новым сообщением (см. cb_motopair_menu_preserve).
+CALLBACK_MOTOPAIR_MENU_PRESERVE = "motopair_menu_preserve"
+
 
 def get_filter_kb(role: str, current: dict) -> InlineKeyboardMarkup:
     """Filter setup keyboard. current = {gender, age_max, weight_max, height_max}."""
@@ -108,6 +111,12 @@ def get_like_notification_kb(from_user_internal_id: str) -> InlineKeyboardMarkup
                     text="👎 Пропустить", callback_data=f"reply_skip_{from_user_internal_id}"
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="« Мотопара",
+                    callback_data=CALLBACK_MOTOPAIR_MENU_PRESERVE,
+                ),
+            ],
         ]
     )
 
@@ -128,5 +137,12 @@ def get_match_kb(telegram_username: str | None, telegram_id: int | None) -> Inli
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="« В меню", callback_data="menu_motopair")])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="« Мотопара",
+                callback_data=CALLBACK_MOTOPAIR_MENU_PRESERVE,
+            )
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
