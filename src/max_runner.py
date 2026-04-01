@@ -69,6 +69,7 @@ from src.keyboards.shared import (
     get_max_seeking_confirm_rows,
 )
 from src.utils.progress import progress_prefix
+from src.utils.validators import validate_profile_field
 from src import texts
 from src.usecases.payment_metadata import donate_metadata, subscription_metadata
 from src.utils.text_format import split_plain_text_chunks
@@ -785,8 +786,9 @@ async def _handle_fsm_message(
 
     # ── PILOT steps ──────────────────────────────────────────────────────────
     if state == "pilot:name":
-        if not text:
-            await adapter.send_message(chat_id, "Введи имя текстом.", _cancel_kb())
+        ok, err = validate_profile_field("name", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _cancel_kb())
             return
         data["name"] = text.strip()
         await reg_state.set_state(user_id, "pilot:phone", data)
@@ -816,26 +818,25 @@ async def _handle_fsm_message(
         return
 
     if state == "pilot:age":
-        try:
-            age = int(text.strip())
-            if 18 <= age <= 80:
-                data["age"] = age
-                await reg_state.set_state(user_id, "pilot:gender", data)
-                logger.info("MAX reg: user_id=%s state=pilot:gender", user_id)
-                await adapter.send_message(
-                    chat_id,
-                    progress_prefix(4, PILOT_TOTAL_STEPS) + texts.REG_ASK_GENDER,
-                    _pilot_gender_kb(),
-                )
-            else:
-                await adapter.send_message(chat_id, texts.REG_ERROR_AGE, _cancel_kb())
-        except ValueError:
-            await adapter.send_message(chat_id, texts.REG_ERROR_NOT_NUMBER, _cancel_kb())
+        ok, err = validate_profile_field("age", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _cancel_kb())
+            return
+        age = int(str(text).strip())
+        data["age"] = age
+        await reg_state.set_state(user_id, "pilot:gender", data)
+        logger.info("MAX reg: user_id=%s state=pilot:gender", user_id)
+        await adapter.send_message(
+            chat_id,
+            progress_prefix(4, PILOT_TOTAL_STEPS) + texts.REG_ASK_GENDER,
+            _pilot_gender_kb(),
+        )
         return
 
     if state == "pilot:bike_brand":
-        if not text:
-            await adapter.send_message(chat_id, "Введи марку мотоцикла текстом.", _cancel_kb())
+        ok, err = validate_profile_field("moto_brand", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _cancel_kb())
             return
         data["bike_brand"] = text.strip()
         await reg_state.set_state(user_id, "pilot:bike_model", data)
@@ -848,8 +849,9 @@ async def _handle_fsm_message(
         return
 
     if state == "pilot:bike_model":
-        if not text:
-            await adapter.send_message(chat_id, "Введи модель мотоцикла текстом.", _cancel_kb())
+        ok, err = validate_profile_field("moto_model", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _cancel_kb())
             return
         data["bike_model"] = text.strip()
         await reg_state.set_state(user_id, "pilot:engine_cc", data)
@@ -908,13 +910,9 @@ async def _handle_fsm_message(
         if about and about.lower() in ("пропустить", "skip"):
             about = None
         if about:
-            max_len = get_settings().about_text_max_length
-            if len(about) > max_len:
-                await adapter.send_message(
-                    chat_id,
-                    texts.REG_ERROR_ABOUT_TOO_LONG.format(max_len=max_len),
-                    _pilot_about_kb(),
-                )
+            ok, err = validate_profile_field("about", text or "")
+            if not ok:
+                await adapter.send_message(chat_id, err, _pilot_about_kb())
                 return
         data["about"] = about
         await reg_state.set_state(user_id, "pilot:preview", data)
@@ -937,8 +935,9 @@ async def _handle_fsm_message(
 
     # ── PASSENGER steps ──────────────────────────────────────────────────────
     if state == "passenger:name":
-        if not text:
-            await adapter.send_message(chat_id, "Введи имя текстом.", _cancel_kb())
+        ok, err = validate_profile_field("name", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _cancel_kb())
             return
         data["name"] = text.strip()
         await reg_state.set_state(user_id, "passenger:phone", data)
@@ -967,21 +966,19 @@ async def _handle_fsm_message(
         return
 
     if state == "passenger:age":
-        try:
-            age = int(text.strip())
-            if 18 <= age <= 80:
-                data["age"] = age
-                await reg_state.set_state(user_id, "passenger:gender", data)
-                logger.info("MAX reg: user_id=%s state=passenger:gender", user_id)
-                await adapter.send_message(
-                    chat_id,
-                    progress_prefix(4, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_GENDER,
-                    _pax_gender_kb(),
-                )
-            else:
-                await adapter.send_message(chat_id, texts.REG_ERROR_AGE, _cancel_kb())
-        except ValueError:
-            await adapter.send_message(chat_id, texts.REG_ERROR_NOT_NUMBER, _cancel_kb())
+        ok, err = validate_profile_field("age", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _cancel_kb())
+            return
+        age = int(str(text).strip())
+        data["age"] = age
+        await reg_state.set_state(user_id, "passenger:gender", data)
+        logger.info("MAX reg: user_id=%s state=passenger:gender", user_id)
+        await adapter.send_message(
+            chat_id,
+            progress_prefix(4, PASSENGER_TOTAL_STEPS) + texts.REG_ASK_GENDER,
+            _pax_gender_kb(),
+        )
         return
 
     if state == "passenger:weight":
@@ -1033,13 +1030,9 @@ async def _handle_fsm_message(
         if about and about.lower() in ("пропустить", "skip"):
             about = None
         if about:
-            max_len = get_settings().about_text_max_length
-            if len(about) > max_len:
-                await adapter.send_message(
-                    chat_id,
-                    texts.REG_ERROR_ABOUT_TOO_LONG.format(max_len=max_len),
-                    _pax_about_kb(),
-                )
+            ok, err = validate_profile_field("about", text or "")
+            if not ok:
+                await adapter.send_message(chat_id, err, _pax_about_kb())
                 return
         data["about"] = about
         await reg_state.set_state(user_id, "passenger:preview", data)

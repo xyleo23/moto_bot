@@ -8,12 +8,12 @@ from src.platforms.base import Button, ButtonType
 from src.platforms.max_adapter import MaxAdapter
 from src.services import max_registration_state as reg_state
 from src.services.profile_edit_service import (
-    about_max_length,
     commit_passenger_profile_edit,
     commit_pilot_profile_edit,
     load_passenger_edit_fields,
     load_pilot_edit_fields,
 )
+from src.utils.validators import validate_profile_field
 
 
 def _cancel_kb() -> list:
@@ -253,27 +253,28 @@ async def max_profile_edit_handle_message(
 
     t = (text or "").strip()
     if field == "name":
-        if not t:
-            await adapter.send_message(chat_id, "Введи имя текстом.", _skip_row() + _cancel_kb())
+        ok, err = validate_profile_field("name", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _skip_row() + _cancel_kb())
             return
         await _advance(adapter, chat_id, user_id, user, role, data, "name", {"name": t})
     elif field == "age":
-        try:
-            age = int(t)
-            if 18 <= age <= 80:
-                await _advance(adapter, chat_id, user_id, user, role, data, "age", {"age": age})
-            else:
-                await adapter.send_message(chat_id, texts.REG_ERROR_AGE, _cancel_kb())
-        except ValueError:
-            await adapter.send_message(chat_id, texts.REG_ERROR_NOT_NUMBER, _cancel_kb())
+        ok, err = validate_profile_field("age", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _cancel_kb())
+            return
+        age = int(t)
+        await _advance(adapter, chat_id, user_id, user, role, data, "age", {"age": age})
     elif field == "bike_brand":
-        if not t:
-            await adapter.send_message(chat_id, "Введи марку.", _skip_row() + _cancel_kb())
+        ok, err = validate_profile_field("moto_brand", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _skip_row() + _cancel_kb())
             return
         await _advance(adapter, chat_id, user_id, user, role, data, "bike_brand", {"bike_brand": t})
     elif field == "bike_model":
-        if not t:
-            await adapter.send_message(chat_id, "Введи модель.", _skip_row() + _cancel_kb())
+        ok, err = validate_profile_field("moto_model", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _skip_row() + _cancel_kb())
             return
         await _advance(adapter, chat_id, user_id, user, role, data, "bike_model", {"bike_model": t})
     elif field == "engine_cc":
@@ -304,11 +305,9 @@ async def max_profile_edit_handle_message(
         except ValueError:
             await adapter.send_message(chat_id, texts.REG_ERROR_NOT_NUMBER, _cancel_kb())
     elif field == "about":
-        mx = about_max_length()
-        if len(t) > mx:
-            await adapter.send_message(
-                chat_id, texts.REG_ERROR_ABOUT_TOO_LONG.format(max_len=mx), _cancel_kb()
-            )
+        ok, err = validate_profile_field("about", text or "")
+        if not ok:
+            await adapter.send_message(chat_id, err, _cancel_kb())
             return
         await _advance(adapter, chat_id, user_id, user, role, data, "about", {"about": t})
 

@@ -15,8 +15,8 @@ from src.models.profile_pilot import ProfilePilot, DrivingStyle
 from src.models.profile_passenger import ProfilePassenger, PreferredStyle
 from src.models.base import get_session_factory
 from src.keyboards.menu import get_main_menu_kb
-from src.config import get_settings
 from src import texts
+from src.utils.validators import validate_profile_field
 from src.utils.tg_callback_message import edit_text_or_send_new
 
 router = Router()
@@ -138,7 +138,12 @@ async def cb_profile_edit_start(callback: CallbackQuery, state: FSMContext, user
 
 @router.message(PilotEdit.name, F.text)
 async def pilot_edit_name(message: Message, state: FSMContext):
-    await state.update_data(name=message.text.strip())
+    raw = message.text or ""
+    ok, err = validate_profile_field("name", raw)
+    if not ok:
+        await message.answer(err)
+        return
+    await state.update_data(name=raw.strip())
     await _pilot_edit_ask_age(message, state)
 
 
@@ -163,15 +168,13 @@ async def _pilot_edit_ask_age(message: Message, state: FSMContext):
 
 @router.message(PilotEdit.age, F.text)
 async def pilot_edit_age(message: Message, state: FSMContext):
-    try:
-        age = int(message.text.strip())
-        if 18 <= age <= 80:
-            await state.update_data(age=age)
-            await _pilot_edit_ask_brand(message, state)
-        else:
-            await message.answer(texts.REG_ERROR_AGE)
-    except ValueError:
-        await message.answer(texts.REG_ERROR_NOT_NUMBER)
+    ok, err = validate_profile_field("age", message.text or "")
+    if not ok:
+        await message.answer(err)
+        return
+    age = int(str(message.text).strip())
+    await state.update_data(age=age)
+    await _pilot_edit_ask_brand(message, state)
 
 
 @router.callback_query(F.data == _SKIP_CB, PilotEdit.age)
@@ -195,7 +198,12 @@ async def _pilot_edit_ask_brand(message: Message, state: FSMContext):
 
 @router.message(PilotEdit.bike_brand, F.text)
 async def pilot_edit_brand(message: Message, state: FSMContext):
-    await state.update_data(bike_brand=message.text.strip())
+    raw = message.text or ""
+    ok, err = validate_profile_field("moto_brand", raw)
+    if not ok:
+        await message.answer(err)
+        return
+    await state.update_data(bike_brand=raw.strip())
     await _pilot_edit_ask_model(message, state)
 
 
@@ -220,7 +228,12 @@ async def _pilot_edit_ask_model(message: Message, state: FSMContext):
 
 @router.message(PilotEdit.bike_model, F.text)
 async def pilot_edit_model(message: Message, state: FSMContext):
-    await state.update_data(bike_model=message.text.strip())
+    raw = message.text or ""
+    ok, err = validate_profile_field("moto_model", raw)
+    if not ok:
+        await message.answer(err)
+        return
+    await state.update_data(bike_model=raw.strip())
     await _pilot_edit_ask_cc(message, state)
 
 
@@ -348,11 +361,11 @@ async def _pilot_edit_ask_about(message: Message, state: FSMContext):
 
 @router.message(PilotEdit.about, F.text)
 async def pilot_edit_about(message: Message, state: FSMContext, user=None):
-    max_len = get_settings().about_text_max_length
-    about = message.text.strip()
-    if len(about) > max_len:
-        await message.answer(texts.REG_ERROR_ABOUT_TOO_LONG.format(max_len=max_len))
+    ok, err = validate_profile_field("about", message.text or "")
+    if not ok:
+        await message.answer(err)
         return
+    about = (message.text or "").strip()
     await state.update_data(about=about)
     await _finish_pilot_edit(message, state, user)
 
@@ -414,7 +427,12 @@ async def _finish_pilot_edit(message: Message, state: FSMContext, user):
 
 @router.message(PassengerEdit.name, F.text)
 async def passenger_edit_name(message: Message, state: FSMContext):
-    await state.update_data(name=message.text.strip())
+    raw = message.text or ""
+    ok, err = validate_profile_field("name", raw)
+    if not ok:
+        await message.answer(err)
+        return
+    await state.update_data(name=raw.strip())
     await _pax_edit_ask_age(message, state)
 
 
@@ -439,15 +457,13 @@ async def _pax_edit_ask_age(message: Message, state: FSMContext):
 
 @router.message(PassengerEdit.age, F.text)
 async def passenger_edit_age(message: Message, state: FSMContext):
-    try:
-        age = int(message.text.strip())
-        if 18 <= age <= 80:
-            await state.update_data(age=age)
-            await _pax_edit_ask_weight(message, state)
-        else:
-            await message.answer(texts.REG_ERROR_AGE)
-    except ValueError:
-        await message.answer(texts.REG_ERROR_NOT_NUMBER)
+    ok, err = validate_profile_field("age", message.text or "")
+    if not ok:
+        await message.answer(err)
+        return
+    age = int(str(message.text).strip())
+    await state.update_data(age=age)
+    await _pax_edit_ask_weight(message, state)
 
 
 @router.callback_query(F.data == _SKIP_CB, PassengerEdit.age)
@@ -608,11 +624,11 @@ async def _pax_edit_ask_about(message: Message, state: FSMContext):
 
 @router.message(PassengerEdit.about, F.text)
 async def passenger_edit_about(message: Message, state: FSMContext, user=None):
-    max_len = get_settings().about_text_max_length
-    about = message.text.strip()
-    if len(about) > max_len:
-        await message.answer(texts.REG_ERROR_ABOUT_TOO_LONG.format(max_len=max_len))
+    ok, err = validate_profile_field("about", message.text or "")
+    if not ok:
+        await message.answer(err)
         return
+    about = (message.text or "").strip()
     await state.update_data(about=about)
     await _finish_passenger_edit(message, state, user)
 
