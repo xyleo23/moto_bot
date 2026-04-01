@@ -1,11 +1,11 @@
-"""Форматирование и отправка баг-репортов суперадминам на той же платформе, что и пользователь."""
+"""Форматирование и отправка баг-репортов суперадминам (TG и MAX по записям User, fallback в Telegram по sid)."""
 
 from __future__ import annotations
 
 from html import escape
 
 from src.models.user import Platform, User
-from src.services.admin_multichannel_notify import notify_superadmins_same_platform
+from src.services.admin_multichannel_notify import notify_superadmins_multichannel
 
 
 def platform_label_ru(platform: Platform) -> str:
@@ -34,14 +34,13 @@ async def send_bug_report_to_superadmins(
     telegram_bot=None,
     max_adapter=None,
 ) -> None:
-    """Текст админам; при наличии фото — вторым сообщением скрин (та же платформа)."""
+    """Текст всем суперадминам по их платформам; при наличии фото — вторым сообщением скрин."""
     html = format_bug_report_html(user, description)
-    await notify_superadmins_same_platform(
+    await notify_superadmins_multichannel(
         html,
-        user.platform,
-        photo_file_id=None,
         telegram_bot=telegram_bot,
         max_adapter=max_adapter,
+        telegram_parse_mode="HTML",
     )
     if photo_file_id:
         cap = (
@@ -49,10 +48,10 @@ async def send_bug_report_to_superadmins(
             f"<b>Платформа:</b> {escape(platform_label_ru(user.platform))}\n"
             f"<b>ID:</b> <code>{user.platform_user_id}</code>"
         )
-        await notify_superadmins_same_platform(
+        await notify_superadmins_multichannel(
             cap,
-            user.platform,
-            photo_file_id=photo_file_id,
             telegram_bot=telegram_bot,
             max_adapter=max_adapter,
+            telegram_parse_mode="HTML",
+            photo_file_id=photo_file_id,
         )

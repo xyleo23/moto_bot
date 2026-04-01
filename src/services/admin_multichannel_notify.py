@@ -45,12 +45,42 @@ def tg_inline_markup_to_max_rows(markup: Any) -> list | None:
         return None
 
 
+async def _tg_notify_superadmin(
+    telegram_bot: Any,
+    chat_id: int,
+    html: str,
+    *,
+    telegram_markup: Any | None,
+    telegram_parse_mode: str | None,
+    photo_file_id: str | None,
+) -> None:
+    """Одно уведомление суперадмину в Telegram (текст или фото+подпись)."""
+    pm = telegram_parse_mode
+    if photo_file_id:
+        await telegram_bot.send_photo(
+            chat_id,
+            photo_file_id,
+            caption=html,
+            reply_markup=telegram_markup,
+            parse_mode=pm,
+        )
+    else:
+        await telegram_bot.send_message(
+            chat_id,
+            html,
+            reply_markup=telegram_markup,
+            parse_mode=pm,
+        )
+
+
 async def notify_superadmins_multichannel(
     html: str,
     *,
     telegram_markup: Any | None = None,
     telegram_bot: Any | None = None,
     max_adapter: Any | None = None,
+    telegram_parse_mode: str | None = None,
+    photo_file_id: str | None = None,
 ) -> None:
     """Для каждого ID из SUPERADMIN_IDS: если в БД есть User — пишем в его платформу; иначе fallback в Telegram."""
     settings = get_settings()
@@ -66,15 +96,27 @@ async def notify_superadmins_multichannel(
         if not matches:
             if telegram_bot:
                 try:
-                    await telegram_bot.send_message(sid, html, reply_markup=telegram_markup)
+                    await _tg_notify_superadmin(
+                        telegram_bot,
+                        sid,
+                        html,
+                        telegram_markup=telegram_markup,
+                        telegram_parse_mode=telegram_parse_mode,
+                        photo_file_id=photo_file_id,
+                    )
                 except Exception as e:
                     logger.warning("notify_superadmin sid=%s TG fallback: %s", sid, e)
             continue
         for u in matches:
             if u.platform == Platform.TELEGRAM and telegram_bot:
                 try:
-                    await telegram_bot.send_message(
-                        u.platform_user_id, html, reply_markup=telegram_markup
+                    await _tg_notify_superadmin(
+                        telegram_bot,
+                        u.platform_user_id,
+                        html,
+                        telegram_markup=telegram_markup,
+                        telegram_parse_mode=telegram_parse_mode,
+                        photo_file_id=photo_file_id,
                     )
                 except Exception as e:
                     logger.warning(
@@ -82,9 +124,23 @@ async def notify_superadmins_multichannel(
                     )
             elif u.platform == Platform.MAX and max_adapter:
                 try:
-                    await max_adapter.send_message(
-                        str(u.platform_user_id), html, max_rows
-                    )
+                    if photo_file_id:
+                        from src.services.cross_platform_notify import (
+                            max_send_message_with_optional_profile_photo,
+                        )
+
+                        await max_send_message_with_optional_profile_photo(
+                            max_adapter,
+                            str(u.platform_user_id),
+                            html,
+                            max_rows,
+                            photo_file_id,
+                            telegram_bot,
+                        )
+                    else:
+                        await max_adapter.send_message(
+                            str(u.platform_user_id), html, max_rows
+                        )
                 except Exception as e:
                     logger.warning(
                         "notify_superadmin MAX uid=%s: %s", u.platform_user_id, e
