@@ -1,11 +1,19 @@
 """MotoPair block — find pilot/passenger."""
 
 import uuid
+from html import escape
 
 from loguru import logger
 from aiogram import Router, F
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    InputMediaPhoto,
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -21,6 +29,9 @@ from src import texts
 from src import ui_copy as uc
 
 router = Router()
+
+# Защита от двойного нажатия по ленте мотопары (next / like / dislike).
+_MOTOPAIR_FEED_ACTION_USERS: set[int] = set()
 
 
 class CityAdminBlockStates(StatesGroup):
@@ -64,24 +75,25 @@ async def _motopair_menu_intro_and_kb(user) -> tuple[str, InlineKeyboardMarkup]:
 
 @router.callback_query(F.data == "menu_motopair")
 async def cb_motopair_menu(callback: CallbackQuery, user=None):
+    await callback.answer()
     intro, kb = await _motopair_menu_intro_and_kb(user)
     try:
         await callback.message.edit_text(intro, reply_markup=kb)
     except TelegramBadRequest:
         await callback.message.answer(intro, reply_markup=kb)
-    await callback.answer()
 
 
 @router.callback_query(F.data == CALLBACK_MOTOPAIR_MENU_PRESERVE)
 async def cb_motopair_menu_preserve(callback: CallbackQuery, user=None):
     """Меню мотопары новым сообщением — чтобы не затирать карточку взаимного лайка / уведомление о лайке."""
+    await callback.answer()
     intro, kb = await _motopair_menu_intro_and_kb(user)
     await callback.message.answer(intro, reply_markup=kb)
-    await callback.answer()
 
 
 @router.callback_query(F.data.in_(["motopair_pilots", "motopair_passengers"]))
 async def cb_motopair_category(callback: CallbackQuery, user=None):
+    await callback.answer()
     role = "pilot" if callback.data == "motopair_pilots" else "passenger"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -100,7 +112,6 @@ async def cb_motopair_category(callback: CallbackQuery, user=None):
     )
     cat_title = uc.MOTOPAIR_PILOTS if role == "pilot" else uc.MOTOPAIR_PASSENGERS
     await callback.message.edit_text(f"{cat_title}:", reply_markup=kb)
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("motopair_filter_"))
@@ -110,6 +121,7 @@ async def cb_motopair_filter_open(callback: CallbackQuery, user=None):
     if not user:
         await callback.answer()
         return
+    await callback.answer()
     role = "pilot" if "pilot" in callback.data else "passenger"
     current = await get_filter(effective_user_id(user), role)
     label = "пилотов" if role == "pilot" else "двоек"
@@ -117,7 +129,6 @@ async def cb_motopair_filter_open(callback: CallbackQuery, user=None):
         f"Фильтр для анкет {label}:\n\nВыбери параметры:",
         reply_markup=get_filter_kb(role, current),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("motopair_fset_"))
@@ -142,6 +153,7 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
     label = "пилотов" if role == "pilot" else "двоек"
 
     if param == "apply":
+        await callback.answer()
         try:
             await callback.message.edit_text(
                 f"Фильтр применён. Просматривай анкеты {label}.",
@@ -164,10 +176,10 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
         except TelegramBadRequest as e:
             if "message is not modified" not in str(e).lower():
                 raise
-        await callback.answer()
         return
 
     if param == "reset":
+        await callback.answer()
         await clear_filter(eff_uid, role)
         try:
             await callback.message.edit_text(
@@ -191,7 +203,6 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
         except TelegramBadRequest as e:
             if "message is not modified" not in str(e).lower():
                 raise
-        await callback.answer()
         return
 
     if param == "gender":
@@ -204,6 +215,7 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
         current["height_max"] = int(value) if value and value != "0" else None
 
     await set_filter(eff_uid, role, current)
+    await callback.answer()
     try:
         await callback.message.edit_text(
             f"Фильтр для анкет {label}:\n\nВыбери параметры:",
@@ -212,7 +224,6 @@ async def cb_motopair_filter_set(callback: CallbackQuery, user=None):
     except TelegramBadRequest as e:
         if "message is not modified" not in str(e).lower():
             raise
-    await callback.answer()
 
 
 def _parse_motopair_cb(data: str) -> tuple[str, int]:
@@ -228,16 +239,18 @@ def _parse_motopair_cb(data: str) -> tuple[str, int]:
 def _format_profile(profile) -> str:
     """Текст анкеты в ленте мотопары. Без @username и t.me — контакт только после взаимного лайка."""
     if hasattr(profile, "bike_brand"):
+        about = escape(profile.about) if profile.about else "—"
         return (
-            f"🏍 <b>{profile.name}</b>\n"
+            f"🏍 <b>{escape(profile.name)}</b>\n"
             f"Возраст: {profile.age}\n"
-            f"Мотоцикл: {profile.bike_brand} {profile.bike_model}, {profile.engine_cc} см³\n"
-            f"О себе: {profile.about or '—'}"
+            f"Мотоцикл: {escape(profile.bike_brand)} {escape(profile.bike_model)}, {profile.engine_cc} см³\n"
+            f"О себе: {about}"
         )
+    about = escape(profile.about) if profile.about else "—"
     return (
-        f"👤 <b>{profile.name}</b>\n"
+        f"👤 <b>{escape(profile.name)}</b>\n"
         f"Возраст: {profile.age}, Рост: {profile.height} см, Вес: {profile.weight} кг\n"
-        f"О себе: {profile.about or '—'}"
+        f"О себе: {about}"
     )
 
 
@@ -245,6 +258,10 @@ async def _show_motopair_card_at(message: Message, user, role: str, offset: int)
     """Показать анкету с индексом offset (после лайка/скипа — та же логика, что у списка)."""
     from src.services.motopair_service import get_next_profile
     from src.services.filter_store import get_filter
+
+    bot = message.bot
+    chat_id = message.chat.id
+    is_photo_message = bool(message.photo)
 
     eff_id = effective_user_id(user)
     filters = await get_filter(eff_id, role)
@@ -265,46 +282,95 @@ async def _show_motopair_card_at(message: Message, user, role: str, offset: int)
         ]
     )
 
-    if not profile:
+    async def _replace_with_empty() -> None:
+        t = texts.MOTOPAIR_NO_PROFILES
         try:
-            await message.edit_text(texts.MOTOPAIR_NO_PROFILES, reply_markup=empty_kb)
-        except Exception:
+            if is_photo_message:
+                await message.edit_caption(caption=t, reply_markup=empty_kb)
+            else:
+                await message.edit_text(t, reply_markup=empty_kb)
+        except TelegramBadRequest as e:
+            if "message is not modified" in (e.message or "").lower():
+                return
+            logger.warning("_show_motopair_card_at empty state edit failed: %s", e)
             try:
                 await message.delete()
-            except Exception:
+            except TelegramBadRequest:
                 pass
-            await message.answer(texts.MOTOPAIR_NO_PROFILES, reply_markup=empty_kb)
+            await bot.send_message(chat_id, t, reply_markup=empty_kb)
+
+    if not profile:
+        await _replace_with_empty()
         return
 
     text = _format_profile(profile)
     kb = _profile_kb_with_report(str(profile.id), role, offset, has_more)
+
+    async def _send_text_card() -> None:
+        await bot.send_message(
+            chat_id,
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+        )
+
+    async def _send_photo_card() -> None:
+        await bot.send_photo(
+            chat_id,
+            photo=profile.photo_file_id,
+            caption=text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+        )
+
     if profile.photo_file_id:
+        if is_photo_message:
+            try:
+                await message.edit_media(
+                    media=InputMediaPhoto(
+                        media=profile.photo_file_id,
+                        caption=text,
+                        parse_mode=ParseMode.HTML,
+                    ),
+                    reply_markup=kb,
+                )
+                return
+            except TelegramBadRequest as e:
+                if "message is not modified" in (e.message or "").lower():
+                    return
+                logger.warning("_show_motopair_card_at: edit_media failed, fallback delete+send: %s", e)
+            except Exception as e:
+                logger.warning("_show_motopair_card_at: edit_media failed, fallback delete+send: %s", e)
         try:
             await message.delete()
-            await message.answer_photo(
-                photo=profile.photo_file_id,
-                caption=text,
-                reply_markup=kb,
-            )
-        except Exception as e:
-            logger.warning("_show_motopair_card_at: answer_photo failed, fallback: %s", e)
-            try:
-                await message.edit_text(text, reply_markup=kb)
-            except Exception:
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-                await message.answer(text, reply_markup=kb)
-    else:
+        except TelegramBadRequest:
+            pass
         try:
-            await message.edit_text(text, reply_markup=kb)
-        except Exception:
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            await message.answer(text, reply_markup=kb)
+            await _send_photo_card()
+        except Exception as e:
+            logger.warning("_show_motopair_card_at: send_photo failed, text fallback: %s", e)
+            await _send_text_card()
+        return
+
+    # Текстовая анкета (без фото в профиле)
+    if is_photo_message:
+        try:
+            await message.delete()
+        except TelegramBadRequest:
+            pass
+        await _send_text_card()
+        return
+
+    try:
+        await message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    except TelegramBadRequest as e:
+        if "message is not modified" in (e.message or "").lower():
+            return
+        logger.warning("_show_motopair_card_at: edit_text failed, fallback send: %s", e)
+        await _send_text_card()
+    except Exception as e:
+        logger.warning("_show_motopair_card_at: edit_text failed, fallback send: %s", e)
+        await _send_text_card()
 
 
 @router.callback_query(F.data.startswith("motopair_list_") | F.data.startswith("motopair_next_"))
@@ -315,28 +381,36 @@ async def cb_motopair_list(callback: CallbackQuery, user=None):
         await callback.answer("Ошибка: пользователь не определён.", show_alert=True)
         return
 
-    if await check_subscription_required(user):
-        from src.services.subscription_messages import subscription_required_message
-
-        await callback.message.edit_text(
-            await subscription_required_message("motopair_cards"),
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="Оформить подписку", callback_data="profile_subscribe"
-                        ),
-                        InlineKeyboardButton(text="◀️ Назад", callback_data="menu_motopair"),
-                    ]
-                ]
-            ),
-        )
+    tg_uid = callback.from_user.id if callback.from_user else 0
+    if tg_uid in _MOTOPAIR_FEED_ACTION_USERS:
         await callback.answer()
         return
+    _MOTOPAIR_FEED_ACTION_USERS.add(tg_uid)
+    try:
+        if await check_subscription_required(user):
+            from src.services.subscription_messages import subscription_required_message
 
-    role, offset = _parse_motopair_cb(callback.data)
-    await _show_motopair_card_at(callback.message, user, role, offset)
-    await callback.answer()
+            await callback.answer()
+            await callback.message.edit_text(
+                await subscription_required_message("motopair_cards"),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="Оформить подписку", callback_data="profile_subscribe"
+                            ),
+                            InlineKeyboardButton(text="◀️ Назад", callback_data="menu_motopair"),
+                        ]
+                    ]
+                ),
+            )
+            return
+
+        role, offset = _parse_motopair_cb(callback.data)
+        await callback.answer()
+        await _show_motopair_card_at(callback.message, user, role, offset)
+    finally:
+        _MOTOPAIR_FEED_ACTION_USERS.discard(tg_uid)
 
 
 def _profile_kb_with_report(
@@ -443,6 +517,8 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
         ]
     )
 
+    await callback.answer()
+
     # Send to city admins + superadmins
     bot = callback.bot
 
@@ -483,7 +559,6 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
         await callback.message.answer(
             texts.MOTOPAIR_REPORT_SENT, reply_markup=get_back_to_menu_kb()
         )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("admin_report_accept_"))
@@ -709,93 +784,102 @@ async def cb_like(callback: CallbackQuery, user=None, bot=None):
         return
 
     eff_from = effective_user_id(user)
-    result = await process_like(eff_from, target_user.id, is_like=True)
+    tg_uid = callback.from_user.id if callback.from_user else 0
+    if tg_uid in _MOTOPAIR_FEED_ACTION_USERS:
+        await callback.answer()
+        return
+    _MOTOPAIR_FEED_ACTION_USERS.add(tg_uid)
+    try:
+        result = await process_like(eff_from, target_user.id, is_like=True)
 
-    if result["matched"]:
-        from src.services.activity_log_service import log_event
-        from src.models.activity_log import ActivityEventType
+        if result["matched"]:
+            await callback.answer()
+            from src.services.activity_log_service import log_event
+            from src.models.activity_log import ActivityEventType
 
-        await log_event(
-            ActivityEventType.MUTUAL_LIKE,
-            user_id=eff_from,
-            data={"target_user_id": str(target_user.id), "from_user_id": str(eff_from)},
-        )
-        from_text, _ = await get_profile_info_text(target_user.id)
-        to_text, liker_photo = await get_profile_info_text(eff_from)
-        from src.services.motopair_service import get_contact_footer_html
-
-        if bot:
-            from src.services.notification_templates import get_template
-            from src.services.cross_platform_notify import send_text_to_all_identities
-            from src.services.broadcast import get_max_adapter
-            from src.keyboards.shared import get_match_max_rows
-            from src.services.motopair_service import contact_footer_html_for_max_notifications
-
-            msg_target_base = await get_template("template_mutual_like_target", profile=to_text)
-            # Include contact info for TG (phone + username as HTML footer in message)
-            liker_contact = await get_contact_footer_html(eff_from)
-            msg_target_tg = msg_target_base + liker_contact
-            tg_mk = get_match_kb(callback.from_user.username, callback.from_user.id)
-            max_suffix = await contact_footer_html_for_max_notifications(eff_from)
-            canon_target = effective_user_id(target_user)
-            await send_text_to_all_identities(
-                canon_target,
-                msg_target_tg,
-                telegram_bot=bot,
-                max_adapter=get_max_adapter(),
-                tg_reply_markup=tg_mk,
-                max_kb_rows=get_match_max_rows(callback.from_user.username),
-                max_extra_html=max_suffix,
-                photo_file_id=liker_photo,
+            await log_event(
+                ActivityEventType.MUTUAL_LIKE,
+                user_id=eff_from,
+                data={"target_user_id": str(target_user.id), "from_user_id": str(eff_from)},
             )
+            from_text, _ = await get_profile_info_text(target_user.id)
+            to_text, liker_photo = await get_profile_info_text(eff_from)
+            from src.services.motopair_service import get_contact_footer_html
 
-        from src.services.notification_templates import get_template
+            if bot:
+                from src.services.notification_templates import get_template
+                from src.services.cross_platform_notify import send_text_to_all_identities
+                from src.services.broadcast import get_max_adapter
+                from src.keyboards.shared import get_match_max_rows
+                from src.services.motopair_service import contact_footer_html_for_max_notifications
 
-        msg_self_base = await get_template("template_mutual_like_self", profile=from_text)
-        # Include contact info for the liker (phone + link to matched user)
-        matched_contact = await get_contact_footer_html(target_user.id)
-        msg_self = msg_self_base + matched_contact
-        mk = get_match_kb(
-            target_user.platform_username,
-            target_user.platform_user_id,
-        )
-        try:
-            if callback.message.photo:
-                await callback.message.edit_caption(
-                    caption=msg_self,
-                    reply_markup=mk,
-                    parse_mode="HTML",
+                msg_target_base = await get_template("template_mutual_like_target", profile=to_text)
+                liker_contact = await get_contact_footer_html(eff_from)
+                msg_target_tg = msg_target_base + liker_contact
+                tg_mk = get_match_kb(callback.from_user.username, callback.from_user.id)
+                max_suffix = await contact_footer_html_for_max_notifications(eff_from)
+                canon_target = effective_user_id(target_user)
+                await send_text_to_all_identities(
+                    canon_target,
+                    msg_target_tg,
+                    telegram_bot=bot,
+                    max_adapter=get_max_adapter(),
+                    tg_reply_markup=tg_mk,
+                    max_kb_rows=get_match_max_rows(callback.from_user.username),
+                    max_extra_html=max_suffix,
+                    photo_file_id=liker_photo,
                 )
-            else:
-                await callback.message.edit_text(msg_self, reply_markup=mk, parse_mode="HTML")
-        except Exception as e:
-            logger.warning("cb_like mutual: edit failed: %s", e)
-            await callback.message.answer(msg_self, reply_markup=mk, parse_mode="HTML")
-    else:
-        if bot:
-            from_text, from_photo = await get_profile_info_text(eff_from)
+
             from src.services.notification_templates import get_template
-            from src.services.cross_platform_notify import notify_like_received_cross_platform
-            from src.services.broadcast import get_max_adapter
-            from src.keyboards.shared import get_like_notification_max_rows
-            from src.services.motopair_service import contact_footer_html_for_max_notifications
 
-            notify_text = await get_template("template_like_received", profile=from_text)
-            kb = get_like_notification_kb(str(eff_from))
-            max_suffix = await contact_footer_html_for_max_notifications(eff_from)
-            await notify_like_received_cross_platform(
-                effective_user_id(target_user),
-                notify_text,
-                from_photo,
-                telegram_bot=bot,
-                max_adapter=get_max_adapter(),
-                tg_reply_markup=kb,
-                max_kb_rows=get_like_notification_max_rows(str(eff_from)),
-                max_extra_html=max_suffix,
+            msg_self_base = await get_template("template_mutual_like_self", profile=from_text)
+            matched_contact = await get_contact_footer_html(target_user.id)
+            msg_self = msg_self_base + matched_contact
+            mk = get_match_kb(
+                target_user.platform_username,
+                target_user.platform_user_id,
             )
+            try:
+                if callback.message.photo:
+                    await callback.message.edit_caption(
+                        caption=msg_self,
+                        reply_markup=mk,
+                        parse_mode="HTML",
+                    )
+                else:
+                    await callback.message.edit_text(msg_self, reply_markup=mk, parse_mode="HTML")
+            except Exception as e:
+                logger.warning("cb_like mutual: edit failed: %s", e)
+                await callback.message.answer(
+                    msg_self, reply_markup=mk, parse_mode="HTML"
+                )
+        else:
+            if bot:
+                from_text, from_photo = await get_profile_info_text(eff_from)
+                from src.services.notification_templates import get_template
+                from src.services.cross_platform_notify import notify_like_received_cross_platform
+                from src.services.broadcast import get_max_adapter
+                from src.keyboards.shared import get_like_notification_max_rows
+                from src.services.motopair_service import contact_footer_html_for_max_notifications
 
-        await _show_motopair_card_at(callback.message, user, role, list_offset)
-    await callback.answer()
+                notify_text = await get_template("template_like_received", profile=from_text)
+                kb = get_like_notification_kb(str(eff_from))
+                max_suffix = await contact_footer_html_for_max_notifications(eff_from)
+                await notify_like_received_cross_platform(
+                    effective_user_id(target_user),
+                    notify_text,
+                    from_photo,
+                    telegram_bot=bot,
+                    max_adapter=get_max_adapter(),
+                    tg_reply_markup=kb,
+                    max_kb_rows=get_like_notification_max_rows(str(eff_from)),
+                    max_extra_html=max_suffix,
+                )
+
+            await callback.answer()
+            await _show_motopair_card_at(callback.message, user, role, list_offset)
+    finally:
+        _MOTOPAIR_FEED_ACTION_USERS.discard(tg_uid)
 
 
 @router.callback_query(F.data.startswith("dislike_"))
@@ -821,10 +905,18 @@ async def cb_dislike(callback: CallbackQuery, user=None):
         await callback.answer("Анкета не найдена.", show_alert=True)
         return
 
-    result = await process_like(effective_user_id(user), target_user.id, is_like=False)
-    next_offset = list_offset if result["blacklisted"] else list_offset + 1
-    await _show_motopair_card_at(callback.message, user, role, next_offset)
-    await callback.answer()
+    tg_uid = callback.from_user.id if callback.from_user else 0
+    if tg_uid in _MOTOPAIR_FEED_ACTION_USERS:
+        await callback.answer()
+        return
+    _MOTOPAIR_FEED_ACTION_USERS.add(tg_uid)
+    try:
+        result = await process_like(effective_user_id(user), target_user.id, is_like=False)
+        next_offset = list_offset if result["blacklisted"] else list_offset + 1
+        await callback.answer()
+        await _show_motopair_card_at(callback.message, user, role, next_offset)
+    finally:
+        _MOTOPAIR_FEED_ACTION_USERS.discard(tg_uid)
 
 
 @router.callback_query(F.data.startswith("reply_like_"))
