@@ -5,10 +5,12 @@ from __future__ import annotations
 import uuid
 
 from src.keyboards.contacts import (
+    contact_callback_uid,
     get_admin_contact_categories_kb,
     get_admin_contact_edit_fields_kb,
     get_admin_contact_edit_kb,
     get_admin_contacts_menu_kb,
+    parse_contact_callback_uid,
 )
 from src.keyboards.shared import append_main_menu_shortcut_row, get_main_menu_shortcut_row, max_kb_from_tg_inline
 from src.models.user import User
@@ -161,8 +163,9 @@ async def max_contacts_try_dispatch(
         for c, city_name in pairs[:15]:
             label = CAT_LABELS.get(c.category.value, c.category.value)
             prefix = f"{city_name} · " if multi_city else ""
+            uid = contact_callback_uid(c.id)
             rows.append(
-                [Button(f"{prefix}{c.name} ({label})", payload=f"admin_contact_view_{c.id}")]
+                [Button(f"{prefix}{c.name} ({label})", payload=f"admin_contact_view_{uid}")]
             )
         rows.append([Button("« Назад", payload="admin_contacts")])
         await adapter.send_message(chat_id, "Контакты:", append_main_menu_shortcut_row(rows))
@@ -171,7 +174,7 @@ async def max_contacts_try_dispatch(
     if data.startswith("admin_contact_view_"):
         cid_s = data.replace("admin_contact_view_", "", 1)
         try:
-            cuid = uuid.UUID(cid_s)
+            cuid = parse_contact_callback_uid(cid_s)
         except ValueError:
             return True
         c = await get_contact_by_id(cuid)
@@ -185,14 +188,14 @@ async def max_contacts_try_dispatch(
         await adapter.send_message(
             chat_id,
             body,
-            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cid_s))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cuid))),
         )
         return True
 
     if data.startswith("admin_contact_del_"):
         cid_s = data.replace("admin_contact_del_", "", 1)
         try:
-            cuid = uuid.UUID(cid_s)
+            cuid = parse_contact_callback_uid(cid_s)
         except ValueError:
             return True
         c = await get_contact_by_id(cuid)
@@ -216,7 +219,7 @@ async def max_contacts_try_dispatch(
     if data.startswith("admin_contact_edit_"):
         cid_s = data.replace("admin_contact_edit_", "", 1)
         try:
-            cuid = uuid.UUID(cid_s)
+            cuid = parse_contact_callback_uid(cid_s)
         except ValueError:
             return True
         c = await get_contact_by_id(cuid)
@@ -230,7 +233,9 @@ async def max_contacts_try_dispatch(
         await adapter.send_message(
             chat_id,
             f"Поля контакта <b>{c.name}</b>:",
-            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_fields_kb(cid_s))),
+            append_main_menu_shortcut_row(
+                max_kb_from_tg_inline(get_admin_contact_edit_fields_kb(cuid))
+            ),
         )
         return True
 
@@ -243,7 +248,7 @@ async def max_contacts_try_dispatch(
         if field not in _EDIT_FIELDS:
             return True
         try:
-            cuid = uuid.UUID(cid_s)
+            cuid = parse_contact_callback_uid(cid_s)
         except ValueError:
             return True
         c = await get_contact_by_id(cuid)
@@ -260,29 +265,32 @@ async def max_contacts_try_dispatch(
             "link": "Введи ссылку или «Пропустить» для очистки:",
             "address": "Введи адрес или «Пропустить» для очистки:",
         }
+        uid = contact_callback_uid(cuid)
         if field == "category":
             await reg_state.set_state(
                 user.platform_user_id,
                 "admin:contact_edit",
-                {"contact_id": cid_s, "field": "category"},
+                {"contact_id": uid, "field": "category"},
             )
             await adapter.send_message(
                 chat_id,
                 "Выбери категорию:",
                 append_main_menu_shortcut_row(
-                    max_kb_from_tg_inline(get_admin_contact_categories_kb(f"admin_contact_ev_{cid_s}"))
+                    max_kb_from_tg_inline(
+                        get_admin_contact_categories_kb(f"admin_contact_ev_{uid}")
+                    )
                 ),
             )
             return True
         await reg_state.set_state(
             user.platform_user_id,
             "admin:contact_edit",
-            {"contact_id": cid_s, "field": field},
+            {"contact_id": uid, "field": field},
         )
         await adapter.send_message(
             chat_id,
             prompts[field],
-            [[Button("« Отмена", payload=f"admin_contact_view_{cid_s}")], get_main_menu_shortcut_row()],
+            [[Button("« Отмена", payload=f"admin_contact_view_{uid}")], get_main_menu_shortcut_row()],
         )
         return True
 
@@ -388,7 +396,7 @@ async def handle_max_contact_fsm_text(
         if not cid_s or not field or field == "category":
             return
         try:
-            cuid = uuid.UUID(str(cid_s))
+            cuid = parse_contact_callback_uid(str(cid_s))
         except ValueError:
             await reg_state.clear_state(user_id)
             return
@@ -411,7 +419,7 @@ async def handle_max_contact_fsm_text(
             await adapter.send_message(
                 chat_id,
                 f"✅ Обновлено.\n\n{body}",
-                append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cid_s))),
+                append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cuid))),
             )
         else:
             await adapter.send_message(
@@ -437,7 +445,8 @@ async def handle_max_contact_category_fsm_callback(
     if idx < 0:
         return False
     ev_cid, cat = raw[:idx], raw[idx + 1 :]
-    if ev_cid != cid_s or cat not in _VALID_CATS:
+    uid_stored = contact_callback_uid(str(cid_s))
+    if contact_callback_uid(ev_cid) != uid_stored or cat not in _VALID_CATS:
         await reg_state.clear_state(user_id)
         return True
     u = await get_or_create_user(platform="max", platform_user_id=user_id)
@@ -445,7 +454,7 @@ async def handle_max_contact_category_fsm_callback(
         await reg_state.clear_state(user_id)
         return True
     try:
-        cuid = uuid.UUID(cid_s)
+        cuid = parse_contact_callback_uid(str(cid_s))
     except ValueError:
         await reg_state.clear_state(user_id)
         return True
@@ -462,7 +471,7 @@ async def handle_max_contact_category_fsm_callback(
         await adapter.send_message(
             chat_id,
             f"✅ Категория обновлена.\n\n{body}",
-            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cid_s))),
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(get_admin_contact_edit_kb(cuid))),
         )
     else:
         await adapter.send_message(chat_id, "Ошибка.", append_main_menu_shortcut_row(None))

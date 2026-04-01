@@ -12,10 +12,12 @@ from aiogram.fsm.state import State, StatesGroup
 from src.utils.tg_callback_message import edit_text_or_send_new
 
 from src.keyboards.contacts import (
+    contact_callback_uid,
     get_admin_contacts_menu_kb,
     get_admin_contact_categories_kb,
     get_admin_contact_edit_kb,
     get_admin_contact_edit_fields_kb,
+    parse_contact_callback_uid,
 )
 from src.services.useful_contacts_service import (
     can_manage_contacts_effective,
@@ -230,11 +232,12 @@ async def cb_admin_contact_list(callback: CallbackQuery, user=None):
         for c, city_name in pairs[:15]:
             label = CAT_LABELS.get(c.category.value, c.category.value)
             prefix = f"{city_name} · " if multi_city else ""
+            uid = contact_callback_uid(c.id)
             rows.append(
                 [
                     InlineKeyboardButton(
                         text=f"{prefix}{c.name} ({label})",
-                        callback_data=f"admin_contact_view_{c.id}",
+                        callback_data=f"admin_contact_view_{uid}",
                     )
                 ]
             )
@@ -253,7 +256,12 @@ async def cb_admin_contact_view(callback: CallbackQuery, user=None):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_view_", "")
-    c = await get_contact_by_id(uuid.UUID(cid))
+    try:
+        cuid = parse_contact_callback_uid(cid)
+    except ValueError:
+        await callback.answer("Некорректный ID.", show_alert=True)
+        return
+    c = await get_contact_by_id(cuid)
     if not c:
         await callback.answer("Не найден.", show_alert=True)
         return
@@ -264,7 +272,7 @@ async def cb_admin_contact_view(callback: CallbackQuery, user=None):
     await edit_text_or_send_new(
         callback,
         text,
-        reply_markup=get_admin_contact_edit_kb(cid),
+        reply_markup=get_admin_contact_edit_kb(c.id),
         parse_mode=ParseMode.HTML,
     )
     await callback.answer()
@@ -276,14 +284,19 @@ async def cb_admin_contact_del(callback: CallbackQuery, user=None):
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_del_", "")
-    c = await get_contact_by_id(uuid.UUID(cid))
+    try:
+        cuid = parse_contact_callback_uid(cid)
+    except ValueError:
+        await callback.answer("Некорректный ID.", show_alert=True)
+        return
+    c = await get_contact_by_id(cuid)
     if not c:
         await callback.answer("Не найден.", show_alert=True)
         return
     if not await can_manage_contact_effective(user, c):
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
-    ok = await delete_contact(uuid.UUID(cid))
+    ok = await delete_contact(cuid)
     if ok:
         await edit_text_or_send_new(
             callback,
@@ -301,7 +314,12 @@ async def cb_admin_contact_edit(callback: CallbackQuery, state: FSMContext, user
         await callback.answer("Доступ запрещён.")
         return
     cid = callback.data.replace("admin_contact_edit_", "")
-    c = await get_contact_by_id(uuid.UUID(cid))
+    try:
+        cuid = parse_contact_callback_uid(cid)
+    except ValueError:
+        await callback.answer("Некорректный ID.", show_alert=True)
+        return
+    c = await get_contact_by_id(cuid)
     if not c:
         await callback.answer("Контакт не найден.", show_alert=True)
         return
@@ -312,7 +330,7 @@ async def cb_admin_contact_edit(callback: CallbackQuery, state: FSMContext, user
     await edit_text_or_send_new(
         callback,
         f"Выбери поле для редактирования контакта <b>{escape(c.name)}</b>:",
-        reply_markup=get_admin_contact_edit_fields_kb(cid),
+        reply_markup=get_admin_contact_edit_fields_kb(c.id),
         parse_mode=ParseMode.HTML,
     )
     await callback.answer()
@@ -332,7 +350,12 @@ async def cb_admin_contact_edit_field(callback: CallbackQuery, state: FSMContext
     if field not in ("name", "description", "phone", "link", "address", "category"):
         await callback.answer()
         return
-    c = await get_contact_by_id(uuid.UUID(cid))
+    try:
+        cuid = parse_contact_callback_uid(cid)
+    except ValueError:
+        await callback.answer("Некорректный ID.", show_alert=True)
+        return
+    c = await get_contact_by_id(cuid)
     if not c:
         await callback.answer("Контакт не найден.", show_alert=True)
         return
@@ -347,13 +370,14 @@ async def cb_admin_contact_edit_field(callback: CallbackQuery, state: FSMContext
         "address": "Введи новый адрес (или «Пропустить» для очистки):",
         "category": "Выбери категорию:",
     }
-    await state.update_data(contact_edit_id=cid, contact_edit_field=field)
+    await state.update_data(contact_edit_id=contact_callback_uid(cuid), contact_edit_field=field)
     await state.set_state(ContactEditStates.value)
     if field == "category":
+        ev_prefix = f"admin_contact_ev_{contact_callback_uid(cuid)}"
         await edit_text_or_send_new(
             callback,
             "Выбери новую категорию:",
-            reply_markup=get_admin_contact_categories_kb(f"admin_contact_ev_{cid}"),
+            reply_markup=get_admin_contact_categories_kb(ev_prefix),
         )
     else:
         await edit_text_or_send_new(callback, prompts[field])
@@ -379,10 +403,17 @@ async def cb_admin_contact_edit_value_category(
         await callback.answer()
         return
     data = await state.get_data()
-    if data.get("contact_edit_field") != "category" or data.get("contact_edit_id") != cid:
+    uid_key = contact_callback_uid(cid)
+    if data.get("contact_edit_field") != "category" or data.get("contact_edit_id") != uid_key:
         await callback.answer()
         return
-    contact = await get_contact_by_id(uuid.UUID(cid))
+    try:
+        cuid = parse_contact_callback_uid(cid)
+    except ValueError:
+        await state.clear()
+        await callback.answer("Некорректный ID.", show_alert=True)
+        return
+    contact = await get_contact_by_id(cuid)
     if not contact:
         await state.clear()
         await callback.answer("Контакт не найден.", show_alert=True)
@@ -391,20 +422,20 @@ async def cb_admin_contact_edit_value_category(
         await state.clear()
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
-    ok = await update_contact(uuid.UUID(cid), category=cat)
+    ok = await update_contact(cuid, category=cat)
     await state.clear()
     if ok:
-        c = await get_contact_by_id(uuid.UUID(cid))
+        c = await get_contact_by_id(cuid)
         body = await format_useful_contact_admin_view(c)
         await edit_text_or_send_new(
             callback,
             f"✅ Категория обновлена.\n\n{body}",
-            reply_markup=get_admin_contact_edit_kb(cid),
+            reply_markup=get_admin_contact_edit_kb(cuid),
             parse_mode=ParseMode.HTML,
         )
     else:
         await edit_text_or_send_new(
-            callback, "Ошибка.", reply_markup=get_admin_contact_edit_kb(cid)
+            callback, "Ошибка.", reply_markup=get_admin_contact_edit_kb(cuid)
         )
     await callback.answer()
 
@@ -419,7 +450,13 @@ async def admin_contact_edit_value_message(message: Message, state: FSMContext, 
     if not cid or not field or field == "category":
         await state.clear()
         return
-    contact = await get_contact_by_id(uuid.UUID(cid))
+    try:
+        cuid = parse_contact_callback_uid(str(cid))
+    except ValueError:
+        await state.clear()
+        await message.answer("Некорректный ID.")
+        return
+    contact = await get_contact_by_id(cuid)
     if not contact or not await can_manage_contact_effective(user, contact):
         await state.clear()
         await message.answer("Доступ запрещён.")
@@ -431,14 +468,14 @@ async def admin_contact_edit_value_message(message: Message, state: FSMContext, 
         await message.answer("Название не может быть пустым.")
         return
     updates = {field: text if text else None}
-    ok = await update_contact(uuid.UUID(cid), **updates)
+    ok = await update_contact(cuid, **updates)
     await state.clear()
     if ok:
-        c = await get_contact_by_id(uuid.UUID(cid))
+        c = await get_contact_by_id(cuid)
         body = await format_useful_contact_admin_view(c)
         await message.answer(
             f"✅ Поле обновлено.\n\n{body}",
-            reply_markup=get_admin_contact_edit_kb(cid),
+            reply_markup=get_admin_contact_edit_kb(cuid),
             parse_mode=ParseMode.HTML,
         )
     else:

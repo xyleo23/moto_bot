@@ -499,7 +499,7 @@ async def msg_admin_broadcast(message: Message, state: FSMContext, user=None):
     await message.answer("Выбери сегмент для рассылки:", reply_markup=kb)
 
 
-@router.message(F.text == "📇 Контакты")
+@router.message(F.text.in_({"📇 Контакты", "📁 Контакты", "🗃️ Контакты"}))
 async def msg_admin_contacts(message: Message, user=None):
     from src.services.useful_contacts_service import can_manage_contacts_effective
 

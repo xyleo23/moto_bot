@@ -1,6 +1,29 @@
 """Contacts keyboards."""
 
+from uuid import UUID
+
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
+def contact_callback_uid(value: UUID | str) -> str:
+    """32-char hex for inline callback_data (Telegram max 64 bytes; UUID+long suffix was >64)."""
+    if isinstance(value, UUID):
+        return value.hex
+    text = str(value).strip()
+    if len(text) == 36 and text[8] == "-":
+        return UUID(text).hex
+    return text
+
+
+def parse_contact_callback_uid(raw: str) -> UUID:
+    """Parse id from callback (compact hex or legacy hyphenated UUID)."""
+    text = (raw or "").strip()
+    if len(text) == 32:
+        try:
+            return UUID(hex=text)
+        except ValueError:
+            pass
+    return UUID(text)
 
 
 def get_contacts_menu_kb() -> InlineKeyboardMarkup:
@@ -72,17 +95,18 @@ def get_admin_contact_categories_kb(prefix: str = "admin_contact_add") -> Inline
     )
 
 
-def get_admin_contact_edit_kb(contact_id: str) -> InlineKeyboardMarkup:
+def get_admin_contact_edit_kb(contact_id: UUID | str) -> InlineKeyboardMarkup:
+    uid = contact_callback_uid(contact_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✏ Изменить", callback_data=f"admin_contact_edit_{contact_id}"
+                    text="✏ Изменить", callback_data=f"admin_contact_edit_{uid}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🗑 Удалить", callback_data=f"admin_contact_del_{contact_id}"
+                    text="🗑 Удалить", callback_data=f"admin_contact_del_{uid}"
                 )
             ],
             [InlineKeyboardButton(text="« Назад", callback_data="admin_contact_list")],
@@ -90,37 +114,38 @@ def get_admin_contact_edit_kb(contact_id: str) -> InlineKeyboardMarkup:
     )
 
 
-def get_admin_contact_edit_fields_kb(contact_id: str) -> InlineKeyboardMarkup:
+def get_admin_contact_edit_fields_kb(contact_id: UUID | str) -> InlineKeyboardMarkup:
     """Клавиатура выбора поля для редактирования."""
+    uid = contact_callback_uid(contact_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Название", callback_data=f"admin_contact_ef_{contact_id}_name"
+                    text="Название", callback_data=f"admin_contact_ef_{uid}_name"
                 ),
                 InlineKeyboardButton(
-                    text="Описание", callback_data=f"admin_contact_ef_{contact_id}_description"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="Телефон", callback_data=f"admin_contact_ef_{contact_id}_phone"
-                ),
-                InlineKeyboardButton(
-                    text="Ссылка", callback_data=f"admin_contact_ef_{contact_id}_link"
+                    text="Описание", callback_data=f"admin_contact_ef_{uid}_description"
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text="Адрес", callback_data=f"admin_contact_ef_{contact_id}_address"
+                    text="Телефон", callback_data=f"admin_contact_ef_{uid}_phone"
                 ),
                 InlineKeyboardButton(
-                    text="Категория", callback_data=f"admin_contact_ef_{contact_id}_category"
+                    text="Ссылка", callback_data=f"admin_contact_ef_{uid}_link"
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text="« Назад", callback_data=f"admin_contact_view_{contact_id}"
+                    text="Адрес", callback_data=f"admin_contact_ef_{uid}_address"
+                ),
+                InlineKeyboardButton(
+                    text="Категория", callback_data=f"admin_contact_ef_{uid}_category"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад", callback_data=f"admin_contact_view_{uid}"
                 )
             ],
         ]
