@@ -79,7 +79,7 @@ async def run_telegram(shared_bot=None):
         admin_bug_reply,
         admin,
     )
-    from src.handlers.middleware import BlockCheckMiddleware, BotInjectMiddleware
+    from src.handlers.middleware import BlockCheckMiddleware, BotInjectMiddleware, RateLimitMiddleware
 
     settings = get_settings()
     if not settings.telegram_bot_token:
@@ -156,6 +156,8 @@ async def run_telegram(shared_bot=None):
             )
         return await handler(event, data)
 
+    dp.message.middleware(RateLimitMiddleware(_redis))
+    dp.callback_query.middleware(RateLimitMiddleware(_redis))
     dp.message.middleware(log_updates)
     dp.callback_query.middleware(log_updates)
     dp.message.middleware(BotInjectMiddleware(bot))

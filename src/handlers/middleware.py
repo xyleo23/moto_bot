@@ -5,8 +5,12 @@ from typing import Any, Awaitable, Callable, Dict
 from loguru import logger
 from aiogram import BaseMiddleware, Bot
 from aiogram.types import Message, CallbackQuery, TelegramObject
+from redis.asyncio import Redis
 
 from src.services.user import get_or_create_user
+
+_MSG_PER_MINUTE = 30
+_RATELIMIT_TTL_SEC = 60
 
 # Callback data prefixes and text triggers that bypass the block check.
 # SOS must be accessible at ALL times — even for blocked users.
@@ -57,6 +61,61 @@ def _is_sos_event(event: TelegramObject) -> bool:
         text = event.text or ""
         return text in _SOS_TEXT_TRIGGERS
     return False
+
+
+def _rate_limit_identity(event: TelegramObject, data: Dict[str, Any]) -> str | None:
+    """
+    Internal user id (UUID str) from data['user'] if present, else Telegram from_user.id str.
+    """
+    user = data.get("user")
+    if user is not None:
+        uid = getattr(user, "id", None)
+        if uid is not None:
+            return str(uid)
+    fu = data.get("event_from_user")
+    if fu is not None and getattr(fu, "id", None) is not None:
+        return str(fu.id)
+    if isinstance(event, Message) and event.from_user is not None:
+        return str(event.from_user.id)
+    if isinstance(event, CallbackQuery) and event.from_user is not None:
+        return str(event.from_user.id)
+    return None
+
+
+class RateLimitMiddleware(BaseMiddleware):
+    """
+    Redis sliding window: up to 30 message/callback events per minute per user key.
+    If redis is None, all updates pass through.
+    """
+
+    def __init__(self, redis: Redis | None) -> None:
+        self._redis = redis
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: Dict[str, Any],
+    ) -> Any:
+        if self._redis is None:
+            return await handler(event, data)
+
+        rid = _rate_limit_identity(event, data)
+        if rid is None:
+            return await handler(event, data)
+
+        key = f"ratelimit:{rid}:msg"
+        try:
+            count = await self._redis.incr(key)
+            if count == 1:
+                await self._redis.expire(key, _RATELIMIT_TTL_SEC)
+            if count > _MSG_PER_MINUTE:
+                return None
+        except Exception as e:
+            logger.warning("RateLimitMiddleware: Redis error (pass-through): %s", e)
+            return await handler(event, data)
+
+        return await handler(event, data)
 
 
 class BotInjectMiddleware(BaseMiddleware):
