@@ -34,6 +34,10 @@ class BotSettings(Base):
     # SOS rate limit (minutes between consecutive SOS per user)
     sos_cooldown_minutes: Mapped[int] = mapped_column(Integer, default=10)
 
+    # Auto-block threshold: block user when they receive this many reports
+    # 0 = disabled
+    auto_block_reports_threshold: Mapped[int] = mapped_column(Integer, default=5)
+
     # "About us" text shown in the О нас section
     about_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 

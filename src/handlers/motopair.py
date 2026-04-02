@@ -550,6 +550,22 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
         max_adapter=_max_a,
     )
 
+    from src.services.report_service import (
+        maybe_auto_block_after_report,
+        save_report,
+    )
+
+    await save_report(
+        reporter_user_id=user.id,
+        reported_user_id=target_user.id,
+        role=role,
+    )
+    await maybe_auto_block_after_report(
+        target_user.id,
+        telegram_bot=bot,
+        max_adapter=_max_a,
+    )
+
     try:
         if callback.message.photo:
             await callback.message.edit_caption(

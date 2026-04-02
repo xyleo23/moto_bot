@@ -33,7 +33,7 @@ async def update_bot_settings(**kwargs) -> BotSettings:
         subscription_enabled, subscription_price_month, subscription_price_season,
         event_creation_paid, event_creation_price,
         profile_raise_paid, profile_raise_price,
-        sos_cooldown_minutes, about_text
+        sos_cooldown_minutes, auto_block_reports_threshold, about_text
     """
     allowed = {
         "subscription_enabled",
@@ -44,6 +44,7 @@ async def update_bot_settings(**kwargs) -> BotSettings:
         "profile_raise_paid",
         "profile_raise_price",
         "sos_cooldown_minutes",
+        "auto_block_reports_threshold",
         "about_text",
     }
     filtered = {k: v for k, v in kwargs.items() if k in allowed}

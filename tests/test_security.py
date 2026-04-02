@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 
 from src.handlers.middleware import BlockCheckMiddleware, RateLimitMiddleware
 from src.services.motopair_service import get_profile_info_text
+from src.services.report_service import maybe_auto_block_after_report
 
 
 def _message_event(tg_uid: int = 42) -> Message:
@@ -217,3 +218,57 @@ async def test_profile_info_text_empty_about_returns_dash():
     about = None
     result = html.escape(str(about)) if about else "—"
     assert result == "—"
+
+
+@pytest.mark.asyncio
+async def test_auto_block_triggers_at_threshold():
+    uid = uuid4()
+    with (
+        patch(
+            "src.services.report_service.get_report_count",
+            new_callable=AsyncMock,
+            return_value=5,
+        ),
+        patch(
+            "src.services.report_service.get_settings_from_db",
+            new_callable=AsyncMock,
+        ) as mock_settings,
+        patch(
+            "src.services.report_service.auto_block_user",
+            new_callable=AsyncMock,
+        ) as mock_block,
+        patch(
+            "src.services.admin_multichannel_notify.notify_superadmins_multichannel",
+            new_callable=AsyncMock,
+        ),
+    ):
+        m = MagicMock()
+        m.auto_block_reports_threshold = 5
+        mock_settings.return_value = m
+        await maybe_auto_block_after_report(uid, telegram_bot=MagicMock(), max_adapter=None)
+    mock_block.assert_awaited_once_with(uid, reason="Авто-блокировка: 5 жалоб")
+
+
+@pytest.mark.asyncio
+async def test_auto_block_disabled_when_threshold_zero():
+    uid = uuid4()
+    with (
+        patch(
+            "src.services.report_service.get_report_count",
+            new_callable=AsyncMock,
+            return_value=10,
+        ),
+        patch(
+            "src.services.report_service.get_settings_from_db",
+            new_callable=AsyncMock,
+        ) as mock_settings,
+        patch(
+            "src.services.report_service.auto_block_user",
+            new_callable=AsyncMock,
+        ) as mock_block,
+    ):
+        m = MagicMock()
+        m.auto_block_reports_threshold = 0
+        mock_settings.return_value = m
+        await maybe_auto_block_after_report(uid, telegram_bot=None, max_adapter=None)
+    mock_block.assert_not_called()

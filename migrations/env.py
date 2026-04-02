@@ -14,7 +14,7 @@ from src.models import (
     City, CityAdmin, User, ProfilePilot, ProfilePassenger,
     Like, LikeBlacklist, Subscription, SubscriptionSettings,
     SosAlert, Event, EventRegistration, EventPairRequest,
-    UsefulContact, GlobalText,
+    UsefulContact, GlobalText, BotSettings, Report,
 )
 
 config = context.config

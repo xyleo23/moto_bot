@@ -13,6 +13,8 @@ from src.models.event_pair_request import EventPairRequest
 from src.models.useful_contact import UsefulContact
 from src.models.global_text import GlobalText
 from src.models.activity_log import ActivityLog
+from src.models.bot_settings import BotSettings
+from src.models.report import Report
 
 __all__ = [
     "Base",
@@ -34,4 +36,6 @@ __all__ = [
     "UsefulContact",
     "GlobalText",
     "ActivityLog",
+    "BotSettings",
+    "Report",
 ]
