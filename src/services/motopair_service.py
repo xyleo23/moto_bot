@@ -340,16 +340,18 @@ async def get_profile_info_text(user_id: UUID) -> tuple[str, str | None]:
     Returns (profile_text, photo_file_id) for user.
     Searches both pilot and passenger profiles.
     """
+    from html import escape
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         pilot = await session.execute(select(ProfilePilot).where(ProfilePilot.user_id == user_id))
         p = pilot.scalar_one_or_none()
         if p:
             text = (
-                f"🏍 {p.name}\n"
+                f"🏍 {escape(p.name or '')}\n"
                 f"Возраст: {p.age}\n"
-                f"{p.bike_brand} {p.bike_model}, {p.engine_cc} см³\n"
-                f"О себе: {p.about or '—'}"
+                f"{escape(p.bike_brand or '')} {escape(p.bike_model or '')}, {p.engine_cc} см³\n"
+                f"О себе: {escape(p.about) if p.about else '—'}"
             )
             return text, p.photo_file_id
 
@@ -359,9 +361,9 @@ async def get_profile_info_text(user_id: UUID) -> tuple[str, str | None]:
         pp = passenger.scalar_one_or_none()
         if pp:
             text = (
-                f"👤 {pp.name}\n"
+                f"👤 {escape(pp.name or '')}\n"
                 f"Возраст: {pp.age}, Рост: {pp.height} см, Вес: {pp.weight} кг\n"
-                f"О себе: {pp.about or '—'}"
+                f"О себе: {escape(pp.about) if pp.about else '—'}"
             )
             return text, pp.photo_file_id
 

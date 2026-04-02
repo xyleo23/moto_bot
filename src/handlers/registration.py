@@ -2,9 +2,11 @@
 
 import uuid
 from datetime import datetime
+from html import escape
 
 from loguru import logger
 from aiogram import Router, F
+from aiogram.enums import ParseMode
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -617,15 +619,17 @@ async def _show_pilot_preview(message: Message, state: FSMContext):
     data = await state.get_data()
     style_labels = {"calm": "Спокойный", "aggressive": "Динамичный", "mixed": "Смешанный"}
     gender_labels = {"male": "Муж", "female": "Жен", "other": "Другое"}
+    about_raw = data.get("about")
+    about_disp = escape(str(about_raw)) if about_raw else "—"
 
     text = (
         texts.PROFILE_PREVIEW_HEADER
-        + f"🏍 <b>{data.get('name')}</b>\n"
+        + f"🏍 <b>{escape(str(data.get('name') or ''))}</b>\n"
         + f"Возраст: {data.get('age')} лет\n"
         + f"Пол: {gender_labels.get(str(data.get('gender', '')), '—')}\n"
-        + f"Мотоцикл: {data.get('bike_brand')} {data.get('bike_model')}, {data.get('engine_cc')} см³\n"
+        + f"Мотоцикл: {escape(str(data.get('bike_brand') or ''))} {escape(str(data.get('bike_model') or ''))}, {data.get('engine_cc')} см³\n"
         + f"Стиль: {style_labels.get(str(data.get('driving_style', '')), '—')}\n"
-        + f"О себе: {data.get('about') or '—'}\n\n"
+        + f"О себе: {about_disp}\n\n"
         + texts.PROFILE_PREVIEW_CONFIRM
     )
     kb = InlineKeyboardMarkup(
@@ -640,11 +644,12 @@ async def _show_pilot_preview(message: Message, state: FSMContext):
                 photo=data["photo_file_id"],
                 caption=text,
                 reply_markup=kb,
+                parse_mode=ParseMode.HTML,
             )
             return
         except Exception as e:
             logger.warning("pilot_preview_show: answer_photo failed, falling back to text: %s", e)
-    await message.answer(text, reply_markup=kb)
+    await message.answer(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @router.callback_query(F.data == "pilot_preview_save", PilotRegistration.preview)
@@ -944,15 +949,17 @@ async def _show_passenger_preview(message: Message, state: FSMContext):
     data = await state.get_data()
     style_labels = {"calm": "Спокойный", "dynamic": "Динамичный", "mixed": "Смешанный"}
     gender_labels = {"male": "Муж", "female": "Жен", "other": "Другое"}
+    about_raw = data.get("about")
+    about_disp = escape(str(about_raw)) if about_raw else "—"
 
     text = (
         texts.PROFILE_PREVIEW_HEADER
-        + f"👤 <b>{data.get('name')}</b>\n"
+        + f"👤 <b>{escape(str(data.get('name') or ''))}</b>\n"
         + f"Возраст: {data.get('age')} лет\n"
         + f"Пол: {gender_labels.get(str(data.get('gender', '')), '—')}\n"
         + f"Вес: {data.get('weight')} кг, Рост: {data.get('height')} см\n"
         + f"Стиль: {style_labels.get(str(data.get('preferred_style', '')), '—')}\n"
-        + f"О себе: {data.get('about') or '—'}\n\n"
+        + f"О себе: {about_disp}\n\n"
         + texts.PROFILE_PREVIEW_CONFIRM
     )
     kb = InlineKeyboardMarkup(
@@ -967,13 +974,14 @@ async def _show_passenger_preview(message: Message, state: FSMContext):
                 photo=data["photo_file_id"],
                 caption=text,
                 reply_markup=kb,
+                parse_mode=ParseMode.HTML,
             )
             return
         except Exception as e:
             logger.warning(
                 "passenger_preview_show: answer_photo failed, falling back to text: %s", e
             )
-    await message.answer(text, reply_markup=kb)
+    await message.answer(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @router.callback_query(F.data == "pax_preview_save", PassengerRegistration.preview)
