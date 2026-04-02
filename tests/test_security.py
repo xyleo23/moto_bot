@@ -1,18 +1,22 @@
 """Security-related middleware tests."""
 
-from unittest.mock import AsyncMock, MagicMock
+import html
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import fakeredis.aioredis as fakeredis
 import pytest
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
-from src.handlers.middleware import RateLimitMiddleware
+from src.handlers.middleware import BlockCheckMiddleware, RateLimitMiddleware
+from src.services.motopair_service import get_profile_info_text
 
 
 def _message_event(tg_uid: int = 42) -> Message:
     ev = MagicMock(spec=Message)
     ev.from_user = MagicMock()
     ev.from_user.id = tg_uid
+    ev.text = ""
     return ev
 
 
@@ -49,3 +53,167 @@ async def test_rate_limit_no_redis_allows_all():
     for _ in range(50):
         await mw(handler, event, data)
     assert handler.call_count == 50
+
+
+def _make_user(is_blocked: bool = False, block_reason=None):
+    user = MagicMock()
+    user.id = "test-uuid-123"
+    user.is_blocked = is_blocked
+    user.block_reason = block_reason
+    return user
+
+
+@pytest.mark.asyncio
+async def test_block_check_allows_unblocked_user():
+    mw = BlockCheckMiddleware()
+    data: dict = {}
+    event = _message_event()
+    handler = AsyncMock(return_value="ok")
+    with patch(
+        "src.handlers.middleware.get_or_create_user",
+        new_callable=AsyncMock,
+        return_value=_make_user(is_blocked=False),
+    ):
+        await mw(handler, event, data)
+    assert handler.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_block_check_blocks_blocked_user():
+    mw = BlockCheckMiddleware()
+    data: dict = {}
+    event = MagicMock(spec=Message)
+    event.from_user = MagicMock()
+    event.from_user.id = 42
+    event.text = ""
+    event.answer = AsyncMock()
+    handler = AsyncMock()
+    with patch(
+        "src.handlers.middleware.get_or_create_user",
+        new_callable=AsyncMock,
+        return_value=_make_user(is_blocked=True, block_reason="spam"),
+    ):
+        await mw(handler, event, data)
+    assert handler.call_count == 0
+    event.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_block_check_allows_sos_event():
+    """SOS message bypasses block check — handler runs even if user is blocked."""
+    mw = BlockCheckMiddleware()
+    data: dict = {}
+    event = MagicMock(spec=Message)
+    event.text = "🚨 SOS"
+    event.from_user = MagicMock()
+    event.from_user.id = 7
+    handler = AsyncMock(return_value="ok")
+    with patch(
+        "src.handlers.middleware.get_or_create_user",
+        new_callable=AsyncMock,
+        return_value=_make_user(is_blocked=True),
+    ):
+        await mw(handler, event, data)
+    assert handler.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_block_check_callback_blocked_user():
+    mw = BlockCheckMiddleware()
+    data: dict = {}
+    event = MagicMock(spec=CallbackQuery)
+    event.from_user = MagicMock()
+    event.from_user.id = 99
+    event.data = ""
+    event.answer = AsyncMock()
+    handler = AsyncMock()
+    with patch(
+        "src.handlers.middleware.get_or_create_user",
+        new_callable=AsyncMock,
+        return_value=_make_user(is_blocked=True),
+    ):
+        await mw(handler, event, data)
+    assert handler.call_count == 0
+    event.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_profile_info_text_escapes_html_in_name():
+    uid = uuid4()
+    p = MagicMock()
+    p.name = "<script>alert(1)</script>"
+    p.age = 25
+    p.bike_brand = "Y"
+    p.bike_model = "Z"
+    p.engine_cc = 600
+    p.about = "ok"
+    p.photo_file_id = None
+    pilot_result = MagicMock()
+    pilot_result.scalar_one_or_none.return_value = p
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=pilot_result)
+    factory = MagicMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    factory.return_value = ctx
+    with patch("src.services.motopair_service.get_session_factory", return_value=factory):
+        text, _ = await get_profile_info_text(uid)
+    assert "<script>" not in text
+    assert "&lt;script&gt;" in text
+
+
+@pytest.mark.asyncio
+async def test_profile_info_text_escapes_ampersand():
+    uid = uuid4()
+    p = MagicMock()
+    p.name = "Moto & Bike <test>"
+    p.age = 30
+    p.bike_brand = "A"
+    p.bike_model = "B"
+    p.engine_cc = 800
+    p.about = "x"
+    p.photo_file_id = None
+    pilot_result = MagicMock()
+    pilot_result.scalar_one_or_none.return_value = p
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=pilot_result)
+    factory = MagicMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    factory.return_value = ctx
+    with patch("src.services.motopair_service.get_session_factory", return_value=factory):
+        text, _ = await get_profile_info_text(uid)
+    assert "&amp;" in text
+    assert "&lt;" in text
+
+
+@pytest.mark.asyncio
+async def test_profile_info_text_empty_about_returns_dash():
+    uid = uuid4()
+    p = MagicMock()
+    p.name = "Ivan"
+    p.age = 40
+    p.bike_brand = "K"
+    p.bike_model = "L"
+    p.engine_cc = 400
+    p.about = None
+    p.photo_file_id = None
+    pilot_result = MagicMock()
+    pilot_result.scalar_one_or_none.return_value = p
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=pilot_result)
+    factory = MagicMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    factory.return_value = ctx
+    with patch("src.services.motopair_service.get_session_factory", return_value=factory):
+        text, _ = await get_profile_info_text(uid)
+    assert "О себе: —" in text
+    assert "None" not in text
+
+    about = None
+    result = html.escape(str(about)) if about else "—"
+    assert result == "—"
