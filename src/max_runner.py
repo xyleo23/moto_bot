@@ -3689,6 +3689,18 @@ async def handle_motopair_report_max(adapter: MaxAdapter, chat_id: str, user, da
         telegram_bot=tg_bot,
         max_adapter=_max_a,
     )
+    from src.services.report_service import save_report, maybe_auto_block_after_report
+
+    await save_report(
+        reporter_user_id=user.id,
+        reported_user_id=target_user.id,
+        role=role,
+    )
+    await maybe_auto_block_after_report(
+        target_user.id,
+        telegram_bot=tg_bot,
+        max_adapter=_max_a,
+    )
     await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_SENT, get_back_to_menu_rows())
 
 
