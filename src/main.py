@@ -1,6 +1,7 @@
 """Main entry point for the bot."""
 
 import asyncio
+import os
 import sys
 
 from loguru import logger
@@ -8,6 +9,21 @@ from loguru import logger
 from src.config import get_settings
 from src.models.base import init_db
 from src.models import City
+
+
+def _make_tg_session():
+    """Build aiogram Bot session honouring TELEGRAM_PROXY env var.
+
+    Set TELEGRAM_PROXY=http://host:port (or socks5://...) when the host
+    cannot reach api.telegram.org directly. Requires aiohttp-socks for
+    socks5 schemes.
+    """
+    proxy = os.getenv("TELEGRAM_PROXY")
+    if not proxy:
+        return None
+    from aiogram.client.session.aiohttp import AiohttpSession
+
+    return AiohttpSession(proxy=proxy)
 
 
 async def ensure_cities():
@@ -113,6 +129,7 @@ async def run_telegram(shared_bot=None):
     bot = shared_bot or Bot(
         token=settings.telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=_make_tg_session(),
     )
 
     # Inject the Telegram bot into MAX runner for cross-platform SOS broadcasts.
@@ -310,6 +327,7 @@ async def run_max(shared_adapter=None):
             tg_bridge_bot = Bot(
                 token=settings.telegram_bot_token,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+                session=_make_tg_session(),
             )
             set_tg_bot(tg_bridge_bot)
             logger.info(
@@ -476,6 +494,7 @@ def main():
             tg_bot = Bot(
                 token=_settings.telegram_bot_token,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+                session=_make_tg_session(),
             )
             max_adapter = MaxAdapter()
 
