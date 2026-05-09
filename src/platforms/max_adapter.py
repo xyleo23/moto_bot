@@ -526,6 +526,49 @@ class MaxAdapter(PlatformAdapter):
             params["marker"] = marker
         return await self._request("GET", "/updates", params=params)
 
+    # ── Webhook subscriptions (replaces long polling from 2026-05-11) ─────────
+    DEFAULT_UPDATE_TYPES: tuple[str, ...] = (
+        "message_created",
+        "message_callback",
+        "user_added",
+    )
+
+    async def get_subscriptions(self) -> list[dict]:
+        """GET /subscriptions — list active webhook subscriptions for this bot."""
+        try:
+            r = await self._request("GET", "/subscriptions")
+        except Exception as e:
+            logger.warning("MAX GET /subscriptions failed: {}", e)
+            return []
+        if isinstance(r, dict):
+            subs = r.get("subscriptions")
+            if isinstance(subs, list):
+                return subs
+        if isinstance(r, list):
+            return r
+        return []
+
+    async def subscribe(
+        self,
+        url: str,
+        update_types: list[str] | tuple[str, ...] | None = None,
+    ) -> dict:
+        """POST /subscriptions — register a webhook URL.
+
+        MAX will POST update payloads (same JSON shape as one entry of
+        /updates response) to this URL. Replaces long polling.
+        """
+        body: dict = {
+            "url": url,
+            "update_types": list(update_types or self.DEFAULT_UPDATE_TYPES),
+            "version": "0.0.0",
+        }
+        return await self._request("POST", "/subscriptions", json_data=body)
+
+    async def unsubscribe(self, url: str) -> dict:
+        """DELETE /subscriptions?url=… — remove a webhook subscription."""
+        return await self._request("DELETE", "/subscriptions", params={"url": url})
+
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()

@@ -148,3 +148,95 @@ async def test_webhook_trust_proxy_x_real_ip():
         status, body = await handle_yookassa_webhook(request)
     assert status == 200
     assert body.get("status") == "ignored"
+
+
+# ── MAX webhook ──────────────────────────────────────────────────────────────
+
+
+def _max_settings(secret: str | None = "s3cret", url: str | None = None):
+    s = MagicMock()
+    s.max_webhook_secret = secret
+    s.max_webhook_url = url or (
+        f"https://example.com/webhook/max/{secret}" if secret else None
+    )
+    return s
+
+
+@pytest.mark.asyncio
+async def test_max_webhook_rejects_wrong_secret():
+    from src.webhooks import handle_max_webhook
+
+    request = AsyncMock()
+    request.match_info = {"secret": "wrong"}
+    request.json = AsyncMock(return_value={"update_type": "message_created"})
+
+    with patch("src.webhooks.get_settings", return_value=_max_settings()):
+        resp = await handle_max_webhook(request)
+    assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_max_webhook_rejects_when_secret_not_configured():
+    from src.webhooks import handle_max_webhook
+
+    request = AsyncMock()
+    request.match_info = {"secret": "any"}
+    request.json = AsyncMock(return_value={})
+
+    with patch(
+        "src.webhooks.get_settings",
+        return_value=_max_settings(secret=None, url=None),
+    ):
+        resp = await handle_max_webhook(request)
+    assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_max_webhook_accepts_valid_secret_and_dispatches():
+    from src import webhooks
+    from src.webhooks import handle_max_webhook, set_max_webhook_adapter
+
+    payload = {"update_type": "message_created", "timestamp": 1, "message": {}}
+    request = AsyncMock()
+    request.match_info = {"secret": "s3cret"}
+    request.json = AsyncMock(return_value=payload)
+
+    adapter = MagicMock()
+    set_max_webhook_adapter(adapter)
+
+    captured = {}
+
+    async def fake_process(adapter_arg, payload_arg):
+        captured["adapter"] = adapter_arg
+        captured["payload"] = payload_arg
+
+    with patch("src.webhooks.get_settings", return_value=_max_settings()), \
+         patch("src.max_runner.process_max_update", new=fake_process):
+        resp = await handle_max_webhook(request)
+        # Background task scheduled by handler — let it run.
+        import asyncio
+        await asyncio.sleep(0)
+
+    assert resp.status == 200
+    assert captured.get("adapter") is adapter
+    assert captured.get("payload") == payload
+    # Cleanup module-level state to avoid leaking into other tests.
+    webhooks.handle_max_webhook._adapter = None
+
+
+@pytest.mark.asyncio
+async def test_max_webhook_secret_derived_from_url_tail():
+    """If max_webhook_secret is empty, last URL segment is used."""
+    from src.webhooks import handle_max_webhook
+
+    request = AsyncMock()
+    request.match_info = {"secret": "abc123"}
+    request.json = AsyncMock(return_value={})
+
+    settings_mock = _max_settings(
+        secret=None, url="https://example.com/webhook/max/abc123"
+    )
+    with patch("src.webhooks.get_settings", return_value=settings_mock):
+        resp = await handle_max_webhook(request)
+    # Adapter not set → 200 no_adapter (means auth passed).
+    assert resp.status == 200

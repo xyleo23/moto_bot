@@ -39,6 +39,22 @@ class Settings(BaseSettings):
         default=None,
         description="MAX bot username for return_url (e.g. id123456_bot)",
     )
+    max_webhook_url: str | None = Field(
+        default=None,
+        description=(
+            "Public HTTPS URL where MAX will POST updates "
+            "(e.g. https://example.com/webhook/max/<secret>). "
+            "If set, bot subscribes via POST /subscriptions instead of long polling."
+        ),
+    )
+    max_webhook_secret: str | None = Field(
+        default=None,
+        description=(
+            "Secret path segment to authenticate incoming MAX webhook POSTs. "
+            "If set, only POST /webhook/max/<secret> is accepted. "
+            "Auto-derived from max_webhook_url if it ends with /<secret>."
+        ),
+    )
 
     # Database
     database_url: str = Field(

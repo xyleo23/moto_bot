@@ -359,6 +359,54 @@ async def run_max(shared_adapter=None):
     except Exception as e:
         logger.warning(f"Failed to set MAX bot commands: {e}")
 
+    # ── Webhook mode (preferred since 2026-05-11) ────────────────────────────
+    if settings.max_webhook_url:
+        from src.webhooks import set_max_webhook_adapter
+
+        set_max_webhook_adapter(adapter)
+
+        # When running in PLATFORM=max only, the aiohttp webhook server is not
+        # started by run_telegram — start it here so MAX can deliver POSTs.
+        webhook_task = None
+        if shared_adapter is None:
+            from src.webhooks import run_webhook_server
+
+            webhook_task = asyncio.create_task(run_webhook_server(tg_bridge_bot))
+        try:
+            existing = await adapter.get_subscriptions()
+            urls = {
+                s.get("url") for s in existing if isinstance(s, dict) and s.get("url")
+            }
+            if settings.max_webhook_url in urls:
+                logger.info(
+                    "MAX webhook already subscribed: {}", settings.max_webhook_url
+                )
+            else:
+                await adapter.subscribe(settings.max_webhook_url)
+                logger.info(
+                    "MAX webhook subscribed: {}", settings.max_webhook_url
+                )
+        except Exception as e:
+            logger.exception("MAX webhook subscribe failed: {}", e)
+
+        logger.info("MAX bot running in webhook mode (no polling)")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            if webhook_task is not None:
+                webhook_task.cancel()
+                try:
+                    await webhook_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            await adapter.close()
+            if tg_bridge_bot is not None:
+                try:
+                    await tg_bridge_bot.session.close()
+                except Exception as e:
+                    logger.debug("MAX worker: tg bridge bot session close: %s", e)
+        return
+
     logger.info("Starting MAX bot (long polling)...")
 
     marker = None

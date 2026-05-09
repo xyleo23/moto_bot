@@ -267,6 +267,58 @@ def set_webhook_bot(bot):
     handle_yookassa_webhook._bot = bot
 
 
+def _derive_max_webhook_secret() -> str | None:
+    """Resolve MAX webhook secret from settings (explicit or last URL segment)."""
+    s = get_settings()
+    if s.max_webhook_secret:
+        return s.max_webhook_secret.strip() or None
+    url = (s.max_webhook_url or "").rstrip("/")
+    if not url:
+        return None
+    seg = url.rsplit("/", 1)[-1]
+    return seg or None
+
+
+async def handle_max_webhook(request):
+    """POST /webhook/max/<secret> — receive a MAX update payload."""
+    from aiohttp import web
+
+    expected = _derive_max_webhook_secret()
+    secret = request.match_info.get("secret", "")
+    if not expected or not hmac.compare_digest(secret, expected):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    adapter = getattr(handle_max_webhook, "_adapter", None)
+    if adapter is None:
+        logger.warning("MAX webhook received but adapter is not registered")
+        return web.json_response({"status": "no_adapter"}, status=200)
+
+    # Ack quickly; process in background to keep response under MAX's timeout.
+    from src.max_runner import process_max_update
+
+    asyncio.create_task(_safe_process_max_update(adapter, payload))
+    return web.json_response({"status": "ok"}, status=200)
+
+
+async def _safe_process_max_update(adapter, payload: dict) -> None:
+    from src.max_runner import process_max_update
+
+    try:
+        await process_max_update(adapter, payload)
+    except Exception as e:
+        logger.exception("MAX webhook handler error: %s", e)
+
+
+def set_max_webhook_adapter(adapter) -> None:
+    """Inject MAX adapter so the /webhook/max route can dispatch updates."""
+    handle_max_webhook._adapter = adapter
+
+
 async def handle_health(request) -> AiohttpResponse:
     """Health check for monitoring. Probes DB. Usable in aiohttp routes."""
     from aiohttp import web
@@ -293,6 +345,10 @@ async def run_webhook_server(bot=None):
 
     app = web.Application()
     app.router.add_get("/health", handle_health)
+
+    if settings.max_webhook_url:
+        app.router.add_post("/webhook/max/{secret}", handle_max_webhook)
+        logger.info("MAX webhook route registered at /webhook/max/<secret>")
 
     if settings.yookassa_shop_id and settings.yookassa_secret_key:
 
