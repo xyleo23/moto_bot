@@ -1875,6 +1875,21 @@ async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
     """Process one MAX update."""
     from src.platforms.max_adapter import set_max_use_chat_id
 
+    # DEBUG: temporary raw-payload logger to diagnose MAX menu routing issue
+    try:
+        _utype = raw.get("update_type") if isinstance(raw, dict) else None
+        _msg = (raw or {}).get("message") or {}
+        _body = _msg.get("body") or {}
+        _txt = _body.get("text") if isinstance(_body, dict) else None
+        logger.info(
+            "MAX RAW: update_type={} text={!r} keys={}",
+            _utype,
+            _txt[:120] if isinstance(_txt, str) else _txt,
+            list(raw.keys()) if isinstance(raw, dict) else type(raw).__name__,
+        )
+    except Exception as e:
+        logger.warning("MAX RAW log error: {}", e)
+
     events = parse_updates({"updates": [raw]})
     for ev in events:
         try:
