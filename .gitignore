@@ -11,3 +11,5 @@ venv/
 htmlcov/
 .idea/
 .vscode/
+.backups/
+.claude/

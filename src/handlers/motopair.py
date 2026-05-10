@@ -447,6 +447,17 @@ def _profile_kb_with_report(
                 )
             ]
         )
+    else:
+        # Резервируем тот же ряд, что и «Следующая», под безопасную «конец ленты» —
+        # чтобы пользователь по мышечной памяти не попадал в «Пожаловаться» (баг В).
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.MOTOPAIR_END_OF_FEED_BTN,
+                    callback_data="menu_motopair",
+                )
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(

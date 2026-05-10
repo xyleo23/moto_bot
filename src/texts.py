@@ -296,6 +296,7 @@ MOTOPAIR_NO_PROFILES = (
 )
 MOTOPAIR_RAISE_BTN = "⬆️ Поднять мою анкету"
 MOTOPAIR_REPORT_BTN = "🚩 Пожаловаться"
+MOTOPAIR_END_OF_FEED_BTN = "🏁 Лента закончилась — в меню"
 MOTOPAIR_REPORT_SENT = "Жалоба отправлена администратору."
 MOTOPAIR_REPORT_ADMIN_TEXT = (
     "🚩 <b>Жалоба на анкету</b>\n\nОт: {reporter}\nНа: {reported}\nПрофиль: {profile_text}"

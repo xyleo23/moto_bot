@@ -195,6 +195,10 @@ def get_motopair_profile_rows(
     ]
     if has_more:
         rows.append([Button("➡️ Следующая", payload=f"motopair_next_{role}_{offset + 1}")])
+    else:
+        # Резервируем тот же ряд, что и «Следующая», под безопасную «конец ленты» —
+        # чтобы пользователь по мышечной памяти не попадал в «Пожаловаться» (баг В).
+        rows.append([Button("🏁 Лента закончилась — в меню", payload="menu_motopair")])
     rows.append([Button("🚩 Пожаловаться", payload=f"motopair_report_{profile_id}_{role}")])
     rows.append([Button("« Мотопара", payload="menu_motopair")])
     rows.append(get_main_menu_shortcut_row())

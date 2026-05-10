@@ -34,3 +34,41 @@ def test_next_button_present_when_more_profiles():
 
 def test_empty_state_text_constant_exists():
     assert "просмотрел" in texts.MOTOPAIR_NO_PROFILES
+
+
+def test_end_of_feed_button_replaces_next_row_when_no_more():
+    """Баг В: на последней анкете «Пожаловаться» НЕ должна занимать ряд «Следующей».
+
+    Ожидание: при has_more=False ряд под индексом 1 (после Like/Dislike)
+    содержит безопасную кнопку завершения ленты, а не «Пожаловаться».
+    """
+    kb = _profile_kb_with_report("00000000-0000-4000-8000-000000000001", "pilot", 0, False)
+    rows = kb.inline_keyboard
+
+    # Ряд 1 — кнопка завершения ленты, ведёт в меню мотопары.
+    assert len(rows[1]) == 1
+    btn = rows[1][0]
+    assert btn.callback_data == "menu_motopair"
+    assert btn.text == texts.MOTOPAIR_END_OF_FEED_BTN
+
+    # «Пожаловаться» — отдельным рядом ниже, не на месте «Следующей».
+    report_row_idx = next(
+        i for i, row in enumerate(rows)
+        if any((b.callback_data or "").startswith("motopair_report_") for b in row)
+    )
+    assert report_row_idx > 1
+
+
+def test_report_button_row_position_stable_across_has_more():
+    """«Пожаловаться» должна стоять на одинаковой геометрической позиции
+    в обоих случаях (has_more True/False), чтобы не было случайных нажатий."""
+    kb_more = _profile_kb_with_report("00000000-0000-4000-8000-000000000001", "pilot", 0, True)
+    kb_last = _profile_kb_with_report("00000000-0000-4000-8000-000000000001", "pilot", 0, False)
+
+    def report_row(kb):
+        for i, row in enumerate(kb.inline_keyboard):
+            if any((b.callback_data or "").startswith("motopair_report_") for b in row):
+                return i
+        return -1
+
+    assert report_row(kb_more) == report_row(kb_last)
