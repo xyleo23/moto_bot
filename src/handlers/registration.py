@@ -26,6 +26,7 @@ from src.services.registration_service import (
     apply_telegram_early_account_link,
     check_cross_platform_registration_link,
     mask_registration_phone_hint,
+    request_link_challenge,
     user_role_display_ru,
 )
 from src.services.user import get_or_create_user
@@ -153,6 +154,7 @@ class PilotRegistration(StatesGroup):
     name = State()
     phone = State()
     cross_link_confirm = State()
+    cross_link_code_input = State()
     age = State()
     gender = State()
     bike_brand = State()
@@ -170,6 +172,7 @@ class PassengerRegistration(StatesGroup):
     name = State()
     phone = State()
     cross_link_confirm = State()
+    cross_link_code_input = State()
     age = State()
     gender = State()
     weight = State()
@@ -268,9 +271,11 @@ async def pilot_phone_fallback(message: Message, state: FSMContext):
     StateFilter(PilotRegistration.cross_link_confirm, PassengerRegistration.cross_link_confirm),
 )
 async def tg_reg_cross_link_yes(callback: CallbackQuery, state: FSMContext, user=None):
+    """Заявитель подтвердил, что номер его. Запрашиваем 2FA-код у владельца канон-аккаунта."""
     await callback.answer()
     data = await state.get_data()
     raw = data.get("cross_link_canonical_id")
+    is_pilot = bool(data.get("cross_link_is_pilot", True))
     try:
         canon = uuid.UUID(str(raw))
     except (ValueError, TypeError):
@@ -278,28 +283,113 @@ async def tg_reg_cross_link_yes(callback: CallbackQuery, state: FSMContext, user
         await callback.message.answer(texts.REG_ERROR_SAVE)
         return
     pid = callback.from_user.id
-    err = await apply_telegram_early_account_link(pid, canon)
-    await state.clear()
+
+    err = await request_link_challenge(
+        Platform.TELEGRAM,
+        pid,
+        canon,
+        requestor_display=callback.from_user.full_name or "",
+    )
     if err:
-        logger.warning("tg_reg_cross_link_yes: apply failed uid=%s err=%s", pid, err)
-        await callback.message.answer(texts.REG_ERROR_SAVE)
+        logger.warning("tg_reg_cross_link_yes: challenge issue failed uid=%s err=%s", pid, err)
+        if err == "protected_target":
+            msg = texts.REG_CROSS_LINK_REFUSED_PROTECTED
+        elif err == "delivery_failed":
+            msg = texts.REG_CROSS_LINK_DELIVERY_FAILED
+        else:
+            msg = texts.REG_ERROR_SAVE
+        clean = _strip_tg_cross_link_keys(dict(data))
+        await state.set_data(clean)
+        await callback.message.answer(msg)
+        await _advance_telegram_reg_past_phone(
+            callback.message, state, data=clean, is_pilot=is_pilot
+        )
         return
+
+    platform_label = data.get("cross_link_platform_label", "Telegram")
+    await state.set_state(
+        PilotRegistration.cross_link_code_input
+        if is_pilot
+        else PassengerRegistration.cross_link_code_input
+    )
+    try:
+        await callback.message.edit_text(
+            texts.REG_CROSS_LINK_CODE_PROMPT.format(platform=platform_label),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("tg_reg_cross_link_yes: edit_text failed: %s", e)
+        await callback.message.answer(
+            texts.REG_CROSS_LINK_CODE_PROMPT.format(platform=platform_label),
+            parse_mode="HTML",
+        )
+
+
+_CODE_RE = __import__("re").compile(r"^\s*(\d{6})\s*$")
+
+
+@router.message(
+    StateFilter(
+        PilotRegistration.cross_link_code_input,
+        PassengerRegistration.cross_link_code_input,
+    ),
+    F.text,
+)
+async def tg_reg_cross_link_code(message: Message, state: FSMContext, user=None):
+    """Ввод 2FA-кода, полученного владельцем канонического аккаунта."""
+    text = (message.text or "").strip()
+    # Allow user to abort
+    if text.lower() in ("отмена", "/cancel", "❌ отмена"):
+        data = await state.get_data()
+        is_pilot = bool(data.get("cross_link_is_pilot", True))
+        clean = _strip_tg_cross_link_keys(dict(data))
+        await state.set_data(clean)
+        await message.answer("Хорошо, продолжим анкету без связывания.")
+        await _advance_telegram_reg_past_phone(
+            message, state, data=clean, is_pilot=is_pilot
+        )
+        return
+
+    m = _CODE_RE.match(text)
+    if not m:
+        await message.answer(texts.REG_CROSS_LINK_CODE_FORMAT)
+        return
+    code = m.group(1)
+
+    data = await state.get_data()
+    raw = data.get("cross_link_canonical_id")
+    is_pilot = bool(data.get("cross_link_is_pilot", True))
+    try:
+        canon = uuid.UUID(str(raw))
+    except (ValueError, TypeError):
+        await state.clear()
+        await message.answer(texts.REG_ERROR_SAVE)
+        return
+
+    pid = message.from_user.id
+    err = await apply_telegram_early_account_link(pid, canon, challenge_code=code)
+    if err == "invalid_code":
+        await message.answer(texts.REG_CROSS_LINK_CODE_INVALID)
+        return
+    if err:
+        logger.warning("tg_reg_cross_link_code: apply failed uid=%s err=%s", pid, err)
+        await state.clear()
+        await message.answer(texts.REG_ERROR_SAVE)
+        return
+
+    await state.clear()
     u = await get_or_create_user(
         platform="telegram",
         platform_user_id=pid,
-        username=callback.from_user.username,
-        first_name=callback.from_user.first_name,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
     )
-    try:
-        await callback.message.edit_text(texts.REG_CROSS_LINK_SUCCESS, parse_mode="HTML")
-    except Exception as e:
-        logger.warning("tg_reg_cross_link_yes: edit_text failed: %s", e)
-        await callback.message.answer(texts.REG_CROSS_LINK_SUCCESS, parse_mode="HTML")
-    await callback.message.answer(
+    await message.answer(texts.REG_CROSS_LINK_SUCCESS, parse_mode="HTML")
+    await message.answer(
         "✅",
         reply_markup=await get_reply_keyboard_for_user(pid, u),
     )
-    await callback.message.answer(
+    await message.answer(
         "Меню:",
         reply_markup=await get_main_menu_kb_for_user(pid, u),
     )

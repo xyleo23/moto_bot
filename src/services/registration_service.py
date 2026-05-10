@@ -286,18 +286,85 @@ async def check_max_registration_cross_link(
     )
 
 
+async def request_link_challenge(
+    requestor_platform: Platform,
+    requestor_platform_user_id: int,
+    canonical_user_id: UUID,
+    *,
+    requestor_display: str = "",
+) -> str | None:
+    """Выдать challenge-код владельцу канонического аккаунта на его платформу.
+
+    Возвращает None при успехе или код ошибки:
+        - "user_not_found"      — заявитель не найден
+        - "canonical_not_found" — каноник не найден
+        - "already_linked"      — у заявителя уже есть linked_user_id
+        - "protected_target"    — каноник = админ (страховка)
+        - "delivery_failed"     — не смогли доставить код владельцу
+        - "redis_unavailable"   — Redis не настроен
+    """
+    if await _is_canonical_account_protected(canonical_user_id):
+        return "protected_target"
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(User).where(
+                User.platform_user_id == requestor_platform_user_id,
+                User.platform == requestor_platform,
+            )
+        )
+        requestor = r.scalar_one_or_none()
+        if not requestor:
+            return "user_not_found"
+        if requestor.linked_user_id is not None:
+            return "already_linked"
+        r2 = await session.execute(select(User).where(User.id == canonical_user_id))
+        canon = r2.scalar_one_or_none()
+        if not canon:
+            return "canonical_not_found"
+        requestor_id = requestor.id
+
+    from src.services import account_link_security
+    from src.services.account_link_notify import send_link_challenge_to_owner
+
+    try:
+        code = await account_link_security.issue_challenge(canonical_user_id, requestor_id)
+    except RuntimeError:
+        logger.error("request_link_challenge: Redis unavailable")
+        return "redis_unavailable"
+
+    delivered = await send_link_challenge_to_owner(
+        canonical_user_id,
+        code,
+        requestor_platform=requestor_platform.value,
+        requestor_display=requestor_display,
+    )
+    if not delivered:
+        # Откатываем выданный код, чтобы не висел в Redis впустую.
+        await account_link_security.revoke(canonical_user_id, requestor_id)
+        return "delivery_failed"
+    return None
+
+
 async def apply_max_early_account_link(
     max_platform_user_id: int,
     canonical_user_id: UUID,
+    *,
+    challenge_code: str | None = None,
 ) -> str | None:
     """
     Link MAX user row to an existing canonical account before registration ends.
+
+    Required: challenge_code (полученный владельцем канонического аккаунта на
+    его платформу) — иначе линк не применяется.
 
     Returns None on success, or one of:
         - "user_not_found"
         - "canonical_not_found"
         - "already_linked"   — у заявителя уже есть linked_user_id (запрет перезаписи)
         - "protected_target" — цель = админ/суперадмин/city-admin (race-проверка)
+        - "invalid_code"     — код не совпал, просрочен, или не выдавался
     """
     if await _is_canonical_account_protected(canonical_user_id):
         logger.warning(
@@ -330,6 +397,17 @@ async def apply_max_early_account_link(
         canon = r2.scalar_one_or_none()
         if not canon:
             return "canonical_not_found"
+
+        # Проверка challenge-кода: владелец канонического аккаунта должен был
+        # получить код на свою платформу и передать его заявителю.
+        from src.services import account_link_security
+
+        ok = await account_link_security.verify_and_consume(
+            canonical_user_id, max_u.id, challenge_code or ""
+        )
+        if not ok:
+            return "invalid_code"
+
         max_u.linked_user_id = canonical_user_id
         if max_u.city_id is None and canon.city_id is not None:
             max_u.city_id = canon.city_id
@@ -341,12 +419,16 @@ async def apply_max_early_account_link(
 async def apply_telegram_early_account_link(
     telegram_platform_user_id: int,
     canonical_user_id: UUID,
+    *,
+    challenge_code: str | None = None,
 ) -> str | None:
     """
     Link Telegram user row to an existing canonical account before registration ends.
 
+    Required: challenge_code (см. apply_max_early_account_link).
+
     Returns None on success, or "user_not_found" / "canonical_not_found" /
-    "already_linked" / "protected_target".
+    "already_linked" / "protected_target" / "invalid_code".
     """
     if await _is_canonical_account_protected(canonical_user_id):
         logger.warning(
@@ -379,6 +461,15 @@ async def apply_telegram_early_account_link(
         canon = r2.scalar_one_or_none()
         if not canon:
             return "canonical_not_found"
+
+        from src.services import account_link_security
+
+        ok = await account_link_security.verify_and_consume(
+            canonical_user_id, tg_u.id, challenge_code or ""
+        )
+        if not ok:
+            return "invalid_code"
+
         tg_u.linked_user_id = canonical_user_id
         if tg_u.city_id is None and canon.city_id is not None:
             tg_u.city_id = canon.city_id

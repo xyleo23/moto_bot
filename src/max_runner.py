@@ -700,6 +700,52 @@ async def _handle_fsm_message(
             await max_profile_edit_handle_message(adapter, chat_id, user_id, text, u_pe, fsm)
         return
 
+    if state in ("pilot:cross_link_code_input", "passenger:cross_link_code_input"):
+        is_pilot = state.startswith("pilot")
+        t = (text or "").strip()
+        if t.lower() in ("отмена", "cancel", "❌ отмена"):
+            data = _strip_cross_link_keys(dict(data))
+            await adapter.send_message(
+                chat_id, "Хорошо, продолжим анкету без связывания.", _cancel_kb()
+            )
+            await _advance_max_reg_past_phone(
+                adapter, chat_id, user_id, data, is_pilot=is_pilot
+            )
+            return
+        import re as _re
+
+        m = _re.match(r"^\s*(\d{6})\s*$", t)
+        if not m:
+            await adapter.send_message(chat_id, texts.REG_CROSS_LINK_CODE_FORMAT, _cancel_kb())
+            return
+        code = m.group(1)
+        raw = data.get("cross_link_canonical_id")
+        try:
+            canon = uuid.UUID(str(raw))
+        except (ValueError, TypeError):
+            await adapter.send_message(chat_id, texts.REG_ERROR_SAVE, get_back_to_menu_rows())
+            await reg_state.clear_state(user_id)
+            return
+        err = await apply_max_early_account_link(user_id, canon, challenge_code=code)
+        if err == "invalid_code":
+            await adapter.send_message(
+                chat_id, texts.REG_CROSS_LINK_CODE_INVALID, _cancel_kb()
+            )
+            return
+        if err:
+            logger.warning("MAX cross_link_code: apply failed uid=%s err=%s", user_id, err)
+            await adapter.send_message(chat_id, texts.REG_ERROR_SAVE, get_back_to_menu_rows())
+            await reg_state.clear_state(user_id)
+            return
+        await reg_state.clear_state(user_id)
+        u_x = await get_or_create_user(platform="max", platform_user_id=user_id)
+        await adapter.send_message(
+            chat_id,
+            texts.REG_CROSS_LINK_SUCCESS,
+            await _main_menu_rows_for(u_x) if u_x else get_main_menu_rows(),
+        )
+        return
+
     if state == "bugreport:text":
         t = (text or "").strip()[:4000]
         if not t:
@@ -1399,25 +1445,47 @@ async def _handle_fsm_callback(
         "pilot:cross_link_confirm",
         "passenger:cross_link_confirm",
     ):
+        from src.services.registration_service import request_link_challenge
+        from src.models.user import Platform as _Platform
+
         raw = data.get("cross_link_canonical_id")
+        is_pilot = state.startswith("pilot")
         try:
             canon = uuid.UUID(str(raw))
         except (ValueError, TypeError):
             await adapter.send_message(chat_id, texts.REG_ERROR_SAVE, get_back_to_menu_rows())
             await reg_state.clear_state(user_id)
             return True
-        err = await apply_max_early_account_link(user_id, canon)
+
+        err = await request_link_challenge(
+            _Platform.MAX,
+            user_id,
+            canon,
+            requestor_display="",
+        )
         if err:
-            logger.warning("MAX cross_link_yes: apply failed uid=%s err=%s", user_id, err)
-            await adapter.send_message(chat_id, texts.REG_ERROR_SAVE, get_back_to_menu_rows())
-        else:
-            await reg_state.clear_state(user_id)
-            u_x = await get_or_create_user(platform="max", platform_user_id=user_id)
-            await adapter.send_message(
-                chat_id,
-                texts.REG_CROSS_LINK_SUCCESS,
-                await _main_menu_rows_for(u_x) if u_x else get_main_menu_rows(),
-            )
+            logger.warning("MAX cross_link_yes: challenge issue failed uid=%s err=%s", user_id, err)
+            if err == "protected_target":
+                msg = texts.REG_CROSS_LINK_REFUSED_PROTECTED
+            elif err == "delivery_failed":
+                msg = texts.REG_CROSS_LINK_DELIVERY_FAILED
+            else:
+                msg = texts.REG_ERROR_SAVE
+            await adapter.send_message(chat_id, msg, _cancel_kb())
+            data = _strip_cross_link_keys(dict(data))
+            await _advance_max_reg_past_phone(adapter, chat_id, user_id, data, is_pilot=is_pilot)
+            return True
+
+        platform_label = data.get("cross_link_platform_label", "Telegram")
+        next_state = (
+            "pilot:cross_link_code_input" if is_pilot else "passenger:cross_link_code_input"
+        )
+        await reg_state.set_state(user_id, next_state, data)
+        await adapter.send_message(
+            chat_id,
+            texts.REG_CROSS_LINK_CODE_PROMPT.format(platform=platform_label),
+            _cancel_kb(),
+        )
         return True
 
     if cb_data == "max_reg_cross_link_no" and state in (
