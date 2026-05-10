@@ -367,6 +367,45 @@ def _mock_user_full(role=None, platform_user_id: int = 100, linked_to=None):
 
 
 @pytest.mark.asyncio
+async def test_apply_max_link_refuses_without_valid_code():
+    """Без challenge_code линк не применяется, даже если всё остальное в порядке."""
+    from src.services.registration_service import apply_max_early_account_link
+    from src.services import account_link_security
+
+    canonical = uuid.uuid4()
+    requestor = _mock_user_full(linked_to=None)
+    requestor.platform = Platform.MAX
+    canon_user = _mock_user_full(platform_user_id=200)
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    requestor_result = MagicMock()
+    requestor_result.scalar_one_or_none.return_value = requestor
+    canon_result = MagicMock()
+    canon_result.scalar_one_or_none.return_value = canon_user
+    mock_session.execute = AsyncMock(side_effect=[requestor_result, canon_result])
+    mock_session.commit = AsyncMock()
+    mock_factory = MagicMock(return_value=mock_session)
+
+    # Redis недоступен → verify_and_consume вернёт False → invalid_code
+    account_link_security.set_redis_client(None)
+
+    async def _not_protected(_uid):
+        return False
+
+    with patch(
+        "src.services.registration_service.get_session_factory", return_value=mock_factory
+    ), patch(
+        "src.services.registration_service._is_canonical_account_protected",
+        new=_not_protected,
+    ):
+        err = await apply_max_early_account_link(123456, canonical, challenge_code="000000")
+    assert err == "invalid_code"
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_apply_max_link_refuses_already_linked_requestor():
     """Нельзя перезаписать уже установленный linked_user_id."""
     from src.services.registration_service import apply_max_early_account_link
@@ -381,22 +420,21 @@ async def test_apply_max_link_refuses_already_linked_requestor():
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    # 1) для _is_canonical_account_protected → канонических идентичностей нет
-    # 2) для apply_*: получить заявителя
-    # 3) для apply_*: получить каноник
-    protect_result = MagicMock()
-    protect_result.scalars.return_value.all.return_value = []
     requestor_result = MagicMock()
     requestor_result.scalar_one_or_none.return_value = requestor
-    canon_result = MagicMock()
-    canon_result.scalar_one_or_none.return_value = canon_user
-    mock_session.execute = AsyncMock(
-        side_effect=[protect_result, requestor_result, canon_result]
-    )
+    mock_session.execute = AsyncMock(side_effect=[requestor_result])
     mock_session.commit = AsyncMock()
     mock_factory = MagicMock(return_value=mock_session)
 
-    with patch("src.services.registration_service.get_session_factory", return_value=mock_factory):
+    async def _not_protected(_uid):
+        return False
+
+    with patch(
+        "src.services.registration_service.get_session_factory", return_value=mock_factory
+    ), patch(
+        "src.services.registration_service._is_canonical_account_protected",
+        new=_not_protected,
+    ):
         err = await apply_max_early_account_link(123456, canonical)
     assert err == "already_linked"
     mock_session.commit.assert_not_called()
