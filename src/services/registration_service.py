@@ -145,6 +145,43 @@ class MaxCrossLinkCheck:
     existing_role: UserRole | None = None
 
 
+async def _is_canonical_account_protected(canonical_user_id: UUID) -> bool:
+    """True, если у канонического аккаунта есть привилегии (super/city-admin)
+    хотя бы на одной из связанных идентичностей.
+
+    Защита: SUPERADMIN_IDS из .env проверяется через **все** платформенные
+    идентичности (TG + MAX), а не только через `User.role`, который в БД не
+    выставляется для суперадминов.
+    """
+    settings = get_settings()
+    sa_ids = set(settings.superadmin_ids)
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        r = await session.execute(
+            select(User).where(
+                (User.id == canonical_user_id) | (User.linked_user_id == canonical_user_id)
+            )
+        )
+        identities = list(r.scalars().all())
+        if not identities:
+            return False
+        for u in identities:
+            if u.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+                return True
+            if sa_ids and u.platform_user_id in sa_ids:
+                return True
+        # CityAdmin: связан с user_id любой из идентичностей
+        from src.models.city import CityAdmin  # local import to avoid cycle
+
+        identity_ids = [u.id for u in identities]
+        ca = await session.execute(
+            select(CityAdmin.id).where(CityAdmin.user_id.in_(identity_ids)).limit(1)
+        )
+        if ca.scalar_one_or_none() is not None:
+            return True
+    return False
+
+
 async def check_cross_platform_registration_link(
     phone_raw: str,
     *,
@@ -155,6 +192,9 @@ async def check_cross_platform_registration_link(
     """
     After the user entered a phone mid-registration: if another platform already
     has this number (same role), offer early link via linked_user_id.
+
+    Privileged accounts (superadmins, city admins) are never offered for linking
+    to prevent privilege escalation via phone-number takeover.
     """
     phone = normalize_registration_phone(phone_raw)
     if len(phone) < 5:
@@ -178,7 +218,24 @@ async def check_cross_platform_registration_link(
 
         r2 = await session.execute(select(User).where(User.id == canonical_uid))
         canon = r2.scalar_one_or_none()
-        if not canon or canon.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        if not canon:
+            return MaxCrossLinkCheck(kind=MaxCrossLinkKind.NONE)
+
+    if await _is_canonical_account_protected(canonical_uid):
+        logger.warning(
+            "cross-link: refused offer for protected canonical user %s "
+            "(requestor platform=%s id=%s)",
+            canonical_uid,
+            platform.value,
+            platform_user_id,
+        )
+        return MaxCrossLinkCheck(kind=MaxCrossLinkKind.NONE)
+
+    async with session_factory() as session:
+        # re-load canonical row for downstream checks (separate session is fine)
+        r2 = await session.execute(select(User).where(User.id == canonical_uid))
+        canon = r2.scalar_one_or_none()
+        if not canon:
             return MaxCrossLinkCheck(kind=MaxCrossLinkKind.NONE)
 
         if canon.role != registering_as:
@@ -235,8 +292,22 @@ async def apply_max_early_account_link(
 ) -> str | None:
     """
     Link MAX user row to an existing canonical account before registration ends.
-    Returns None on success, or an error code string.
+
+    Returns None on success, or one of:
+        - "user_not_found"
+        - "canonical_not_found"
+        - "already_linked"   — у заявителя уже есть linked_user_id (запрет перезаписи)
+        - "protected_target" — цель = админ/суперадмин/city-admin (race-проверка)
     """
+    if await _is_canonical_account_protected(canonical_user_id):
+        logger.warning(
+            "apply_max_early_account_link: refused for protected canonical user %s "
+            "(requestor max_id=%s)",
+            canonical_user_id,
+            max_platform_user_id,
+        )
+        return "protected_target"
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.execute(
@@ -248,6 +319,13 @@ async def apply_max_early_account_link(
         max_u = r.scalar_one_or_none()
         if not max_u:
             return "user_not_found"
+        if max_u.linked_user_id is not None:
+            logger.warning(
+                "apply_max_early_account_link: refused — user %s already linked to %s",
+                max_u.id,
+                max_u.linked_user_id,
+            )
+            return "already_linked"
         r2 = await session.execute(select(User).where(User.id == canonical_user_id))
         canon = r2.scalar_one_or_none()
         if not canon:
@@ -266,8 +344,19 @@ async def apply_telegram_early_account_link(
 ) -> str | None:
     """
     Link Telegram user row to an existing canonical account before registration ends.
-    Returns None on success, or an error code string.
+
+    Returns None on success, or "user_not_found" / "canonical_not_found" /
+    "already_linked" / "protected_target".
     """
+    if await _is_canonical_account_protected(canonical_user_id):
+        logger.warning(
+            "apply_telegram_early_account_link: refused for protected canonical user %s "
+            "(requestor tg_id=%s)",
+            canonical_user_id,
+            telegram_platform_user_id,
+        )
+        return "protected_target"
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         r = await session.execute(
@@ -279,6 +368,13 @@ async def apply_telegram_early_account_link(
         tg_u = r.scalar_one_or_none()
         if not tg_u:
             return "user_not_found"
+        if tg_u.linked_user_id is not None:
+            logger.warning(
+                "apply_telegram_early_account_link: refused — user %s already linked to %s",
+                tg_u.id,
+                tg_u.linked_user_id,
+            )
+            return "already_linked"
         r2 = await session.execute(select(User).where(User.id == canonical_user_id))
         canon = r2.scalar_one_or_none()
         if not canon:
@@ -351,20 +447,14 @@ async def finish_pilot_registration(
             )
             return "user_not_found"
 
-        # Cross-platform linking: check if another platform's user already has
-        # a profile with the same phone.  If so, link this user to the canonical
-        # account so data is shared between platforms.
-        canonical_uid = await _find_canonical_user_by_phone(session, phone, u.platform)
-        if canonical_uid and u.linked_user_id != canonical_uid:
-            u.linked_user_id = canonical_uid
-            logger.info(
-                "finish_pilot_registration: linked user %s → canonical %s (phone match)",
-                u.id,
-                canonical_uid,
-            )
-
-        # Store profile under the canonical user's id so both platforms see the
-        # same profile data.
+        # ВАЖНО: автоматическая кросс-платформенная связка по совпадению номера
+        # телефона удалена. Линк применяется только через явное подтверждение
+        # пользователя в `apply_*_early_account_link` (cross-link offer flow),
+        # иначе ввод чужого номера на этапе регистрации позволял
+        # незаметно угнать чужой аккаунт.
+        # Профиль сохраняется под существующей записью пользователя; если линк
+        # был ранее установлен через подтверждённый offer — `u.linked_user_id`
+        # уже выставлен и профиль ляжет под канонический id.
         profile_owner_id = u.linked_user_id if u.linked_user_id else u.id
 
         existing = await session.execute(
@@ -468,17 +558,8 @@ async def finish_passenger_registration(
 
         u.role = UserRole.PASSENGER
 
-        # Cross-platform linking: check if another platform's user already has
-        # a profile with the same phone.
-        canonical_uid = await _find_canonical_user_by_phone(session, phone_str, u.platform)
-        if canonical_uid and u.linked_user_id != canonical_uid:
-            u.linked_user_id = canonical_uid
-            logger.info(
-                "finish_passenger_registration: linked user %s → canonical %s (phone match)",
-                u.id,
-                canonical_uid,
-            )
-
+        # ВАЖНО: автоматическая кросс-платформенная связка по совпадению номера
+        # удалена — см. комментарий в `finish_pilot_registration`.
         profile_owner_id = u.linked_user_id if u.linked_user_id else u.id
 
         existing = await session.execute(

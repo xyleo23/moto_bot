@@ -113,8 +113,6 @@ async def test_pilot_returns_none_on_success():
     mock_session.execute = AsyncMock(
         side_effect=[
             user_result,
-            _scalar_none_result(),
-            _scalar_none_result(),
             existing_profile_result,
         ]
     )
@@ -148,8 +146,6 @@ async def test_pilot_updates_existing_profile():
     mock_session.execute = AsyncMock(
         side_effect=[
             user_result,
-            _scalar_none_result(),
-            _scalar_none_result(),
             profile_result,
         ]
     )
@@ -184,8 +180,6 @@ async def test_pilot_returns_db_error_on_commit_failure():
     mock_session.execute = AsyncMock(
         side_effect=[
             user_result,
-            _scalar_none_result(),
-            _scalar_none_result(),
             no_profile_result,
         ]
     )
@@ -257,8 +251,6 @@ async def test_passenger_returns_none_on_success():
     mock_session.execute = AsyncMock(
         side_effect=[
             user_result,
-            _scalar_none_result(),
-            _scalar_none_result(),
             no_profile_result,
         ]
     )
@@ -292,8 +284,6 @@ async def test_passenger_sets_role_to_passenger():
     mock_session.execute = AsyncMock(
         side_effect=[
             user_result,
-            _scalar_none_result(),
-            _scalar_none_result(),
             no_profile_result,
         ]
     )
@@ -324,8 +314,6 @@ async def test_passenger_db_error_returns_db_error():
     mock_session.execute = AsyncMock(
         side_effect=[
             user_result,
-            _scalar_none_result(),
-            _scalar_none_result(),
             no_profile_result,
         ]
     )
@@ -360,3 +348,113 @@ def test_registration_phone_lookup_variants_legacy():
     v = registration_phone_lookup_variants("+79001234567")
     assert "+79001234567" in v
     assert "89001234567" in v
+
+
+# ── Защита от захвата аккаунта через ввод чужого номера ──────────────────────
+
+
+def _mock_user_full(role=None, platform_user_id: int = 100, linked_to=None):
+    """Полноценный mock записи User для проверок защиты."""
+    from src.models.user import UserRole
+
+    u = MagicMock()
+    u.id = uuid.uuid4()
+    u.role = role or UserRole.PILOT
+    u.platform_user_id = platform_user_id
+    u.linked_user_id = linked_to
+    u.platform = Platform.TELEGRAM
+    return u
+
+
+@pytest.mark.asyncio
+async def test_apply_max_link_refuses_already_linked_requestor():
+    """Нельзя перезаписать уже установленный linked_user_id."""
+    from src.services.registration_service import apply_max_early_account_link
+
+    canonical = uuid.uuid4()
+    existing_link = uuid.uuid4()
+    requestor = _mock_user_full(linked_to=existing_link)
+    requestor.platform = Platform.MAX
+
+    canon_user = _mock_user_full(platform_user_id=200)
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    # 1) для _is_canonical_account_protected → канонических идентичностей нет
+    # 2) для apply_*: получить заявителя
+    # 3) для apply_*: получить каноник
+    protect_result = MagicMock()
+    protect_result.scalars.return_value.all.return_value = []
+    requestor_result = MagicMock()
+    requestor_result.scalar_one_or_none.return_value = requestor
+    canon_result = MagicMock()
+    canon_result.scalar_one_or_none.return_value = canon_user
+    mock_session.execute = AsyncMock(
+        side_effect=[protect_result, requestor_result, canon_result]
+    )
+    mock_session.commit = AsyncMock()
+    mock_factory = MagicMock(return_value=mock_session)
+
+    with patch("src.services.registration_service.get_session_factory", return_value=mock_factory):
+        err = await apply_max_early_account_link(123456, canonical)
+    assert err == "already_linked"
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_max_link_refuses_protected_target_via_superadmin_id():
+    """Нельзя линковаться к каноническому аккаунту, чей TG-id числится в SUPERADMIN_IDS."""
+    from src.services.registration_service import apply_max_early_account_link
+
+    canonical = uuid.uuid4()
+    canon_user = _mock_user_full(platform_user_id=999_111_222)  # суперадмин по env
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    protect_result = MagicMock()
+    protect_result.scalars.return_value.all.return_value = [canon_user]
+    mock_session.execute = AsyncMock(return_value=protect_result)
+    mock_factory = MagicMock(return_value=mock_session)
+
+    fake_settings = MagicMock()
+    fake_settings.superadmin_ids = [999_111_222]
+
+    with patch(
+        "src.services.registration_service.get_session_factory", return_value=mock_factory
+    ), patch("src.services.registration_service.get_settings", return_value=fake_settings):
+        err = await apply_max_early_account_link(123, canonical)
+    assert err == "protected_target"
+
+
+@pytest.mark.asyncio
+async def test_finish_pilot_registration_no_silent_link_on_phone_match():
+    """`finish_pilot_registration` НЕ должен ставить linked_user_id молча по совпадению номера.
+
+    Раньше код искал каноника по номеру и тихо линковал; теперь это убрано.
+    Тест: даже если в БД есть профиль с тем же номером, регистрация не трогает linked_user_id.
+    """
+    from src.services.registration_service import finish_pilot_registration
+
+    user = _mock_user_full(linked_to=None)
+    profile_result = MagicMock()
+    profile_result.scalar_one_or_none.return_value = None
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = user
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session.add = MagicMock()
+    # Только 2 запроса: User + ProfilePilot. Никаких phone-lookup.
+    mock_session.execute = AsyncMock(side_effect=[user_result, profile_result])
+    mock_session.commit = AsyncMock()
+    mock_factory = MagicMock(return_value=mock_session)
+
+    with patch("src.services.registration_service.get_session_factory", return_value=mock_factory):
+        result = await finish_pilot_registration(Platform.MAX, user.id, _make_pilot_data())
+
+    assert result is None
+    # Ключевое: linked_user_id не был выставлен в обход подтверждения
+    assert user.linked_user_id is None
