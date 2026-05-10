@@ -1877,23 +1877,9 @@ async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
 
     # DEBUG: temporary raw-payload logger to diagnose MAX menu routing issue
     try:
-        _utype = raw.get("update_type") if isinstance(raw, dict) else None
-        _msg = (raw or {}).get("message") or {}
-        _body = _msg.get("body") or {}
-        _txt = _body.get("text") if isinstance(_body, dict) else None
-        _cb = (raw or {}).get("callback") or {}
-        _cb_payload = _cb.get("payload") if isinstance(_cb, dict) else None
-        _cb_text = _cb.get("text") if isinstance(_cb, dict) else None
-        _cb_uid = (_cb.get("user") or {}).get("user_id") if isinstance(_cb, dict) else None
-        logger.info(
-            "MAX RAW: update_type={} text={!r} cb_payload={!r} cb_text={!r} cb_user={} cb_keys={}",
-            _utype,
-            _txt[:120] if isinstance(_txt, str) else _txt,
-            _cb_payload[:80] if isinstance(_cb_payload, str) else _cb_payload,
-            _cb_text[:80] if isinstance(_cb_text, str) else _cb_text,
-            _cb_uid,
-            list(_cb.keys()) if isinstance(_cb, dict) else None,
-        )
+        import json as _json
+
+        logger.info("MAX RAW FULL: {}", _json.dumps(raw, ensure_ascii=False)[:1500])
     except Exception as e:
         logger.warning("MAX RAW log error: {}", e)
 
