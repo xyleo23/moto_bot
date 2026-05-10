@@ -1875,14 +1875,6 @@ async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
     """Process one MAX update."""
     from src.platforms.max_adapter import set_max_use_chat_id
 
-    # DEBUG: temporary raw-payload logger to diagnose MAX menu routing issue
-    try:
-        import json as _json
-
-        logger.info("MAX RAW FULL: {}", _json.dumps(raw, ensure_ascii=False)[:1500])
-    except Exception as e:
-        logger.warning("MAX RAW log error: {}", e)
-
     events = parse_updates({"updates": [raw]})
     for ev in events:
         try:
@@ -1901,20 +1893,8 @@ async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
 
                 await max_peer_chat.remember(ev.user_id, ev.chat_id)
             if isinstance(ev, IncomingCallback):
-                logger.info(
-                    "MAX INCOMING: callback user={} chat={} data={!r}",
-                    ev.user_id,
-                    ev.chat_id,
-                    (ev.data or "")[:80],
-                )
                 await handle_callback(adapter, ev)
             elif isinstance(ev, IncomingMessage):
-                logger.info(
-                    "MAX INCOMING: text user={} chat={} text={!r}",
-                    ev.user_id,
-                    ev.chat_id,
-                    (ev.text or "")[:80],
-                )
                 await handle_message(adapter, ev)
             elif isinstance(ev, IncomingContact):
                 await handle_contact(adapter, ev)
@@ -2099,13 +2079,6 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
     # users can always navigate. Exception: event_create:* is "sticky" — the user
     # explicitly paid, so we remind them to finish or cancel instead of losing state.
     _nav_cmd: str | None = MAX_MENU_MESSAGE_TO_CMD.get(text)
-    # DEBUG: trace menu routing
-    logger.info(
-        "MAX HM: text={!r} nav_cmd={!r} text_codepoints={}",
-        text[:60],
-        _nav_cmd,
-        " ".join(f"U+{ord(c):04X}" for c in text[:20]),
-    )
     if _nav_cmd is None and text.startswith("/"):
         _slash = text.lower().lstrip("/").split()[0]
         if _slash in {

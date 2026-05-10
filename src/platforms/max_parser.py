@@ -171,6 +171,42 @@ def _extract_coords_from_max_location_attachment(att: dict) -> tuple[float, floa
     return None
 
 
+def _message_body(msg: dict, raw: dict | None = None) -> dict:
+    """Return unified message body dict across MAX API schema variants.
+
+    Старая схема (до мая 2026):
+        msg["body"] = {"text": ..., "attachments": [...], "mid": ...}
+
+    Новая схема (с мая 2026):
+        msg["message"] = {"text": ..., "attachments": [...], "mid": ..., "seq": ...}
+        + некоторые webhook'и кладут text/attachments прямо на верхний уровень
+          payload: raw["text"], raw["attachments"], etc.
+
+    Хелпер сначала пытается старую, потом новую вложенную, потом raw shortcuts.
+    Возвращает dict (возможно пустой, если ничего не нашлось).
+    """
+    if not isinstance(msg, dict):
+        msg = {}
+    body = msg.get("body")
+    if isinstance(body, dict) and body:
+        return body
+    inner = msg.get("message")
+    if isinstance(inner, dict) and inner:
+        return inner
+    # Top-level shortcuts on the webhook payload
+    if isinstance(raw, dict):
+        candidate = {}
+        if isinstance(raw.get("text"), str):
+            candidate["text"] = raw["text"]
+        if isinstance(raw.get("attachments"), list):
+            candidate["attachments"] = raw["attachments"]
+        if "mid" in raw:
+            candidate["mid"] = raw["mid"]
+        if candidate:
+            return candidate
+    return {}
+
+
 def _extract_photo_file_id(body: dict) -> str | None:
     """Extract photo token from message body attachments."""
     attachments = body.get("attachments") or []
@@ -241,7 +277,7 @@ def parse_update(raw: dict):
         else:
             chat_id = str(recipient.get("chat_id") or user_id)
 
-        body = msg.get("body") or {}
+        body = _message_body(msg, raw)
         msg_id = str(body.get("mid") or body.get("message_id") or "")
         data = normalize_max_callback_payload(cb)
         if not data:
@@ -302,7 +338,7 @@ def parse_update(raw: dict):
     if recipient.get("chat_id") is not None:
         raw["_max_use_chat_id"] = True
 
-    body = msg.get("body") or {}
+    body = _message_body(msg, raw)
 
     # Contact attachment
     attachments = body.get("attachments") or []
