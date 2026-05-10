@@ -142,6 +142,60 @@ async def test_get_stats_extended_registration_metrics(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_set_profile_hidden_by_user_pilot(monkeypatch):
+    """Пункт А: set_profile_hidden_by_user(role=pilot) обновляет hidden_by_user."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import motopair_service
+
+    class FakePilot:
+        hidden_by_user = False
+
+    fake = FakePilot()
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return fake
+
+    fake_session = MagicMock()
+    fake_session.execute = AsyncMock(return_value=FakeResult())
+    fake_session.commit = AsyncMock()
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        motopair_service, "get_session_factory", lambda: MagicMock(return_value=fake_session)
+    )
+
+    ok = await motopair_service.set_profile_hidden_by_user(uuid4(), "pilot", True)
+    assert ok is True
+    assert fake.hidden_by_user is True
+    fake_session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_set_profile_hidden_by_user_returns_false_without_profile(monkeypatch):
+    """Если анкеты нет — set_profile_hidden_by_user возвращает False."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import motopair_service
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return None
+
+    fake_session = MagicMock()
+    fake_session.execute = AsyncMock(return_value=FakeResult())
+    fake_session.commit = AsyncMock()
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        motopair_service, "get_session_factory", lambda: MagicMock(return_value=fake_session)
+    )
+
+    ok = await motopair_service.set_profile_hidden_by_user(uuid4(), "passenger", True)
+    assert ok is False
+    fake_session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_stats_conversion_pct_zero_users(monkeypatch):
     """При нулевом users конверсия не должна делить на ноль — отдаём 0.0."""
     from unittest.mock import AsyncMock, MagicMock

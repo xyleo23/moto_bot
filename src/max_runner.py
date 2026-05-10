@@ -4405,6 +4405,23 @@ async def handle_profile(adapter: MaxAdapter, chat_id: str, user) -> None:
             else "⬆️ Поднять анкету (бесплатно)"
         )
         kb.append([Button(label, payload="max_profile_raise")])
+    # Пункт А: пользовательское скрытие анкеты.
+    try:
+        from src.services.motopair_service import is_profile_hidden_by_user
+
+        _role_str = "pilot" if user.role == UserRole.PILOT else "passenger"
+        _hidden = await is_profile_hidden_by_user(effective_user_id(user), _role_str)
+    except Exception as e:
+        logger.warning("max profile: hidden_by_user lookup failed: %s", e)
+        _hidden = False
+    kb.append(
+        [
+            Button(
+                texts.PROFILE_SHOW_BTN if _hidden else texts.PROFILE_HIDE_BTN,
+                payload="max_profile_toggle_visibility",
+            )
+        ]
+    )
     kb.append(get_main_menu_shortcut_row())
 
     await _max_send_photo_caption_keyboard(
@@ -4642,6 +4659,33 @@ async def _handle_payment_callback(adapter: MaxAdapter, chat_id: str, user, data
         kb.append([Button("« Профиль", payload="menu_profile")])
         kb.append(get_main_menu_shortcut_row())
         await adapter.send_message(chat_id, text, kb)
+        return True
+
+    # ── Profile toggle visibility (пункт А) ──────────────────────────────────
+    if data == "max_profile_toggle_visibility":
+        from src.services.motopair_service import (
+            is_profile_hidden_by_user,
+            set_profile_hidden_by_user,
+        )
+
+        if user.role not in (UserRole.PILOT, UserRole.PASSENGER):
+            await adapter.send_message(chat_id, "Ошибка.", get_back_to_menu_rows())
+            return True
+        role_str = "pilot" if user.role == UserRole.PILOT else "passenger"
+        uid = effective_user_id(user)
+        currently_hidden = await is_profile_hidden_by_user(uid, role_str)
+        ok = await set_profile_hidden_by_user(uid, role_str, not currently_hidden)
+        if not ok:
+            await adapter.send_message(
+                chat_id, texts.PROFILE_HIDE_NO_PROFILE, get_back_to_menu_rows()
+            )
+            return True
+        msg = texts.PROFILE_SHOWN_OK if currently_hidden else texts.PROFILE_HIDDEN_OK
+        await adapter.send_message(
+            chat_id,
+            msg,
+            [[Button("👤 Мой профиль", payload="menu_profile")], get_main_menu_shortcut_row()],
+        )
         return True
 
     # ── Profile raise ─────────────────────────────────────────────────────────

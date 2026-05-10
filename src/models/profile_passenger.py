@@ -55,3 +55,6 @@ class ProfilePassenger(Base):
     about: Mapped[str | None] = mapped_column(Text, nullable=True)
     raised_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_hidden: Mapped[bool] = mapped_column(default=False)
+    # Пользовательское скрытие из ленты (см. миграцию 011, пункт А пакета).
+    # Отдельная ось от is_hidden (admin-скрытие по жалобе).
+    hidden_by_user: Mapped[bool] = mapped_column(default=False)

@@ -297,6 +297,16 @@ MOTOPAIR_NO_PROFILES = (
 MOTOPAIR_RAISE_BTN = "⬆️ Поднять мою анкету"
 MOTOPAIR_REPORT_BTN = "🚩 Пожаловаться"
 MOTOPAIR_END_OF_FEED_BTN = "🏁 Лента закончилась — в меню"
+
+# Пункт А: пользовательское скрытие анкеты
+PROFILE_HIDE_BTN = "🙈 Скрыть мою анкету"
+PROFILE_SHOW_BTN = "👁 Показать мою анкету"
+PROFILE_HIDDEN_OK = (
+    "Анкета скрыта из ленты. Тебя не будут видеть в поиске. "
+    "Когда захочешь вернуться — нажми «👁 Показать мою анкету»."
+)
+PROFILE_SHOWN_OK = "Анкета снова видна в ленте."
+PROFILE_HIDE_NO_PROFILE = "Сначала заполни анкету."
 MOTOPAIR_REPORT_SENT = "Жалоба отправлена администратору."
 MOTOPAIR_REPORT_ADMIN_TEXT = (
     "🚩 <b>Жалоба на анкету</b>\n\nОт: {reporter}\nНа: {reported}\nПрофиль: {profile_text}"

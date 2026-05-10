@@ -120,6 +120,8 @@ async def get_next_profile(
                     ProfilePilot.user_id.not_in(blacklisted_sq),
                     # Soft-ban: hidden profiles are excluded from search results
                     ProfilePilot.is_hidden.is_(False),
+                    # Пункт А: пользователь временно скрыл свою анкету.
+                    ProfilePilot.hidden_by_user.is_(False),
                 )
                 .order_by(ProfilePilot.raised_at.desc())
             )
@@ -136,6 +138,8 @@ async def get_next_profile(
                     ProfilePassenger.user_id.not_in(blacklisted_sq),
                     # Soft-ban: hidden profiles are excluded from search results
                     ProfilePassenger.is_hidden.is_(False),
+                    # Пункт А: пользователь временно скрыл свою анкету.
+                    ProfilePassenger.hidden_by_user.is_(False),
                 )
                 .order_by(ProfilePassenger.raised_at.desc())
             )
@@ -289,6 +293,52 @@ async def process_like(from_user_id: UUID, to_user_id: UUID, is_like: bool) -> d
             "target_user_id": to_user_id,
             "from_user_id": from_user_id,
         }
+
+
+async def is_profile_hidden_by_user(user_id: UUID, role: str) -> bool:
+    """Возвращает True, если пользователь сам скрыл свою анкету (пункт А)."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        if role == "pilot":
+            r = await session.execute(
+                select(ProfilePilot.hidden_by_user).where(ProfilePilot.user_id == user_id)
+            )
+        else:
+            r = await session.execute(
+                select(ProfilePassenger.hidden_by_user).where(
+                    ProfilePassenger.user_id == user_id
+                )
+            )
+        val = r.scalar_one_or_none()
+        return bool(val)
+
+
+async def set_profile_hidden_by_user(user_id: UUID, role: str, hidden: bool) -> bool:
+    """Установить флаг пользовательского скрытия анкеты (пункт А пакета).
+
+    Не трогает админский is_hidden — это отдельная ось. Возвращает True,
+    если анкета найдена и флаг обновлён.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        if role == "pilot":
+            r = await session.execute(
+                select(ProfilePilot).where(ProfilePilot.user_id == user_id)
+            )
+            p = r.scalar_one_or_none()
+            if not p:
+                return False
+            p.hidden_by_user = hidden
+        else:
+            r = await session.execute(
+                select(ProfilePassenger).where(ProfilePassenger.user_id == user_id)
+            )
+            p = r.scalar_one_or_none()
+            if not p:
+                return False
+            p.hidden_by_user = hidden
+        await session.commit()
+        return True
 
 
 async def hide_profile(user_id: UUID) -> bool:

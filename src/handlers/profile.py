@@ -64,6 +64,8 @@ async def cb_profile_city_change(callback: CallbackQuery, state: FSMContext, use
 async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.profile_service import get_profile_display
+    from src.services.motopair_service import is_profile_hidden_by_user
+    from src.models.user import UserRole
     from src.models.subscription import Subscription
     from src.models.base import get_session_factory
     from sqlalchemy import select
@@ -96,6 +98,17 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
             )
             sub_active = sub_r.scalar_one_or_none() is not None
 
+    # Пункт А: метка видимости анкеты — показывается только если анкета заполнена.
+    hidden_by_user = False
+    if user and user.role in (UserRole.PILOT, UserRole.PASSENGER):
+        role_str = "pilot" if user.role == UserRole.PILOT else "passenger"
+        try:
+            hidden_by_user = await is_profile_hidden_by_user(
+                effective_user_id(user), role_str
+            )
+        except Exception as e:
+            logger.warning("menu_profile: hidden_by_user lookup failed: %s", e)
+
     kb_rows = [
         [InlineKeyboardButton(text="Редактировать анкету", callback_data="profile_edit")],
     ]
@@ -107,9 +120,18 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
         kb_rows.append(
             [InlineKeyboardButton(text="💳 Оформить подписку", callback_data="profile_subscribe")]
         )
+    visibility_btn_text = (
+        texts.PROFILE_SHOW_BTN if hidden_by_user else texts.PROFILE_HIDE_BTN
+    )
     kb_rows.extend(
         [
             [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
+            [
+                InlineKeyboardButton(
+                    text=visibility_btn_text,
+                    callback_data="profile_toggle_visibility",
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text=texts.PHONE_CHANGE_BTN, callback_data="profile_phone_change"
@@ -150,6 +172,33 @@ async def cb_profile_menu(callback: CallbackQuery, state: FSMContext, user=None)
         await callback.message.answer(
             display_text, reply_markup=kb, parse_mode=ParseMode.HTML
         )
+
+
+@router.callback_query(F.data == "profile_toggle_visibility")
+async def cb_profile_toggle_visibility(callback: CallbackQuery, state: FSMContext, user=None):
+    """Пункт А: пользователь скрывает или показывает свою анкету в ленте."""
+    from src.services.motopair_service import (
+        is_profile_hidden_by_user,
+        set_profile_hidden_by_user,
+    )
+    from src.models.user import UserRole
+
+    if not user or user.role not in (UserRole.PILOT, UserRole.PASSENGER):
+        await callback.answer("Ошибка.", show_alert=True)
+        return
+    role_str = "pilot" if user.role == UserRole.PILOT else "passenger"
+    uid = effective_user_id(user)
+    currently_hidden = await is_profile_hidden_by_user(uid, role_str)
+    ok = await set_profile_hidden_by_user(uid, role_str, not currently_hidden)
+    if not ok:
+        await callback.answer(texts.PROFILE_HIDE_NO_PROFILE, show_alert=True)
+        return
+    await callback.answer(
+        texts.PROFILE_SHOWN_OK if currently_hidden else texts.PROFILE_HIDDEN_OK,
+        show_alert=True,
+    )
+    # Перерисовать меню профиля, чтобы переключилась лейбл-кнопка.
+    await cb_profile_menu(callback, state, user=user)
 
 
 @router.callback_query(F.data == "profile_subscribe")
