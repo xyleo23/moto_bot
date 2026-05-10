@@ -2106,6 +2106,13 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
     # users can always navigate. Exception: event_create:* is "sticky" — the user
     # explicitly paid, so we remind them to finish or cancel instead of losing state.
     _nav_cmd: str | None = MAX_MENU_MESSAGE_TO_CMD.get(text)
+    # DEBUG: trace menu routing
+    logger.info(
+        "MAX HM: text={!r} nav_cmd={!r} text_codepoints={}",
+        text[:60],
+        _nav_cmd,
+        " ".join(f"U+{ord(c):04X}" for c in text[:20]),
+    )
     if _nav_cmd is None and text.startswith("/"):
         _slash = text.lower().lstrip("/").split()[0]
         if _slash in {
