@@ -214,7 +214,12 @@ async def cb_admin_stats(callback: CallbackQuery):
     stats = await get_stats()
     text = (
         f"📊 <b>Статистика</b>\n\n"
-        f"Пользователей: {stats.get('users', 0)}\n"
+        f"Нажали /start: {stats.get('users', 0)}\n"
+        f"Завершили регистрацию: {stats.get('registered_total', 0)} "
+        f"({stats.get('conversion_pct', 0)}%)\n"
+        f"  ├ пилотов: {stats.get('pilots_registered', 0)}\n"
+        f"  └ пассажиров: {stats.get('passengers_registered', 0)}\n"
+        f"\n"
         f"Заблокировано: {stats.get('blocked', 0)}\n"
         f"Активных подписок: {stats.get('active_subs', 0)}\n"
         f"SOS-сигналов: {stats.get('sos', 0)}\n"
@@ -345,7 +350,12 @@ async def _show_admin_stats(message: Message):
     stats = await get_stats()
     text = (
         f"📊 <b>Статистика</b>\n\n"
-        f"Пользователей: {stats.get('users', 0)}\n"
+        f"Нажали /start: {stats.get('users', 0)}\n"
+        f"Завершили регистрацию: {stats.get('registered_total', 0)} "
+        f"({stats.get('conversion_pct', 0)}%)\n"
+        f"  ├ пилотов: {stats.get('pilots_registered', 0)}\n"
+        f"  └ пассажиров: {stats.get('passengers_registered', 0)}\n"
+        f"\n"
         f"Заблокировано: {stats.get('blocked', 0)}\n"
         f"Активных подписок: {stats.get('active_subs', 0)}\n"
         f"SOS-сигналов: {stats.get('sos', 0)}\n"

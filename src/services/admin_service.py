@@ -13,6 +13,8 @@ from src.models.event import Event, EventRegistration
 from src.models.city import City, CityAdmin
 from src.models.subscription import Subscription, SubscriptionSettings, SubscriptionType
 from src.models.global_text import GlobalText
+from src.models.profile_pilot import ProfilePilot
+from src.models.profile_passenger import ProfilePassenger
 from src.config import get_settings
 
 
@@ -39,12 +41,28 @@ async def get_stats() -> dict:
             )
             or 0
         )
+        # Расширенная статистика регистраций (пакет «15 000 ₽», пункт Р):
+        # «нажали /start» (кол-во записей User) vs «дошли до конца регистрации»
+        # (кол-во заполненных анкет в ProfilePilot/ProfilePassenger). Анкеты
+        # хранятся под каноническим user_id, поэтому MAX↔TG-связки не задваиваются.
+        pilots_registered = (
+            await session.scalar(select(func.count()).select_from(ProfilePilot)) or 0
+        )
+        passengers_registered = (
+            await session.scalar(select(func.count()).select_from(ProfilePassenger)) or 0
+        )
+        registered_total = pilots_registered + passengers_registered
+        conversion_pct = round(registered_total * 100 / users, 1) if users else 0.0
         return {
             "users": users,
             "blocked": blocked,
             "sos": sos,
             "events": events,
             "active_subs": active_subs,
+            "pilots_registered": pilots_registered,
+            "passengers_registered": passengers_registered,
+            "registered_total": registered_total,
+            "conversion_pct": conversion_pct,
         }
 
 

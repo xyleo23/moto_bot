@@ -101,3 +101,61 @@ def test_format_profile_max():
     assert "Иван" in text
     assert "Honda" in text
     assert "500" in text
+
+
+@pytest.mark.asyncio
+async def test_get_stats_extended_registration_metrics(monkeypatch):
+    """Пакет 15к, пункт Р: get_stats возвращает разделение start vs registered.
+
+    Проверяем, что добавлены поля pilots_registered/passengers_registered/
+    registered_total/conversion_pct, и что конверсия считается верно.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import admin_service
+
+    # 100 нажали /start, 60 завершили (30 пилотов + 30 пассажиров) → 60.0%
+    counts = iter([
+        100,  # users
+        5,    # sos
+        10,   # events
+        2,    # blocked
+        7,    # active_subs
+        30,   # pilots_registered
+        30,   # passengers_registered
+    ])
+
+    fake_session = MagicMock()
+    fake_session.scalar = AsyncMock(side_effect=lambda *_a, **_kw: next(counts))
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+
+    fake_factory = MagicMock(return_value=fake_session)
+    monkeypatch.setattr(admin_service, "get_session_factory", lambda: fake_factory)
+
+    stats = await admin_service.get_stats()
+
+    assert stats["users"] == 100
+    assert stats["pilots_registered"] == 30
+    assert stats["passengers_registered"] == 30
+    assert stats["registered_total"] == 60
+    assert stats["conversion_pct"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_get_stats_conversion_pct_zero_users(monkeypatch):
+    """При нулевом users конверсия не должна делить на ноль — отдаём 0.0."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import admin_service
+
+    counts = iter([0, 0, 0, 0, 0, 0, 0])
+    fake_session = MagicMock()
+    fake_session.scalar = AsyncMock(side_effect=lambda *_a, **_kw: next(counts))
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    fake_factory = MagicMock(return_value=fake_session)
+    monkeypatch.setattr(admin_service, "get_session_factory", lambda: fake_factory)
+
+    stats = await admin_service.get_stats()
+    assert stats["users"] == 0
+    assert stats["conversion_pct"] == 0.0
+    assert stats["registered_total"] == 0
