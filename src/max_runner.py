@@ -1893,8 +1893,20 @@ async def process_max_update(adapter: MaxAdapter, raw: dict) -> None:
 
                 await max_peer_chat.remember(ev.user_id, ev.chat_id)
             if isinstance(ev, IncomingCallback):
+                logger.info(
+                    "MAX INCOMING: callback user={} chat={} data={!r}",
+                    ev.user_id,
+                    ev.chat_id,
+                    (ev.data or "")[:80],
+                )
                 await handle_callback(adapter, ev)
             elif isinstance(ev, IncomingMessage):
+                logger.info(
+                    "MAX INCOMING: text user={} chat={} text={!r}",
+                    ev.user_id,
+                    ev.chat_id,
+                    (ev.text or "")[:80],
+                )
                 await handle_message(adapter, ev)
             elif isinstance(ev, IncomingContact):
                 await handle_contact(adapter, ev)
