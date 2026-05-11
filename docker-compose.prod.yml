@@ -1,4 +1,10 @@
 # Продакшен: PostgreSQL + Redis + бот
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -14,6 +20,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
@@ -23,6 +30,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    logging: *default-logging
 
   bot:
     build: .
@@ -38,6 +46,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging: *default-logging
 
 volumes:
   pgdata: {}
