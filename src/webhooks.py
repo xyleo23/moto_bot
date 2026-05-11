@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from src.config import get_settings
 from src.services.subscription import activate_subscription
+from src.services.payment_idempotency import mark_payment_processed
 from src.models.base import get_session_factory
 from src.models.subscription import Subscription
 from src.models.user import User, Platform
@@ -181,6 +182,8 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
     src_platform = metadata.get("platform")
 
     if pay_type == "donate":
+        if not await mark_payment_processed(payment_id, "donate"):
+            return 200, {"status": "already_processed", "type": "donate"}
         user_id_str = metadata.get("user_id")
         if user_id_str:
             try:
@@ -191,6 +194,8 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
         return 200, {"status": "ok", "type": "donate"}
 
     if pay_type == "event_creation":
+        if not await mark_payment_processed(payment_id, "event_creation"):
+            return 200, {"status": "already_processed", "type": "event_creation"}
         user_id_str = metadata.get("user_id")
         ev_type = metadata.get("event_type") or "run"
         if user_id_str:
@@ -209,6 +214,8 @@ async def handle_yookassa_webhook(request) -> tuple[int, dict]:
         return 200, {"status": "ok", "type": "event_creation"}
 
     if pay_type == "raise_profile":
+        if not await mark_payment_processed(payment_id, "raise_profile"):
+            return 200, {"status": "already_processed", "type": "raise_profile"}
         user_id_str = metadata.get("user_id")
         if user_id_str:
             try:

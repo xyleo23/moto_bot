@@ -15,6 +15,7 @@ from src.models.global_text import GlobalText
 from src.models.activity_log import ActivityLog
 from src.models.bot_settings import BotSettings
 from src.models.report import Report
+from src.models.processed_payment import ProcessedPayment
 
 __all__ = [
     "Base",
@@ -38,4 +39,5 @@ __all__ = [
     "ActivityLog",
     "BotSettings",
     "Report",
+    "ProcessedPayment",
 ]

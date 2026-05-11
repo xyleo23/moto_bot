@@ -341,3 +341,59 @@ async def test_report_cooldown_blocks_daily_limit(monkeypatch):
     allowed, retry = await report_service.check_report_cooldown(uuid4())
     assert allowed is False
     assert retry == 0
+
+
+@pytest.mark.asyncio
+async def test_mark_payment_processed_first_returns_true(monkeypatch):
+    """Первый раз — INSERT успешен, возвращает True."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import payment_idempotency
+
+    fake_session = MagicMock()
+    fake_session.add = MagicMock()
+    fake_session.commit = AsyncMock()
+    fake_session.rollback = AsyncMock()
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        payment_idempotency,
+        "get_session_factory",
+        lambda: MagicMock(return_value=fake_session),
+    )
+
+    ok = await payment_idempotency.mark_payment_processed("pay_123", "donate")
+    assert ok is True
+    fake_session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mark_payment_processed_duplicate_returns_false(monkeypatch):
+    """Дубликат payment_id ловится IntegrityError → False."""
+    from unittest.mock import AsyncMock, MagicMock
+    from sqlalchemy.exc import IntegrityError
+    from src.services import payment_idempotency
+
+    fake_session = MagicMock()
+    fake_session.add = MagicMock()
+    fake_session.commit = AsyncMock(side_effect=IntegrityError("ins", {}, Exception("dup")))
+    fake_session.rollback = AsyncMock()
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        payment_idempotency,
+        "get_session_factory",
+        lambda: MagicMock(return_value=fake_session),
+    )
+
+    ok = await payment_idempotency.mark_payment_processed("pay_456", "event_creation")
+    assert ok is False
+    fake_session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mark_payment_processed_empty_id_returns_false():
+    """Пустой payment_id → False, без обращения к БД."""
+    from src.services import payment_idempotency
+
+    ok = await payment_idempotency.mark_payment_processed("", "donate")
+    assert ok is False
