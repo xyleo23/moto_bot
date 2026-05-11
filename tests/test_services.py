@@ -454,6 +454,69 @@ async def test_broadcast_gives_up_after_max_attempts(monkeypatch):
     assert fake_bot.send_message.await_count == broadcast._RETRY_MAX_ATTEMPTS
 
 
+def test_effective_user_id_returns_linked_when_set():
+    """Пункт П: effective_user_id отдаёт linked id для связанного аккаунта."""
+    from unittest.mock import MagicMock
+    from src.models.user import effective_user_id
+    from uuid import uuid4
+
+    canonical = uuid4()
+    user = MagicMock(id=uuid4(), linked_user_id=canonical)
+    assert effective_user_id(user) == canonical
+
+
+def test_effective_user_id_returns_self_when_unlinked():
+    """Если linked_user_id=None — возвращает собственный id."""
+    from unittest.mock import MagicMock
+    from src.models.user import effective_user_id
+    from uuid import uuid4
+
+    own = uuid4()
+    user = MagicMock(id=own, linked_user_id=None)
+    assert effective_user_id(user) == own
+
+
+@pytest.mark.asyncio
+async def test_maybe_auto_block_does_nothing_below_threshold(monkeypatch):
+    """Авто-блок не срабатывает пока кол-во жалоб < threshold."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import report_service
+
+    # 2 жалобы при пороге 3.
+    monkeypatch.setattr(report_service, "get_report_count", AsyncMock(return_value=2))
+    fake_settings = MagicMock(auto_block_reports_threshold=3)
+    monkeypatch.setattr(
+        report_service, "get_settings_from_db", AsyncMock(return_value=fake_settings)
+    )
+    auto_block = AsyncMock()
+    monkeypatch.setattr(report_service, "auto_block_user", auto_block)
+
+    await report_service.maybe_auto_block_after_report(uuid4())
+    auto_block.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_auto_block_triggers_at_threshold(monkeypatch):
+    """При достижении threshold вызывает auto_block_user с reason."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import report_service
+
+    monkeypatch.setattr(report_service, "get_report_count", AsyncMock(return_value=5))
+    fake_settings = MagicMock(auto_block_reports_threshold=5)
+    monkeypatch.setattr(
+        report_service, "get_settings_from_db", AsyncMock(return_value=fake_settings)
+    )
+    auto_block = AsyncMock()
+    monkeypatch.setattr(report_service, "auto_block_user", auto_block)
+
+    target = uuid4()
+    await report_service.maybe_auto_block_after_report(target)
+    auto_block.assert_awaited_once()
+    args, kwargs = auto_block.call_args
+    assert args[0] == target
+    assert "5" in kwargs["reason"]
+
+
 @pytest.mark.asyncio
 async def test_broadcast_no_retry_on_forbidden(monkeypatch):
     """TelegramForbiddenError → 1 попытка, failed=1, без ожидания."""
