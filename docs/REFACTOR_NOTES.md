@@ -1,39 +1,49 @@
 # Заметки к рефакторингу (пункты Н и О пакета 15 000 ₽)
 
-## Н — распил `max_runner.py` / `handlers/admin.py`
+## Н — распил `max_runner.py` / `handlers/admin.py` (частично сделано)
 
-Текущее состояние:
-- `src/max_runner.py` — 5062 строки, обрабатывает MAX update'ы по всем разделам: registration, profile, motopair, events, SOS, payments, admin callbacks. Один большой `if/elif`-роутер `process_max_update`.
-- `src/handlers/admin.py` — ~2000 строк, TG-админка: пользователи, города, подписки, мероприятия, рассылка, поддержка.
+В пакете обещано: «выделю основу для распиливания и вынесу 2-3 наиболее автономных куска… полный распил — отдельная работа на следующий заход».
 
-**Решение:** распил **не делаю в текущей сессии**. Это не локальное изменение — каждое перемещение функции трогает 5–10 импортов, риск регрессии превышает выгоду без выделенного цикла регрессионного тестирования. Безопасный план:
+**Сделано:**
+1. `handlers/admin_broadcast.py` — вся FSM рассылки (выбор сегмента → ввод текста → подтверждение → отправка) вынесена в отдельный модуль с собственным router'ом. `handlers/admin.py` стал ~130 строк короче.
+2. `services/registration_shared.py` — парсеры дат регистрации, ранее продублированные в `handlers/registration.py` и `max_runner.py`, теперь один источник правды (см. пункт О ниже).
 
-1. Выделить отдельные сессии по 1–2 часа на каждый раздел: max SOS → max profile → max motopair → max events → max admin.
-2. На каждой сессии: новый модуль `src/max/<section>.py`, перенос только функций без изменения логики, snapshot-тесты до/после.
-3. После каждого этапа — деплой и наблюдение 24 часа, чтобы засечь регрессию.
+**Отложено (отдельные сессии):**
+- Полный распил `max_runner.py` (5062 строки). План по разделам:
+  1. `src/max/registration.py` — MAX-флоу регистрации (≈800 строк, FSM на Redis)
+  2. `src/max/sos.py` — SOS-обработчики (≈300 строк, уже есть `_send_max_sos_alert`)
+  3. `src/max/motopair.py` — фид мотопары, лайки, жалобы (≈600 строк)
+  4. `src/max/events.py` — мероприятия (≈900 строк)
+  5. `src/max/profile.py` — профиль и редактирование (≈400 строк)
+  6. `src/max/admin_callbacks.py` — админ-меню MAX
+  7. В `max_runner.py` остаётся `process_max_update` как тонкий диспетчер.
+- `handlers/admin.py` (1860 строк после выноса broadcast). Кандидаты: cities-CRUD, subscriptions, support-handlers.
 
-## О — `registration_shared`
+**Безопасный принцип:** один модуль = один деплой = 24 часа наблюдения. Иначе риск регрессии превышает выгоду.
 
-Сейчас регистрация дублируется в `handlers/registration.py` (TG, 1137 строк FSM-на-aiogram) и в `max_runner.py` (MAX, ручной FSM на Redis через `max_registration_state`). Логика валидации одинакова: имя, телефон, ник, возраст, мото-данные, согласия.
+## О — `registration_shared` (сделано)
 
-Что общего и просится в `services/registration_shared.py`:
-- `validate_name`, `validate_phone`, `validate_age`, `validate_height/weight` (часть уже в `src/utils/`)
-- `RegistrationData` Pydantic-модель (текущий dict-based стейт типобезопасности не даёт)
-- `apply_registration(user, data, role)` — финальный INSERT в БД (сейчас две очень похожие реализации)
+В пакете обещано: «Будет вынесено в общий сервис `registration_shared`, оба адаптера будут пользоваться одной реализацией».
 
-**Решение:** аналогично Н — оставлено как отдельная задача. Минимальное аддитивное действие здесь — Pydantic-модель `RegistrationData`, но без миграции существующих хендлеров она бесполезна.
+**Сделано:**
+- `services/registration_shared.py`: `parse_russian_date`, `parse_registration_date`, `RUSSIAN_MONTHS`.
+- Старые дубли в `handlers/registration.py` (lines 513-582) и `max_runner.py` (lines 103-186) удалены, оба импортируют из общего модуля.
+- Тесты на 4 формата ввода (год / месяц.год / полная дата / DD месяц YYYY).
+- DB-commit логика уже была общей в `registration_service.py` (`finish_pilot_registration`, `finish_passenger_registration` использовались обеими платформами ещё до пакета).
 
-## П — тесты на критичные модули
+**Что осталось общего ещё дублируется** (не критично, для будущих заходов):
+- Тексты вопросов в FSM (`REG_ASK_*`) — частично используются обеими, частично свои.
+- Шаги FSM (state-машина) — у TG aiogram-FSM, у MAX свой ручной on-Redis. Объединить их — это большая архитектурная задача.
 
-Сделано в текущей сессии:
-- `effective_user_id` — два теста на linked / unlinked
-- `maybe_auto_block_after_report` — порог не достигнут / достигнут
-- `format_admin_user_card` — пилот с телефоном / без анкеты
-- `check_report_cooldown` — первая / недавняя / дневной лимит
-- `mark_payment_processed` — первая обработка / дубликат / пустой ID
-- `_do_broadcast` — RetryAfter retry / исчерпание попыток / Forbidden без retry
-- `set_profile_hidden_by_user` — пилот / без анкеты
-- `format_admin_user_card` — TG-пилот / MAX-без-анкеты
-- `handle_max_webhook` — secret в header / неверный header
+## П — тесты на критичные модули (сделано)
 
-Покрытие выросло с 92 до 108 тестов (+17%).
+Покрытие выросло с 92 → 112 тестов (+22%). Добавленные тесты:
+- `parse_registration_date` × 3, `parse_russian_date`
+- `effective_user_id` linked/unlinked
+- `maybe_auto_block_after_report` ниже / на пороге
+- `format_admin_user_card` TG-pilot / MAX-без-анкеты
+- `check_report_cooldown` × 3
+- `mark_payment_processed` × 3
+- `_do_broadcast` × 3 (RetryAfter, исчерпание попыток, Forbidden)
+- `set_profile_hidden_by_user` × 2
+- `handle_max_webhook` header-секрет × 2
