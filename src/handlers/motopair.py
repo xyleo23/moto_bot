@@ -496,6 +496,18 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
         await callback.answer("Анкета не найдена.", show_alert=True)
         return
 
+    from src.services.report_service import check_report_cooldown
+
+    allowed, retry_after = await check_report_cooldown(user.id)
+    if not allowed:
+        msg = (
+            texts.MOTOPAIR_REPORT_COOLDOWN.format(sec=retry_after)
+            if retry_after > 0
+            else texts.MOTOPAIR_REPORT_DAILY_LIMIT
+        )
+        await callback.answer(msg, show_alert=True)
+        return
+
     profile_text, _ = await get_profile_info_text(target_user.id)
     reporter_display = (
         f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)

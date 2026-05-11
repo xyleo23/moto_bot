@@ -3699,6 +3699,17 @@ async def handle_motopair_report_max(adapter: MaxAdapter, chat_id: str, user, da
     if not target_user:
         await adapter.send_message(chat_id, "Анкета не найдена.", get_back_to_menu_rows())
         return
+    from src.services.report_service import check_report_cooldown
+
+    allowed, retry_after = await check_report_cooldown(user.id)
+    if not allowed:
+        msg = (
+            texts.MOTOPAIR_REPORT_COOLDOWN.format(sec=retry_after)
+            if retry_after > 0
+            else texts.MOTOPAIR_REPORT_DAILY_LIMIT
+        )
+        await adapter.send_message(chat_id, msg, get_back_to_menu_rows())
+        return
     profile_text, _ = await get_profile_info_text(target_user.id)
     reporter_display = (
         f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)

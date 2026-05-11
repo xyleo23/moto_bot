@@ -279,3 +279,65 @@ async def test_format_admin_user_card_no_profile(monkeypatch):
     assert "Заблокирован" in text
     assert "spam" in text
     assert "MAX" in text
+
+
+@pytest.mark.asyncio
+async def test_report_cooldown_allows_first_report(monkeypatch):
+    """Первая жалоба пропускается без ограничений."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import report_service
+
+    fake_session = MagicMock()
+    fake_session.scalar = AsyncMock(side_effect=[None, 0])
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        report_service, "get_session_factory", lambda: MagicMock(return_value=fake_session)
+    )
+
+    allowed, retry = await report_service.check_report_cooldown(uuid4())
+    assert allowed is True
+    assert retry == 0
+
+
+@pytest.mark.asyncio
+async def test_report_cooldown_blocks_recent_report(monkeypatch):
+    """Если последняя жалоба недавно — возвращаем retry_after > 0."""
+    from datetime import datetime, timedelta
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import report_service
+
+    recent = datetime.utcnow() - timedelta(seconds=5)
+    fake_session = MagicMock()
+    fake_session.scalar = AsyncMock(return_value=recent)
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        report_service, "get_session_factory", lambda: MagicMock(return_value=fake_session)
+    )
+
+    allowed, retry = await report_service.check_report_cooldown(uuid4())
+    assert allowed is False
+    assert 20 <= retry <= 30
+
+
+@pytest.mark.asyncio
+async def test_report_cooldown_blocks_daily_limit(monkeypatch):
+    """При превышении дневного лимита — allowed=False, retry=0."""
+    from datetime import datetime, timedelta
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import report_service
+
+    long_ago = datetime.utcnow() - timedelta(minutes=10)
+    fake_session = MagicMock()
+    # scalar() сначала вернёт last_created_at, потом count
+    fake_session.scalar = AsyncMock(side_effect=[long_ago, report_service.REPORT_DAILY_LIMIT])
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        report_service, "get_session_factory", lambda: MagicMock(return_value=fake_session)
+    )
+
+    allowed, retry = await report_service.check_report_cooldown(uuid4())
+    assert allowed is False
+    assert retry == 0
