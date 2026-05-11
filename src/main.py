@@ -104,7 +104,14 @@ async def run_telegram(shared_bot=None):
     try:
         redis = Redis.from_url(settings.redis_url)
         await redis.ping()
-        storage = RedisStorage(redis=redis)
+        # Пакет 15 000 ₽, пункт Л: TTL для FSM-состояний и данных.
+        # Если пользователь бросил флоу регистрации/SOS на середине, ключи
+        # сами протухнут в Redis вместо вечного хранения.
+        storage = RedisStorage(
+            redis=redis,
+            state_ttl=3600,
+            data_ttl=3600,
+        )
         _redis = redis
         # Inject Redis client into SOS service and MAX registration FSM
         from src.services.sos_service import set_redis_client

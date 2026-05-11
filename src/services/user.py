@@ -190,66 +190,80 @@ async def delete_user_data(user: User) -> None:
     from src.models.event_pair_request import EventPairRequest
     from src.models.profile_pilot import ProfilePilot
     from src.models.profile_passenger import ProfilePassenger
+    from src.models.report import Report
 
+    # Пакет 15 000 ₽, пункт К: всё удаление в одной транзакции — либо снимаем
+    # все следы пользователя, либо откатываем целиком (нельзя оставить юзера
+    # с обрезанным набором данных, в т.ч. с осиротевшими Report-FK).
     session_factory = get_session_factory()
     async with session_factory() as session:
-        uid = canonical_id
-        # 1. EventPairRequest (все id из кластера)
-        await session.execute(
-            delete(EventPairRequest).where(
-                (EventPairRequest.from_user_id.in_(identity_ids))
-                | (EventPairRequest.to_user_id.in_(identity_ids))
-            )
-        )
-        # 2. EventRegistration — канонический участник / matched
-        await session.execute(delete(EventRegistration).where(EventRegistration.user_id == uid))
-        await session.execute(
-            update(EventRegistration)
-            .where(EventRegistration.matched_user_id == uid)
-            .values(matched_user_id=None)
-        )
-        # 3. Events, созданные пользователем — удаляем регистрации и заявки, затем сами события
-        ev_result = await session.execute(select(Event.id).where(Event.creator_id == uid))
-        event_ids = [r[0] for r in ev_result.fetchall()]
-        if event_ids:
+        async with session.begin():
+            uid = canonical_id
+            # 1. EventPairRequest (все id из кластера)
             await session.execute(
-                delete(EventPairRequest).where(EventPairRequest.event_id.in_(event_ids))
+                delete(EventPairRequest).where(
+                    (EventPairRequest.from_user_id.in_(identity_ids))
+                    | (EventPairRequest.to_user_id.in_(identity_ids))
+                )
+            )
+            # 2. EventRegistration — канонический участник / matched
+            await session.execute(
+                delete(EventRegistration).where(EventRegistration.user_id == uid)
             )
             await session.execute(
-                delete(EventRegistration).where(EventRegistration.event_id.in_(event_ids))
+                update(EventRegistration)
+                .where(EventRegistration.matched_user_id == uid)
+                .values(matched_user_id=None)
             )
-            await session.execute(delete(Event).where(Event.creator_id == uid))
-        # 4. Like, LikeBlacklist
-        await session.execute(
-            delete(Like).where(
-                (Like.from_user_id.in_(identity_ids)) | (Like.to_user_id.in_(identity_ids))
+            # 3. Events, созданные пользователем — удаляем регистрации и заявки, затем сами события
+            ev_result = await session.execute(select(Event.id).where(Event.creator_id == uid))
+            event_ids = [r[0] for r in ev_result.fetchall()]
+            if event_ids:
+                await session.execute(
+                    delete(EventPairRequest).where(EventPairRequest.event_id.in_(event_ids))
+                )
+                await session.execute(
+                    delete(EventRegistration).where(EventRegistration.event_id.in_(event_ids))
+                )
+                await session.execute(delete(Event).where(Event.creator_id == uid))
+            # 4. Like, LikeBlacklist
+            await session.execute(
+                delete(Like).where(
+                    (Like.from_user_id.in_(identity_ids)) | (Like.to_user_id.in_(identity_ids))
+                )
             )
-        )
-        await session.execute(
-            delete(LikeBlacklist).where(
-                (LikeBlacklist.user_id.in_(identity_ids))
-                | (LikeBlacklist.blocked_user_id.in_(identity_ids))
+            await session.execute(
+                delete(LikeBlacklist).where(
+                    (LikeBlacklist.user_id.in_(identity_ids))
+                    | (LikeBlacklist.blocked_user_id.in_(identity_ids))
+                )
             )
-        )
-        # 5. PhoneChangeRequest, Subscription, SosAlert, ActivityLog, CityAdmin
-        await session.execute(
-            delete(PhoneChangeRequest).where(PhoneChangeRequest.user_id.in_(identity_ids))
-        )
-        await session.execute(delete(Subscription).where(Subscription.user_id == uid))
-        await session.execute(delete(SosAlert).where(SosAlert.user_id == uid))
-        await session.execute(
-            delete(ActivityLog).where(ActivityLog.user_id.in_(identity_ids))
-        )
-        await session.execute(delete(CityAdmin).where(CityAdmin.user_id.in_(identity_ids)))
-        # 6. UsefulContact (созданные пользователем)
-        await session.execute(
-            delete(UsefulContact).where(UsefulContact.created_by.in_(identity_ids))
-        )
-        # 7. Profile (всегда под каноническим id)
-        await session.execute(delete(ProfilePilot).where(ProfilePilot.user_id == uid))
-        await session.execute(delete(ProfilePassenger).where(ProfilePassenger.user_id == uid))
-        # 8. User: сначала вторичные записи (MAX/TG с linked_user_id), затем каноническая
-        for sid in secondary_ids:
-            await session.execute(delete(User).where(User.id == sid))
-        await session.execute(delete(User).where(User.id == canonical_id))
-        await session.commit()
+            # 5. Reports — обе стороны FK на users; без этого DELETE user упадёт.
+            await session.execute(
+                delete(Report).where(
+                    (Report.reporter_user_id.in_(identity_ids))
+                    | (Report.reported_user_id.in_(identity_ids))
+                )
+            )
+            # 6. PhoneChangeRequest, Subscription, SosAlert, ActivityLog, CityAdmin
+            await session.execute(
+                delete(PhoneChangeRequest).where(PhoneChangeRequest.user_id.in_(identity_ids))
+            )
+            await session.execute(delete(Subscription).where(Subscription.user_id == uid))
+            await session.execute(delete(SosAlert).where(SosAlert.user_id == uid))
+            await session.execute(
+                delete(ActivityLog).where(ActivityLog.user_id.in_(identity_ids))
+            )
+            await session.execute(delete(CityAdmin).where(CityAdmin.user_id.in_(identity_ids)))
+            # 7. UsefulContact (созданные пользователем)
+            await session.execute(
+                delete(UsefulContact).where(UsefulContact.created_by.in_(identity_ids))
+            )
+            # 8. Profile (всегда под каноническим id)
+            await session.execute(delete(ProfilePilot).where(ProfilePilot.user_id == uid))
+            await session.execute(delete(ProfilePassenger).where(ProfilePassenger.user_id == uid))
+            # 9. User: сначала вторичные записи (MAX/TG с linked_user_id), затем каноническая
+            for sid in secondary_ids:
+                await session.execute(delete(User).where(User.id == sid))
+            await session.execute(delete(User).where(User.id == canonical_id))
+        # session.begin() сделает commit при штатном выходе и rollback при исключении.

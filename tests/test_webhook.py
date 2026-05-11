@@ -167,6 +167,7 @@ async def test_max_webhook_rejects_wrong_secret():
     from src.webhooks import handle_max_webhook
 
     request = AsyncMock()
+    request.headers = {}
     request.match_info = {"secret": "wrong"}
     request.json = AsyncMock(return_value={"update_type": "message_created"})
 
@@ -180,6 +181,7 @@ async def test_max_webhook_rejects_when_secret_not_configured():
     from src.webhooks import handle_max_webhook
 
     request = AsyncMock()
+    request.headers = {}
     request.match_info = {"secret": "any"}
     request.json = AsyncMock(return_value={})
 
@@ -198,6 +200,7 @@ async def test_max_webhook_accepts_valid_secret_and_dispatches():
 
     payload = {"update_type": "message_created", "timestamp": 1, "message": {}}
     request = AsyncMock()
+    request.headers = {}
     request.match_info = {"secret": "s3cret"}
     request.json = AsyncMock(return_value=payload)
 
@@ -225,11 +228,42 @@ async def test_max_webhook_accepts_valid_secret_and_dispatches():
 
 
 @pytest.mark.asyncio
+async def test_max_webhook_accepts_secret_via_header():
+    """Пакет 15k, пункт М: секрет в заголовке X-MAX-Webhook-Secret."""
+    from src.webhooks import handle_max_webhook
+
+    request = AsyncMock()
+    request.headers = {"X-MAX-Webhook-Secret": "s3cret"}
+    request.match_info = {}
+    request.json = AsyncMock(return_value={})
+
+    with patch("src.webhooks.get_settings", return_value=_max_settings()):
+        resp = await handle_max_webhook(request)
+    # Auth OK → 200 no_adapter (adapter не зарегистрирован).
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+async def test_max_webhook_rejects_wrong_header_secret():
+    from src.webhooks import handle_max_webhook
+
+    request = AsyncMock()
+    request.headers = {"X-MAX-Webhook-Secret": "wrong"}
+    request.match_info = {}
+    request.json = AsyncMock(return_value={})
+
+    with patch("src.webhooks.get_settings", return_value=_max_settings()):
+        resp = await handle_max_webhook(request)
+    assert resp.status == 401
+
+
+@pytest.mark.asyncio
 async def test_max_webhook_secret_derived_from_url_tail():
     """If max_webhook_secret is empty, last URL segment is used."""
     from src.webhooks import handle_max_webhook
 
     request = AsyncMock()
+    request.headers = {}
     request.match_info = {"secret": "abc123"}
     request.json = AsyncMock(return_value={})
 

@@ -286,14 +286,36 @@ def _derive_max_webhook_secret() -> str | None:
     return seg or None
 
 
+_MAX_WEBHOOK_SECRET_HEADER = "X-MAX-Webhook-Secret"
+
+
 async def handle_max_webhook(request):
-    """POST /webhook/max/<secret> — receive a MAX update payload."""
+    """POST /webhook/max — приём MAX update payload.
+
+    Пакет 15 000 ₽, пункт М: секрет принимается из заголовка
+    `X-MAX-Webhook-Secret`, fallback — последний сегмент URL для
+    обратной совместимости со старой подпиской `/webhook/max/<secret>`.
+    URL-в-логах-прокси больше не раскрывает секрет.
+    """
     from aiohttp import web
 
     expected = _derive_max_webhook_secret()
-    secret = request.match_info.get("secret", "")
-    if not expected or not hmac.compare_digest(secret, expected):
+    if not expected:
         return web.json_response({"error": "Unauthorized"}, status=401)
+
+    header_secret = request.headers.get(_MAX_WEBHOOK_SECRET_HEADER, "")
+    url_secret = request.match_info.get("secret", "")
+    if header_secret:
+        if not hmac.compare_digest(header_secret, expected):
+            return web.json_response({"error": "Unauthorized"}, status=401)
+    else:
+        if not url_secret or not hmac.compare_digest(url_secret, expected):
+            return web.json_response({"error": "Unauthorized"}, status=401)
+        logger.warning(
+            "MAX webhook: secret in URL (deprecated). "
+            "Подпишись на /webhook/max c заголовком %s.",
+            _MAX_WEBHOOK_SECRET_HEADER,
+        )
 
     try:
         payload = await request.json()
@@ -354,8 +376,15 @@ async def run_webhook_server(bot=None):
     app.router.add_get("/health", handle_health)
 
     if settings.max_webhook_url:
+        # Новый путь без секрета в URL — секрет ждём в заголовке X-MAX-Webhook-Secret.
+        app.router.add_post("/webhook/max", handle_max_webhook)
+        # Совместимость со старой подпиской MAX, где секрет в URL.
         app.router.add_post("/webhook/max/{secret}", handle_max_webhook)
-        logger.info("MAX webhook route registered at /webhook/max/<secret>")
+        logger.info(
+            "MAX webhook routes registered at /webhook/max (header %s) "
+            "и /webhook/max/<secret> (deprecated)",
+            _MAX_WEBHOOK_SECRET_HEADER,
+        )
 
     if settings.yookassa_shop_id and settings.yookassa_secret_key:
 
