@@ -29,6 +29,7 @@ from src.services.admin_service import (
     can_admin_events_user,
     create_city,
     extend_subscription,
+    format_admin_user_card,
     get_admin_events,
     get_effective_city_admin_city_ids,
     get_all_cities,
@@ -340,15 +341,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         if not u:
             await adapter.send_message(chat_id, "Не найден.", append_main_menu_shortcut_row(None))
             return True
-        t = (
-            f"<b>Пользователь</b>\n"
-            f"Платформа: {u.platform.value}\n"
-            f"ID: {u.platform_user_id}\n"
-            f"Username: @{u.platform_username or '—'}\n"
-            f"Имя: {u.platform_first_name or '—'}\n"
-            f"Статус: {'🔒 Заблокирован' if u.is_blocked else '✅ Активен'}\n"
-            f"Причина: {u.block_reason or '—'}"
-        )
+        t = await format_admin_user_card(u)
         await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(get_user_action_kb(uid_s, u.is_blocked))))
         return True
 
@@ -377,10 +370,7 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
         else:
             await unblock_user(uu)
             u = await get_user_by_id(uu)
-        t = (
-            f"<b>Пользователь</b>\nID: {u.platform_user_id}\n"
-            f"Статус: {'🔒 Заблокирован' if u.is_blocked else '✅ Активен'}"
-        )
+        t = await format_admin_user_card(u)
         await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(get_user_action_kb(uid_s, u.is_blocked))))
         return True
 

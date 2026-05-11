@@ -718,6 +718,59 @@ GLOBAL_TEXT_SUPPORT_EMAIL = "support_email"
 GLOBAL_TEXT_SUPPORT_USERNAME = "support_username"
 
 
+async def format_admin_user_card(user: User) -> str:
+    """HTML-карточка пользователя для админа (пакет «15 000 ₽», пункт Б).
+
+    Включает контакты: телефон из анкеты (если есть), platform-username,
+    deep-link для Telegram. Анкета берётся по effective_user_id, чтобы
+    показать данные канонического аккаунта при cross-platform-связке.
+    """
+    canonical_uid = effective_user_id(user)
+    session_factory = get_session_factory()
+    phone: str | None = None
+    profile_role: str | None = None
+    async with session_factory() as session:
+        pilot = await session.scalar(
+            select(ProfilePilot).where(ProfilePilot.user_id == canonical_uid)
+        )
+        if pilot:
+            phone = pilot.phone
+            profile_role = "pilot"
+        else:
+            passenger = await session.scalar(
+                select(ProfilePassenger).where(ProfilePassenger.user_id == canonical_uid)
+            )
+            if passenger:
+                phone = passenger.phone
+                profile_role = "passenger"
+
+    platform_label = "Telegram" if user.platform == Platform.TELEGRAM else "MAX"
+    role_label = {
+        "pilot": "🏍 Пилот",
+        "passenger": "🧍 Пассажир",
+    }.get(profile_role or "", "— (анкета не заполнена)")
+
+    if user.platform == Platform.TELEGRAM:
+        contact_link = f'<a href="tg://user?id={user.platform_user_id}">Открыть чат</a>'
+    elif user.platform_username:
+        contact_link = f"@{user.platform_username}"
+    else:
+        contact_link = "—"
+
+    return (
+        f"<b>Пользователь</b>\n"
+        f"Платформа: {platform_label}\n"
+        f"ID: {user.platform_user_id}\n"
+        f"Username: @{user.platform_username or '—'}\n"
+        f"Имя: {user.platform_first_name or '—'}\n"
+        f"Роль (анкета): {role_label}\n"
+        f"Телефон: <code>{phone or '—'}</code>\n"
+        f"Контакт: {contact_link}\n"
+        f"Статус: {'🔒 Заблокирован' if user.is_blocked else '✅ Активен'}\n"
+        f"Причина блокировки: {user.block_reason or '—'}"
+    )
+
+
 async def get_effective_support_email() -> str:
     """Email поддержки: из БД (global_texts), иначе из настроек окружения."""
     raw = await get_global_text(GLOBAL_TEXT_SUPPORT_EMAIL)

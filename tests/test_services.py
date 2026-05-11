@@ -213,3 +213,69 @@ async def test_get_stats_conversion_pct_zero_users(monkeypatch):
     assert stats["users"] == 0
     assert stats["conversion_pct"] == 0.0
     assert stats["registered_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_format_admin_user_card_with_pilot_phone(monkeypatch):
+    """Карточка показывает телефон из ProfilePilot и tg-ссылку для TG-юзера."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import admin_service
+    from src.models.user import Platform
+
+    fake_pilot = MagicMock(phone="+79991234567")
+    fake_session = MagicMock()
+    fake_session.scalar = AsyncMock(return_value=fake_pilot)
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        admin_service, "get_session_factory", lambda: MagicMock(return_value=fake_session)
+    )
+
+    user = MagicMock(
+        id=uuid4(),
+        linked_user_id=None,
+        platform=Platform.TELEGRAM,
+        platform_user_id=12345,
+        platform_username="vasya",
+        platform_first_name="Вася",
+        is_blocked=False,
+        block_reason=None,
+    )
+    text = await admin_service.format_admin_user_card(user)
+    assert "+79991234567" in text
+    assert "tg://user?id=12345" in text
+    assert "🏍 Пилот" in text
+    assert "Telegram" in text
+
+
+@pytest.mark.asyncio
+async def test_format_admin_user_card_no_profile(monkeypatch):
+    """Когда анкеты нет — телефон «—», роль помечена как незаполненная."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import admin_service
+    from src.models.user import Platform
+
+    fake_session = MagicMock()
+    fake_session.scalar = AsyncMock(return_value=None)
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        admin_service, "get_session_factory", lambda: MagicMock(return_value=fake_session)
+    )
+
+    user = MagicMock(
+        id=uuid4(),
+        linked_user_id=None,
+        platform=Platform.MAX,
+        platform_user_id=999,
+        platform_username=None,
+        platform_first_name=None,
+        is_blocked=True,
+        block_reason="spam",
+    )
+    text = await admin_service.format_admin_user_card(user)
+    assert "Телефон: <code>—</code>" in text
+    assert "анкета не заполнена" in text
+    assert "Заблокирован" in text
+    assert "spam" in text
+    assert "MAX" in text

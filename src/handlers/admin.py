@@ -59,6 +59,7 @@ from src.services.admin_service import (
     set_global_text,
     get_effective_support_email,
     get_effective_support_username,
+    format_admin_user_card,
     GLOBAL_TEXT_SUPPORT_EMAIL,
     GLOBAL_TEXT_SUPPORT_USERNAME,
 )
@@ -686,15 +687,12 @@ async def cb_admin_user_view(callback: CallbackQuery):
     if not u:
         await callback.answer("Пользователь не найден.", show_alert=True)
         return
-    text = (
-        f"<b>Пользователь</b>\n"
-        f"ID: {u.platform_user_id}\n"
-        f"Username: @{u.platform_username or '—'}\n"
-        f"Имя: {u.platform_first_name or '—'}\n"
-        f"Статус: {'🔒 Заблокирован' if u.is_blocked else '✅ Активен'}\n"
-        f"Причина блокировки: {u.block_reason or '—'}"
+    text = await format_admin_user_card(u)
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_user_action_kb(uid, u.is_blocked),
+        disable_web_page_preview=True,
     )
-    await callback.message.edit_text(text, reply_markup=get_user_action_kb(uid, u.is_blocked))
     await callback.answer()
 
 
@@ -730,14 +728,12 @@ async def cb_admin_user_block_toggle(callback: CallbackQuery):
         await unblock_user(user_uuid)
         await callback.answer("Пользователь разблокирован.")
         u.is_blocked = False
-    text = (
-        f"<b>Пользователь</b>\n"
-        f"ID: {u.platform_user_id}\n"
-        f"Username: @{u.platform_username or '—'}\n"
-        f"Имя: {u.platform_first_name or '—'}\n"
-        f"Статус: {'🔒 Заблокирован' if u.is_blocked else '✅ Активен'}"
+    text = await format_admin_user_card(u)
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_user_action_kb(uid, u.is_blocked),
+        disable_web_page_preview=True,
     )
-    await callback.message.edit_text(text, reply_markup=get_user_action_kb(uid, u.is_blocked))
 
 
 @router.callback_query(F.data.startswith("admin_sub_extend_"))
