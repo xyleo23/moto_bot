@@ -205,8 +205,9 @@ async def run_telegram(shared_bot=None):
     dp.include_router(bug_report.router)
     dp.include_router(admin_bug_reply.router)
     dp.include_router(admin.router)
-    from src.handlers import admin_contacts, subscription
+    from src.handlers import admin_contacts, admin_broadcast, subscription
 
+    dp.include_router(admin_broadcast.router)
     dp.include_router(admin_contacts.router)
     dp.include_router(subscription.router)
 

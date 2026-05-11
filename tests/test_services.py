@@ -454,6 +454,46 @@ async def test_broadcast_gives_up_after_max_attempts(monkeypatch):
     assert fake_bot.send_message.await_count == broadcast._RETRY_MAX_ATTEMPTS
 
 
+def test_parse_registration_date_year_only():
+    """Пункт О: год → 1 января указанного года."""
+    from datetime import date
+    from src.services.registration_shared import parse_registration_date
+
+    assert parse_registration_date("2010") == date(2010, 1, 1)
+    assert parse_registration_date("1969") is None  # ниже 1970
+    assert parse_registration_date("2031") is None  # выше 2030
+
+
+def test_parse_registration_date_month_year():
+    """ММ.ГГГГ → 1 число месяца."""
+    from datetime import date
+    from src.services.registration_shared import parse_registration_date
+
+    assert parse_registration_date("06.2018") == date(2018, 6, 1)
+    assert parse_registration_date("6/2018") == date(2018, 6, 1)
+    assert parse_registration_date("13.2018") is None  # некорректный месяц
+
+
+def test_parse_registration_date_full():
+    """Полная дата DD.MM.YYYY."""
+    from datetime import date
+    from src.services.registration_shared import parse_registration_date
+
+    assert parse_registration_date("26.06.2006") == date(2006, 6, 26)
+    assert parse_registration_date("26062006") == date(2006, 6, 26)
+    assert parse_registration_date("ерунда") is None
+
+
+def test_parse_russian_date_dd_month_yyyy():
+    """«26 июня 2006»."""
+    from datetime import date
+    from src.services.registration_shared import parse_russian_date, parse_registration_date
+
+    assert parse_russian_date("26 июня 2006") == date(2006, 6, 26)
+    assert parse_registration_date("26 июня 2006") == date(2006, 6, 26)
+    assert parse_russian_date("26 неваляшки 2006") is None
+
+
 def test_effective_user_id_returns_linked_when_set():
     """Пункт П: effective_user_id отдаёт linked id для связанного аккаунта."""
     from unittest.mock import MagicMock

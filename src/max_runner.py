@@ -99,21 +99,12 @@ def _get_tg_bot():
 PILOT_TOTAL_STEPS = 11
 PASSENGER_TOTAL_STEPS = 9
 
-# ── Registration date parser (same logic as registration.py) ──────────────────
-RUSSIAN_MONTHS = {
-    "января": 1,
-    "февраля": 2,
-    "марта": 3,
-    "апреля": 4,
-    "мая": 5,
-    "июня": 6,
-    "июля": 7,
-    "августа": 8,
-    "сентября": 9,
-    "октября": 10,
-    "ноября": 11,
-    "декабря": 12,
-}
+# Пакет 15 000 ₽, пункт О: общие парсеры дат с handlers/registration.py.
+from src.services.registration_shared import (
+    RUSSIAN_MONTHS,
+    parse_registration_date as _parse_date,
+    parse_russian_date as _parse_russian_date,
+)
 
 # MAX message-type inline buttons: label is sent as chat text — map to command keys
 MAX_MENU_MESSAGE_TO_CMD: dict[str, str] = {
@@ -141,49 +132,6 @@ async def _max_send_legal_chunks(adapter: MaxAdapter, chat_id: str, content: str
 
     for chunk in _chunk_text(content):
         await adapter.send_message(chat_id, chunk, None)
-
-
-def _parse_russian_date(text: str):
-    text = (text or "").strip()
-    m = re.search(r"(\d{1,2})\s+(\S+)\s+(\d{4})", text, re.IGNORECASE)
-    if not m:
-        return None
-    day, month_name, year = int(m.group(1)), m.group(2).lower(), int(m.group(3))
-    month_num = RUSSIAN_MONTHS.get(month_name)
-    if not month_num:
-        return None
-    try:
-        return datetime(year, month_num, day).date()
-    except ValueError:
-        return None
-
-
-def _parse_date(text: str):
-    text = (text or "").strip()
-    m_year = re.match(r"^(\d{4})$", text)
-    if m_year:
-        y = int(m_year.group(1))
-        if 1970 <= y <= 2030:
-            return datetime(y, 1, 1).date()
-    m_my = re.match(r"^(\d{1,2})[./](\d{4})$", text)
-    if m_my:
-        month, year = int(m_my.group(1)), int(m_my.group(2))
-        if 1 <= month <= 12 and 1970 <= year <= 2030:
-            try:
-                return datetime(year, month, 1).date()
-            except ValueError:
-                pass
-    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%y", "%d/%m/%y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    if len(text) == 8 and text.isdigit():
-        try:
-            return datetime.strptime(f"{text[:2]}.{text[2:4]}.{text[4:]}", "%d.%m.%Y").date()
-        except ValueError:
-            pass
-    return _parse_russian_date(text)
 
 
 # ── Keyboard builders for registration ───────────────────────────────────────
