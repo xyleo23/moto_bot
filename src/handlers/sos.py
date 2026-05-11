@@ -344,6 +344,7 @@ async def _send_sos_alert(
         logger.warning("SOS broadcast skipped: no bot instance")
     elif not user_ids:
         logger.warning("SOS broadcast skipped: no recipients in city")
+    tg_dispatched = False
     if send_bot and user_ids:
         # Non-blocking background broadcast with 50ms inter-message delay
         broadcast_background(
@@ -353,12 +354,14 @@ async def _send_sos_alert(
             exclude_id=tg_id,
             reply_markup=broadcast_kb,
         )
+        tg_dispatched = True
 
     # Cross-platform: also broadcast to MAX users in the same city
     from src.services.broadcast import get_max_adapter, broadcast_max_background
     from src.platforms.base import Button, ButtonType
 
     max_adapter = get_max_adapter()
+    max_dispatched = False
     if max_adapter and max_user_ids:
         from src.models.user import Platform as UserPlatform
         from src.services.user import get_all_platform_identities
@@ -383,6 +386,21 @@ async def _send_sos_alert(
             exclude_ids=excl_mx,
             kb_rows=map_rows,
         )
+        max_dispatched = True
+
+    # Fail-closed (пункт Ж): если SOS никуда не разослан, говорим юзеру правду.
+    if not tg_dispatched and not max_dispatched:
+        logger.warning(
+            "SOS fail-closed: alert created but no recipients (city=%s, tg=%s, max=%s)",
+            user.city_id,
+            len(user_ids),
+            len(max_user_ids),
+        )
+        await message.answer(
+            texts.SOS_NO_RECIPIENTS,
+            reply_markup=get_back_to_menu_kb(),
+        )
+        return
 
     cooldown_mins = settings.sos_cooldown_minutes
     # Reply with confirmation + timer + all-clear button

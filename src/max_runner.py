@@ -3019,6 +3019,7 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
 
     # Broadcast to MAX users in the city
     max_user_ids = await get_city_max_user_ids(user.city_id)
+    max_dispatched = False
     if max_user_ids:
         excl_max: set[int] = set()
         for ident in await get_all_platform_identities(eff_uid):
@@ -3031,12 +3032,14 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
             exclude_ids=excl_max,
             kb_rows=map_kb_row,
         )
+        max_dispatched = True
 
     # Cross-platform: also broadcast to Telegram users in the city
     from src.services.broadcast import broadcast_background
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     tg_user_ids = await get_city_telegram_user_ids(user.city_id)
+    tg_dispatched = False
     if tg_user_ids:
         tg_kb = None
         if has_gps:
@@ -3054,6 +3057,22 @@ async def _handle_sos_send(adapter: MaxAdapter, chat_id: str, user, comment: str
                 broadcast_text,
                 reply_markup=tg_kb,
             )
+            tg_dispatched = True
+
+    # Fail-closed (пункт Ж): SOS не разослан ни в один канал — честно говорим юзеру.
+    if not tg_dispatched and not max_dispatched:
+        logger.warning(
+            "MAX SOS fail-closed: alert created but no recipients (city={}, tg={}, max={})",
+            user.city_id,
+            len(tg_user_ids),
+            len(max_user_ids),
+        )
+        await adapter.send_message(
+            chat_id,
+            texts.SOS_NO_RECIPIENTS,
+            [get_main_menu_shortcut_row()],
+        )
+        return
 
     cooldown_mins = settings.sos_cooldown_minutes
     kb = [
