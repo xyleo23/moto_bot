@@ -12,6 +12,11 @@ import html
 import re
 from collections.abc import Iterable
 
+from aiogram.exceptions import (
+    TelegramRetryAfter,
+    TelegramForbiddenError,
+    TelegramBadRequest,
+)
 from loguru import logger
 
 from src.platforms.max_adapter import (
@@ -32,6 +37,10 @@ def _max_broadcast_plain_fallback(html_text: str) -> str:
 
 # 50 ms between messages — stays well under Telegram's 30 msg/s per bot limit
 _SEND_DELAY = 0.05
+
+# Пакет 15 000 ₽, пункт З: при TelegramRetryAfter ждём retry_after+1 сек
+# и повторяем отправку до _RETRY_MAX_ATTEMPTS попыток на одного получателя.
+_RETRY_MAX_ATTEMPTS = 3
 
 # Module-level MAX adapter reference (injected at startup when platform includes MAX)
 _max_adapter = None
@@ -68,15 +77,38 @@ async def _do_broadcast(
     for uid in user_ids:
         if exclude_id is not None and uid == exclude_id:
             continue
-        try:
-            kwargs = {"text": text, "parse_mode": "HTML"}
-            if reply_markup is not None:
-                kwargs["reply_markup"] = reply_markup
-            await bot.send_message(uid, **kwargs)
-            sent += 1
-            logger.info("tg_broadcast: ok uid={}", uid)
-        except Exception as e:
-            logger.warning(f"broadcast: could not send to {uid}: {e}")
+        attempt = 0
+        delivered = False
+        while attempt < _RETRY_MAX_ATTEMPTS:
+            attempt += 1
+            try:
+                kwargs = {"text": text, "parse_mode": "HTML"}
+                if reply_markup is not None:
+                    kwargs["reply_markup"] = reply_markup
+                await bot.send_message(uid, **kwargs)
+                sent += 1
+                delivered = True
+                logger.info("tg_broadcast: ok uid={}", uid)
+                break
+            except TelegramRetryAfter as e:
+                wait_s = e.retry_after + 1
+                logger.warning(
+                    "tg_broadcast: flood-control uid={} retry_after={}s attempt={}/{}",
+                    uid,
+                    wait_s,
+                    attempt,
+                    _RETRY_MAX_ATTEMPTS,
+                )
+                await asyncio.sleep(wait_s)
+                # цикл while попробует ещё раз
+            except (TelegramForbiddenError, TelegramBadRequest) as e:
+                # юзер заблокировал бота / удалил чат — ретрай бессмыслен
+                logger.info("tg_broadcast: cannot send to {}: {}", uid, e)
+                break
+            except Exception as e:
+                logger.warning("tg_broadcast: error uid={}: {}", uid, e)
+                break
+        if not delivered:
             failed += 1
         await asyncio.sleep(_SEND_DELAY)
 

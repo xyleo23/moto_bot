@@ -397,3 +397,83 @@ async def test_mark_payment_processed_empty_id_returns_false():
 
     ok = await payment_idempotency.mark_payment_processed("", "donate")
     assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_broadcast_retries_on_retry_after(monkeypatch):
+    """При TelegramRetryAfter — спим и повторяем отправку."""
+    from unittest.mock import AsyncMock, MagicMock
+    from aiogram.exceptions import TelegramRetryAfter
+    from src.services import broadcast
+
+    # 1-я попытка падает RetryAfter, 2-я успешна.
+    method = MagicMock()
+    method.__name__ = "sendMessage"
+    fake_bot = MagicMock()
+    fake_bot.send_message = AsyncMock(
+        side_effect=[TelegramRetryAfter(method=method, message="flood", retry_after=1), None]
+    )
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(s):
+        sleep_calls.append(s)
+
+    monkeypatch.setattr(broadcast.asyncio, "sleep", fake_sleep)
+
+    sent, failed = await broadcast._do_broadcast(fake_bot, [12345], "hi")
+    assert sent == 1
+    assert failed == 0
+    assert fake_bot.send_message.await_count == 2
+    # первый sleep — это retry_after+1=2, второй — _SEND_DELAY=0.05
+    assert 2 in sleep_calls
+
+
+@pytest.mark.asyncio
+async def test_broadcast_gives_up_after_max_attempts(monkeypatch):
+    """3 подряд RetryAfter → failed=1, юзер пропущен."""
+    from unittest.mock import AsyncMock, MagicMock
+    from aiogram.exceptions import TelegramRetryAfter
+    from src.services import broadcast
+
+    method = MagicMock()
+    method.__name__ = "sendMessage"
+    fake_bot = MagicMock()
+    fake_bot.send_message = AsyncMock(
+        side_effect=TelegramRetryAfter(method=method, message="flood", retry_after=1)
+    )
+
+    async def fake_sleep(_s):
+        return None
+
+    monkeypatch.setattr(broadcast.asyncio, "sleep", fake_sleep)
+
+    sent, failed = await broadcast._do_broadcast(fake_bot, [12345], "hi")
+    assert sent == 0
+    assert failed == 1
+    assert fake_bot.send_message.await_count == broadcast._RETRY_MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_broadcast_no_retry_on_forbidden(monkeypatch):
+    """TelegramForbiddenError → 1 попытка, failed=1, без ожидания."""
+    from unittest.mock import AsyncMock, MagicMock
+    from aiogram.exceptions import TelegramForbiddenError
+    from src.services import broadcast
+
+    method = MagicMock()
+    method.__name__ = "sendMessage"
+    fake_bot = MagicMock()
+    fake_bot.send_message = AsyncMock(
+        side_effect=TelegramForbiddenError(method=method, message="blocked")
+    )
+
+    async def fake_sleep(_s):
+        return None
+
+    monkeypatch.setattr(broadcast.asyncio, "sleep", fake_sleep)
+
+    sent, failed = await broadcast._do_broadcast(fake_bot, [12345], "hi")
+    assert sent == 0
+    assert failed == 1
+    assert fake_bot.send_message.await_count == 1
