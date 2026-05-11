@@ -580,3 +580,66 @@ async def test_broadcast_no_retry_on_forbidden(monkeypatch):
     assert sent == 0
     assert failed == 1
     assert fake_bot.send_message.await_count == 1
+
+
+def test_format_basic_stats_hides_conversion():
+    """Базовая статистика для партнёров — без конверсии и регистраций."""
+    from src.handlers.admin import _format_basic_stats
+
+    text = _format_basic_stats(
+        {
+            "users": 237,
+            "blocked": 0,
+            "active_subs": 0,
+            "sos": 2,
+            "events": 5,
+            # Эти поля должны быть скрыты в базовом виде:
+            "registered_total": 104,
+            "conversion_pct": 43.9,
+            "pilots_registered": 93,
+            "passengers_registered": 11,
+        }
+    )
+    assert "Пользователей: 237" in text
+    assert "Мероприятий: 5" in text
+    # Не должно быть никаких намёков на конверсию:
+    assert "Завершили" not in text
+    assert "43.9" not in text
+    assert "пилотов" not in text
+
+
+def test_format_extended_stats_shows_conversion_and_cities():
+    """Расширенная — конверсия + срез по городам."""
+    from src.handlers.admin import _format_extended_stats
+
+    stats = {
+        "users": 237,
+        "registered_total": 104,
+        "conversion_pct": 43.9,
+        "pilots_registered": 93,
+        "passengers_registered": 11,
+    }
+    by_city = [
+        {
+            "city": "Екатеринбург",
+            "starts": 200,
+            "pilots": 80,
+            "passengers": 10,
+            "registered": 90,
+            "conversion_pct": 45.0,
+        },
+        {
+            "city": "Челябинск",
+            "starts": 37,
+            "pilots": 13,
+            "passengers": 1,
+            "registered": 14,
+            "conversion_pct": 37.8,
+        },
+    ]
+    text = _format_extended_stats(stats, by_city)
+    assert "43.9%" in text
+    assert "пилотов: 93" in text
+    assert "Екатеринбург" in text
+    assert "45.0%" in text
+    assert "Челябинск" in text

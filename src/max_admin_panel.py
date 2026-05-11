@@ -295,15 +295,30 @@ async def max_admin_dispatch(adapter: MaxAdapter, chat_id: str, user: User, data
     # ——— Суперадмин ———
     if data == "admin_stats" and await _max_superadmin(user):
         stats = await get_stats()
-        t = (
-            f"📊 <b>Статистика</b>\n\n"
-            f"Пользователей: {stats.get('users', 0)}\n"
-            f"Заблокировано: {stats.get('blocked', 0)}\n"
-            f"Активных подписок: {stats.get('active_subs', 0)}\n"
-            f"SOS-сигналов: {stats.get('sos', 0)}\n"
-            f"Мероприятий: {stats.get('events', 0)}"
+        t = tg_admin._format_basic_stats(stats)
+        await adapter.send_message(
+            chat_id,
+            t,
+            append_main_menu_shortcut_row(max_kb_from_tg_inline(tg_admin._admin_stats_markup())),
         )
-        await adapter.send_message(chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(tg_admin._admin_stats_markup())))
+        return True
+
+    if data == "admin_stats_extended" and await _max_superadmin(user):
+        from src.services.admin_service import get_extended_stats_by_city
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        stats = await get_stats()
+        by_city = await get_extended_stats_by_city()
+        t = tg_admin._format_extended_stats(stats, by_city)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« К базовой статистике", callback_data="admin_stats")],
+                [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+            ]
+        )
+        await adapter.send_message(
+            chat_id, t, append_main_menu_shortcut_row(max_kb_from_tg_inline(kb))
+        )
         return True
 
     if data == "admin_users" and await _max_superadmin(user):

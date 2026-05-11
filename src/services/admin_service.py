@@ -66,6 +66,76 @@ async def get_stats() -> dict:
         }
 
 
+async def get_extended_stats_by_city() -> list[dict]:
+    """Расширенная статистика регистрации с разбивкой по городам.
+
+    Партнёрам показываем только базовый /start-счётчик через get_stats.
+    Здесь — внутренний срез: сколько до конца дошло, в каком городе.
+    Анкеты под каноническим user_id, поэтому считаем по effective-городу
+    канонического юзера.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        # Подзапрос: canonical user_id -> city
+        # У вторичных аккаунтов (linked_user_id != NULL) город может отличаться;
+        # для статистики берём город владельца анкеты (User.city_id канонической записи).
+        # Pilots
+        pilot_rows = await session.execute(
+            select(City.name, func.count(ProfilePilot.id))
+            .join(User, User.id == ProfilePilot.user_id)
+            .outerjoin(City, City.id == User.city_id)
+            .group_by(City.name)
+        )
+        pilots_by_city: dict[str, int] = {
+            (name or "(без города)"): cnt for name, cnt in pilot_rows.all()
+        }
+
+        pax_rows = await session.execute(
+            select(City.name, func.count(ProfilePassenger.id))
+            .join(User, User.id == ProfilePassenger.user_id)
+            .outerjoin(City, City.id == User.city_id)
+            .group_by(City.name)
+        )
+        passengers_by_city: dict[str, int] = {
+            (name or "(без города)"): cnt for name, cnt in pax_rows.all()
+        }
+
+        # /start counter по городам — User.city_id заполняется на шаге выбора города,
+        # т.е. это «дошли до выбора города», максимально близко к /start-факту.
+        start_rows = await session.execute(
+            select(City.name, func.count(User.id))
+            .outerjoin(City, City.id == User.city_id)
+            .where(User.linked_user_id.is_(None))  # только канонические, без дублей
+            .group_by(City.name)
+        )
+        starts_by_city: dict[str, int] = {
+            (name or "(без города)"): cnt for name, cnt in start_rows.all()
+        }
+
+        all_cities = (
+            set(pilots_by_city)
+            | set(passengers_by_city)
+            | set(starts_by_city)
+        )
+
+        out: list[dict] = []
+        for city in sorted(all_cities, key=lambda c: (c == "(без города)", c)):
+            pilots = pilots_by_city.get(city, 0)
+            pax = passengers_by_city.get(city, 0)
+            starts = starts_by_city.get(city, 0)
+            total_reg = pilots + pax
+            conv = round(total_reg * 100 / starts, 1) if starts else 0.0
+            out.append({
+                "city": city,
+                "starts": starts,
+                "pilots": pilots,
+                "passengers": pax,
+                "registered": total_reg,
+                "conversion_pct": conv,
+            })
+        return out
+
+
 async def get_users_list(
     limit: int = 20,
     offset: int = 0,

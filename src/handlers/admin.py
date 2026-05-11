@@ -30,6 +30,7 @@ from src.keyboards.menu import (
 )
 from src.services.admin_service import (
     get_stats,
+    get_extended_stats_by_city,
     get_users_list,
     block_user,
     unblock_user,
@@ -202,26 +203,72 @@ async def cb_admin_panel(callback: CallbackQuery, user=None):
     await callback.answer("Доступ запрещён.")
 
 
+def _format_basic_stats(stats: dict) -> str:
+    """Базовая статистика для показа партнёрам.
+
+    Сознательно не раскрываем конверсию /start → регистрация: «Пользователей» = users.
+    Расширенный срез доступен по отдельной кнопке только админу.
+    """
+    return (
+        f"📊 <b>Статистика</b>\n\n"
+        f"Пользователей: {stats.get('users', 0)}\n"
+        f"Заблокировано: {stats.get('blocked', 0)}\n"
+        f"Активных подписок: {stats.get('active_subs', 0)}\n"
+        f"SOS-сигналов: {stats.get('sos', 0)}\n"
+        f"Мероприятий: {stats.get('events', 0)}"
+    )
+
+
+def _format_extended_stats(stats: dict, by_city: list[dict]) -> str:
+    lines = [
+        "📈 <b>Расширенная статистика</b>",
+        "",
+        f"Нажали /start: {stats.get('users', 0)}",
+        f"Завершили регистрацию: {stats.get('registered_total', 0)} "
+        f"({stats.get('conversion_pct', 0)}%)",
+        f"  ├ пилотов: {stats.get('pilots_registered', 0)}",
+        f"  └ пассажиров: {stats.get('passengers_registered', 0)}",
+        "",
+        "<b>По городам:</b>",
+    ]
+    if not by_city:
+        lines.append("(данных пока нет)")
+    for row in by_city:
+        lines.append(
+            f"• <b>{row['city']}</b>: "
+            f"start={row['starts']}, "
+            f"рег.={row['registered']} ({row['conversion_pct']}%) "
+            f"[🏍{row['pilots']} / 🧍{row['passengers']}]"
+        )
+    return "\n".join(lines)
+
+
 @router.callback_query(F.data == "admin_stats")
 async def cb_admin_stats(callback: CallbackQuery):
     if not _is_superadmin(callback.from_user.id):
         await callback.answer("Доступ запрещён.")
         return
     stats = await get_stats()
-    text = (
-        f"📊 <b>Статистика</b>\n\n"
-        f"Нажали /start: {stats.get('users', 0)}\n"
-        f"Завершили регистрацию: {stats.get('registered_total', 0)} "
-        f"({stats.get('conversion_pct', 0)}%)\n"
-        f"  ├ пилотов: {stats.get('pilots_registered', 0)}\n"
-        f"  └ пассажиров: {stats.get('passengers_registered', 0)}\n"
-        f"\n"
-        f"Заблокировано: {stats.get('blocked', 0)}\n"
-        f"Активных подписок: {stats.get('active_subs', 0)}\n"
-        f"SOS-сигналов: {stats.get('sos', 0)}\n"
-        f"Мероприятий: {stats.get('events', 0)}"
+    await callback.message.edit_text(_format_basic_stats(stats), reply_markup=_admin_stats_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_stats_extended")
+async def cb_admin_stats_extended(callback: CallbackQuery):
+    if not _is_superadmin(callback.from_user.id):
+        await callback.answer("Доступ запрещён.")
+        return
+    stats = await get_stats()
+    by_city = await get_extended_stats_by_city()
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="« К базовой статистике", callback_data="admin_stats")],
+            [InlineKeyboardButton(text="« Назад", callback_data="admin_panel")],
+        ]
     )
-    await callback.message.edit_text(text, reply_markup=_admin_stats_markup())
+    await callback.message.edit_text(_format_extended_stats(stats, by_city), reply_markup=kb)
     await callback.answer()
 
 
@@ -332,6 +379,12 @@ def _admin_stats_markup():
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text="📈 Расширенная статистика",
+                    callback_data="admin_stats_extended",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="💰 Подписки и оплаты",
                     callback_data="admin_settings",
                 )
@@ -344,20 +397,7 @@ def _admin_stats_markup():
 async def _show_admin_stats(message: Message):
     """Show stats — used by both callback and text handler."""
     stats = await get_stats()
-    text = (
-        f"📊 <b>Статистика</b>\n\n"
-        f"Нажали /start: {stats.get('users', 0)}\n"
-        f"Завершили регистрацию: {stats.get('registered_total', 0)} "
-        f"({stats.get('conversion_pct', 0)}%)\n"
-        f"  ├ пилотов: {stats.get('pilots_registered', 0)}\n"
-        f"  └ пассажиров: {stats.get('passengers_registered', 0)}\n"
-        f"\n"
-        f"Заблокировано: {stats.get('blocked', 0)}\n"
-        f"Активных подписок: {stats.get('active_subs', 0)}\n"
-        f"SOS-сигналов: {stats.get('sos', 0)}\n"
-        f"Мероприятий: {stats.get('events', 0)}"
-    )
-    await message.answer(text, reply_markup=_admin_stats_markup())
+    await message.answer(_format_basic_stats(stats), reply_markup=_admin_stats_markup())
 
 
 def _build_users_page(users: list, total: int, page: int, *, payment_row: bool = False):
