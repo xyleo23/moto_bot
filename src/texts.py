@@ -313,6 +313,11 @@ PROFILE_HIDDEN_OK = (
 PROFILE_SHOWN_OK = "Анкета снова видна в ленте."
 PROFILE_HIDE_NO_PROFILE = "Сначала заполни анкету."
 MOTOPAIR_REPORT_SENT = "Жалоба отправлена администратору."
+EVENT_PARTICIPANTS_HEADER = "👥 <b>Записались на мероприятие — {n}</b>\n"
+EVENT_PARTICIPANTS_EMPTY = "Пока никто не записался."
+EVENT_PARTICIPANT_LINE_TG = (
+    "{idx}. {role_emoji} <b>{name}</b>{username}{phone}{seeking}"
+)
 MOTOPAIR_REPORT_COOLDOWN = "⏳ Слишком часто. Попробуй через {sec} сек."
 MOTOPAIR_REPORT_DAILY_LIMIT = "Превышен дневной лимит жалоб. Попробуй позже."
 MOTOPAIR_REPORT_ADMIN_TEXT = (

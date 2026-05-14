@@ -46,6 +46,7 @@ from src.services.event_service import (
     accept_pair_request,
     reject_pair_request,
     get_creator_events,
+    get_event_participants,
     cancel_event,
     get_profile_display,
     format_event_report_admin_html,
@@ -1247,6 +1248,51 @@ async def cb_event_my_detail(callback: CallbackQuery, user=None):
         _format_event_card(ev),
         reply_markup=get_my_event_detail_kb(eid),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("event_my_parts_"))
+async def cb_event_my_participants(callback: CallbackQuery, user=None):
+    """Создатель видит список записавшихся на своё мероприятие."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from html import escape
+
+    eid = callback.data.replace("event_my_parts_", "")
+    try:
+        ev_uuid = uuid.UUID(eid)
+    except ValueError:
+        await callback.answer("Ошибка.", show_alert=True)
+        return
+    ev = await get_event_by_id(ev_uuid)
+    if not ev or ev.creator_id != effective_user_id(user):
+        await callback.answer("Не найдено.", show_alert=True)
+        return
+
+    parts = await get_event_participants(ev_uuid)
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="« К мероприятию", callback_data=f"event_my_detail_{eid}")],
+    ])
+    if not parts:
+        await callback.message.edit_text(texts.EVENT_PARTICIPANTS_EMPTY, reply_markup=back_kb)
+        await callback.answer()
+        return
+
+    role_emoji = {"pilot": "🏍", "passenger": "🧍"}
+    lines = [texts.EVENT_PARTICIPANTS_HEADER.format(n=len(parts))]
+    for i, p in enumerate(parts, 1):
+        username = f" @{escape(p['username'])}" if p.get("username") else ""
+        phone = f" • {escape(p['phone'])}" if p.get("phone") else ""
+        seeking = " 👀 ищет пару" if p.get("seeking_pair") and not p.get("matched_user_id") else ""
+        lines.append(texts.EVENT_PARTICIPANT_LINE_TG.format(
+            idx=i,
+            role_emoji=role_emoji.get(p["role"], "•"),
+            name=escape(p["display_name"]),
+            username=username,
+            phone=phone,
+            seeking=seeking,
+        ))
+    text = "\n".join(lines)
+    await callback.message.edit_text(text, reply_markup=back_kb, disable_web_page_preview=True)
     await callback.answer()
 
 

@@ -496,6 +496,58 @@ async def get_creator_events(creator_id: UUID):
         return result.scalars().all()
 
 
+async def get_event_participants(event_id: UUID) -> list[dict]:
+    """Список записавшихся на мероприятие — для просмотра создателем.
+
+    Возвращает [{user_id, role, seeking_pair, display_name, username, phone, platform}, ...],
+    отсортирован по дате регистрации (раньше зарегистрировался — выше).
+    Телефон берётся из анкеты пилота/пассажира под каноническим user_id.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(EventRegistration, User)
+            .join(User, EventRegistration.user_id == User.id)
+            .where(EventRegistration.event_id == event_id)
+            .order_by(EventRegistration.created_at)
+        )
+        rows = result.all()
+        if not rows:
+            return []
+
+        # Подтянем телефоны одним запросом по обеим анкетам.
+        uids = [reg.user_id for reg, _ in rows]
+        pilot_phones = dict(
+            (await session.execute(
+                select(ProfilePilot.user_id, ProfilePilot.phone).where(
+                    ProfilePilot.user_id.in_(uids)
+                )
+            )).all()
+        )
+        pax_phones = dict(
+            (await session.execute(
+                select(ProfilePassenger.user_id, ProfilePassenger.phone).where(
+                    ProfilePassenger.user_id.in_(uids)
+                )
+            )).all()
+        )
+
+        out: list[dict] = []
+        for reg, u in rows:
+            out.append({
+                "user_id": u.id,
+                "platform_user_id": u.platform_user_id,
+                "platform": u.platform.value if hasattr(u.platform, "value") else str(u.platform),
+                "display_name": u.platform_first_name or u.platform_username or "—",
+                "username": u.platform_username,
+                "role": reg.role,
+                "seeking_pair": reg.seeking_pair,
+                "matched_user_id": reg.matched_user_id,
+                "phone": pilot_phones.get(reg.user_id) or pax_phones.get(reg.user_id) or "",
+            })
+        return out
+
+
 async def cancel_event(event_id: UUID, creator_id: UUID) -> tuple[bool, list[UUID]]:
     """Cancel event. Returns (ok, participant user ids — канонические UUID для рассылки)."""
     session_factory = get_session_factory()

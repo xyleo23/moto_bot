@@ -5,6 +5,27 @@ from uuid import uuid4
 
 
 @pytest.mark.asyncio
+async def test_get_event_participants_empty(monkeypatch):
+    """Если на мероприятие никто не записан — возвращается []."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import event_service
+
+    fake_result = MagicMock()
+    fake_result.all = MagicMock(return_value=[])
+    fake_session = MagicMock()
+    fake_session.execute = AsyncMock(return_value=fake_result)
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        event_service, "get_session_factory",
+        lambda: MagicMock(return_value=fake_session),
+    )
+
+    out = await event_service.get_event_participants(uuid4())
+    assert out == []
+
+
+@pytest.mark.asyncio
 async def test_motopair_raise_profile():
     """Test raise_profile with invalid user_id returns False."""
     try:

@@ -2699,6 +2699,10 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
         eid = data.replace("event_my_detail_", "", 1)
         await handle_event_my_detail_max(adapter, chat_id, user, eid)
         return
+    if data.startswith("event_my_parts_"):
+        eid = data.replace("event_my_parts_", "", 1)
+        await handle_event_my_participants_max(adapter, chat_id, user, eid)
+        return
     if data.startswith("event_cancel_"):
         eid = data.replace("event_cancel_", "", 1)
         await handle_event_cancel_max(adapter, chat_id, user, eid)
@@ -3612,6 +3616,49 @@ async def handle_event_my_detail_max(
     text = _format_event_card(ev)
     kb = get_max_my_event_detail_rows(event_id)
     await adapter.send_message(chat_id, text, kb)
+
+
+async def handle_event_my_participants_max(
+    adapter: MaxAdapter, chat_id: str, user, event_id: str
+) -> None:
+    """MAX: создатель смотрит список записавшихся."""
+    from html import escape
+    from src.services.event_service import get_event_by_id, get_event_participants
+
+    try:
+        ev_uuid = uuid.UUID(event_id)
+    except ValueError:
+        await adapter.send_message(chat_id, "Ошибка ID.", get_back_to_menu_rows())
+        return
+    ev = await get_event_by_id(ev_uuid)
+    if not ev or ev.creator_id != effective_user_id(user):
+        await adapter.send_message(chat_id, "Мероприятие не найдено.", get_back_to_menu_rows())
+        return
+
+    back_rows = [
+        [Button("« К мероприятию", payload=f"event_my_detail_{event_id}")],
+        get_main_menu_shortcut_row(),
+    ]
+    parts = await get_event_participants(ev_uuid)
+    if not parts:
+        await adapter.send_message(chat_id, texts.EVENT_PARTICIPANTS_EMPTY, back_rows)
+        return
+
+    role_emoji = {"pilot": "🏍", "passenger": "🧍"}
+    lines = [texts.EVENT_PARTICIPANTS_HEADER.format(n=len(parts))]
+    for i, p in enumerate(parts, 1):
+        username = f" @{escape(p['username'])}" if p.get("username") else ""
+        phone = f" • {escape(p['phone'])}" if p.get("phone") else ""
+        seeking = " 👀 ищет пару" if p.get("seeking_pair") and not p.get("matched_user_id") else ""
+        lines.append(texts.EVENT_PARTICIPANT_LINE_TG.format(
+            idx=i,
+            role_emoji=role_emoji.get(p["role"], "•"),
+            name=escape(p["display_name"]),
+            username=username,
+            phone=phone,
+            seeking=seeking,
+        ))
+    await adapter.send_message(chat_id, "\n".join(lines), back_rows)
 
 
 async def handle_event_cancel_max(adapter: MaxAdapter, chat_id: str, user, event_id: str) -> None:

@@ -214,8 +214,9 @@ def get_events_menu_rows() -> list[KeyboardRow]:
 
 
 def get_max_my_event_detail_rows(event_id: str) -> list[KeyboardRow]:
-    """Карточка «моё мероприятие» в MAX: редактирование, отмена."""
+    """Карточка «моё мероприятие» в MAX: участники, редактирование, отмена."""
     return [
+        [Button("👥 Участники", payload=f"event_my_parts_{event_id}")],
         [Button("✏️ Редактировать", payload=f"max_evedit_menu_{event_id}")],
         [Button("❌ Отменить мероприятие", payload=f"event_cancel_{event_id}")],
         [Button("« Мои мероприятия", payload="event_my")],
