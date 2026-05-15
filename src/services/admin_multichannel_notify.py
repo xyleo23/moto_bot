@@ -265,8 +265,14 @@ async def notify_city_admins_multichannel(
     telegram_markup: Any | None = None,
     telegram_bot: Any | None = None,
     max_adapter: Any | None = None,
+    telegram_parse_mode: str | None = "HTML",
 ) -> None:
-    """Рассылка админам города с учётом платформы записи User."""
+    """Рассылка админам города с учётом платформы записи User.
+
+    Bugfix: раньше `bot.send_message` шёл без parse_mode, поэтому
+    `<b>...</b>` в уведомлении о жалобе показывался как plain text
+    у админов города (только у суперадминов был HTML).
+    """
     from src.services.admin_service import get_city_admins
 
     max_rows = tg_inline_markup_to_max_rows(telegram_markup)
@@ -275,7 +281,10 @@ async def notify_city_admins_multichannel(
         if admin_user.platform == Platform.TELEGRAM and telegram_bot:
             try:
                 await telegram_bot.send_message(
-                    admin_user.platform_user_id, html, reply_markup=telegram_markup
+                    admin_user.platform_user_id,
+                    html,
+                    reply_markup=telegram_markup,
+                    parse_mode=telegram_parse_mode,
                 )
             except Exception as e:
                 logger.warning(

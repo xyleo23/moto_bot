@@ -624,6 +624,10 @@ async def _handle_fsm_message(
         await max_admin_bug_reply_deliver_text(adapter, chat_id, user_id, text, fsm)
         return
 
+    if state == "motopair_report_other":
+        await handle_motopair_report_other_text_max(adapter, chat_id, user_id, text, fsm)
+        return
+
     if isinstance(state, str) and state.startswith("admin:contact"):
         from src.max_admin_contacts import handle_max_contact_fsm_text
 
@@ -2610,6 +2614,13 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
             role = "pilot"
         await handle_motopair_list(adapter, chat_id, user, role, offset=0)
         return
+    if data == "motopair_report_cancel":
+        await reg_state.clear_state(user.platform_user_id)
+        await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_CANCELLED, get_back_to_menu_rows())
+        return
+    if data.startswith("motopair_report_reason_"):
+        await handle_motopair_report_reason_max(adapter, chat_id, user, data)
+        return
     if data.startswith("motopair_report_"):
         await handle_motopair_report_max(adapter, chat_id, user, data)
         return
@@ -3694,10 +3705,69 @@ async def handle_event_cancel_max(adapter: MaxAdapter, chat_id: str, user, event
     )
 
 
-async def handle_motopair_report_max(adapter: MaxAdapter, chat_id: str, user, data: str) -> None:
-    from src.services.motopair_service import get_user_for_profile, get_profile_info_text
-    from src import texts
+async def _max_send_report_admins(
+    user, target_user, role: str, reason_label: str, reason_for_db: str, adapter
+) -> None:
+    """Финальный шаг для MAX: save + рассылка админам (TG + MAX)."""
+    from html import escape
+    from src.services.motopair_service import get_profile_info_text
+    from src.services.admin_multichannel_notify import (
+        notify_city_admins_multichannel,
+        notify_superadmins_multichannel,
+    )
+    from src.services.broadcast import get_max_adapter
+    from src.services.report_service import maybe_auto_block_after_report, save_report
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    profile_text, _ = await get_profile_info_text(target_user.id)
+    reporter_display = (
+        f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
+    )
+    reported_display = (
+        f"@{target_user.platform_username}"
+        if target_user.platform_username
+        else str(target_user.platform_user_id)
+    )
+    admin_text = texts.MOTOPAIR_REPORT_ADMIN_TEXT.format(
+        reporter=escape(reporter_display),
+        reported=escape(reported_display),
+        reason=escape(reason_label),
+        profile_text=profile_text,
+    )
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=texts.MOTOPAIR_REPORT_BTN_ACCEPT,
+                              callback_data=f"admin_report_accept_{target_user.id}")],
+        [InlineKeyboardButton(text=texts.MOTOPAIR_REPORT_BTN_BLOCK,
+                              callback_data=f"admin_report_block_{target_user.id}")],
+        [InlineKeyboardButton(text=texts.MOTOPAIR_REPORT_BTN_REJECT,
+                              callback_data=f"admin_report_reject_{target_user.id}")],
+    ])
+    tg_bot = _get_tg_bot()
+    _max_a = get_max_adapter() or adapter
+    if user.city_id:
+        await notify_city_admins_multichannel(
+            user.city_id, admin_text,
+            telegram_markup=admin_kb, telegram_bot=tg_bot, max_adapter=_max_a,
+            telegram_parse_mode="HTML",
+        )
+    await notify_superadmins_multichannel(
+        admin_text, telegram_markup=admin_kb,
+        telegram_bot=tg_bot, max_adapter=_max_a,
+        telegram_parse_mode="HTML",
+    )
+    await save_report(
+        reporter_user_id=user.id, reported_user_id=target_user.id,
+        role=role, reason=reason_for_db,
+    )
+    await maybe_auto_block_after_report(
+        target_user.id, telegram_bot=tg_bot, max_adapter=_max_a,
+    )
+
+
+async def handle_motopair_report_max(adapter: MaxAdapter, chat_id: str, user, data: str) -> None:
+    """MAX, шаг 1: показать причины жалобы."""
+    from src.services.motopair_service import get_user_for_profile
+    from src import texts
 
     rest = data.replace("motopair_report_", "", 1)
     if "_" not in rest:
@@ -3724,77 +3794,97 @@ async def handle_motopair_report_max(adapter: MaxAdapter, chat_id: str, user, da
         )
         await adapter.send_message(chat_id, msg, get_back_to_menu_rows())
         return
-    profile_text, _ = await get_profile_info_text(target_user.id)
-    reporter_display = (
-        f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
-    )
-    reported_display = (
-        f"@{target_user.platform_username}"
-        if target_user.platform_username
-        else str(target_user.platform_user_id)
-    )
-    admin_text = texts.MOTOPAIR_REPORT_ADMIN_TEXT.format(
-        reporter=reporter_display,
-        reported=reported_display,
-        profile_text=profile_text,
-    )
-    admin_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.MOTOPAIR_REPORT_BTN_ACCEPT,
-                    callback_data=f"admin_report_accept_{target_user.id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=texts.MOTOPAIR_REPORT_BTN_BLOCK,
-                    callback_data=f"admin_report_block_{target_user.id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=texts.MOTOPAIR_REPORT_BTN_REJECT,
-                    callback_data=f"admin_report_reject_{target_user.id}",
-                )
-            ],
-        ]
-    )
-    tg_bot = _get_tg_bot()
-    from src.services.admin_multichannel_notify import (
-        notify_city_admins_multichannel,
-        notify_superadmins_multichannel,
-    )
-    from src.services.broadcast import get_max_adapter
 
-    _max_a = get_max_adapter() or adapter
-    if user.city_id:
-        await notify_city_admins_multichannel(
-            user.city_id,
-            admin_text,
-            telegram_markup=admin_kb,
-            telegram_bot=tg_bot,
-            max_adapter=_max_a,
+    # Сохраним target в FSM до выбора причины.
+    await reg_state.set_state(
+        user.platform_user_id,
+        "motopair_report_choose_reason",
+        {"target_user_id": str(target_user.id), "role": role},
+        ttl=600,
+    )
+
+    rows = []
+    for code, label in texts.MOTOPAIR_REPORT_REASONS.items():
+        rows.append([Button(label, payload=f"motopair_report_reason_{code}")])
+    rows.append([Button(texts.MOTOPAIR_REPORT_CANCEL_BTN, payload="motopair_report_cancel")])
+    await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_ASK_REASON, rows)
+
+
+async def handle_motopair_report_reason_max(
+    adapter: MaxAdapter, chat_id: str, user, data: str
+) -> None:
+    """MAX, шаг 2: получили выбор причины."""
+    from src.services.motopair_service import get_user_for_profile
+    from src import texts
+
+    code = data.replace("motopair_report_reason_", "", 1)
+    if code not in texts.MOTOPAIR_REPORT_REASONS:
+        return
+    fsm = await reg_state.get_state(user.platform_user_id)
+    if not fsm or fsm.get("state") != "motopair_report_choose_reason":
+        await adapter.send_message(
+            chat_id, "Сессия истекла, попробуй ещё раз.", get_back_to_menu_rows()
         )
-    await notify_superadmins_multichannel(
-        admin_text,
-        telegram_markup=admin_kb,
-        telegram_bot=tg_bot,
-        max_adapter=_max_a,
-    )
-    from src.services.report_service import save_report, maybe_auto_block_after_report
+        return
+    fsm_data = fsm.get("data") or {}
+    tu_id = fsm_data.get("target_user_id")
+    role = fsm_data.get("role")
+    if not tu_id or not role:
+        await reg_state.clear_state(user.platform_user_id)
+        await adapter.send_message(chat_id, "Ошибка состояния.", get_back_to_menu_rows())
+        return
+    target_user = await get_user_for_profile(uuid.UUID(tu_id), role)
+    if not target_user:
+        await reg_state.clear_state(user.platform_user_id)
+        await adapter.send_message(chat_id, "Анкета не найдена.", get_back_to_menu_rows())
+        return
 
-    await save_report(
-        reporter_user_id=user.id,
-        reported_user_id=target_user.id,
-        role=role,
-    )
-    await maybe_auto_block_after_report(
-        target_user.id,
-        telegram_bot=tg_bot,
-        max_adapter=_max_a,
-    )
+    if code == "other":
+        await reg_state.set_state(
+            user.platform_user_id,
+            "motopair_report_other",
+            fsm_data,
+            ttl=600,
+        )
+        await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_ASK_OTHER, None)
+        return
+
+    reason_label = texts.MOTOPAIR_REPORT_REASONS[code]
+    await _max_send_report_admins(user, target_user, role, reason_label, code, adapter)
+    await reg_state.clear_state(user.platform_user_id)
     await adapter.send_message(chat_id, texts.MOTOPAIR_REPORT_SENT, get_back_to_menu_rows())
+
+
+async def handle_motopair_report_other_text_max(
+    adapter: MaxAdapter, chat_id: str, user_id: int, text: str, fsm: dict
+) -> None:
+    """MAX, шаг 3 (для «Другое»): получили свободный текст."""
+    from src.services.motopair_service import get_user_for_profile
+    from src.services.user import get_or_create_user
+    from src import texts as _texts
+
+    body = (text or "").strip()
+    if not body:
+        await adapter.send_message(chat_id, _texts.MOTOPAIR_REPORT_ASK_OTHER, None)
+        return
+    fsm_data = fsm.get("data") or {}
+    tu_id = fsm_data.get("target_user_id")
+    role = fsm_data.get("role")
+    if not tu_id or not role:
+        await reg_state.clear_state(user_id)
+        await adapter.send_message(chat_id, "Ошибка состояния.", get_back_to_menu_rows())
+        return
+    target_user = await get_user_for_profile(uuid.UUID(tu_id), role)
+    if not target_user:
+        await reg_state.clear_state(user_id)
+        await adapter.send_message(chat_id, "Анкета не найдена.", get_back_to_menu_rows())
+        return
+    user = await get_or_create_user(platform="max", platform_user_id=user_id)
+
+    reason_label = f"Другое — {body[:500]}"
+    await _max_send_report_admins(user, target_user, role, reason_label, f"other: {body}", adapter)
+    await reg_state.clear_state(user_id)
+    await adapter.send_message(chat_id, _texts.MOTOPAIR_REPORT_SENT, get_back_to_menu_rows())
 
 
 async def _max_event_seeking_open(adapter: MaxAdapter, chat_id: str, user, eid_str: str) -> None:

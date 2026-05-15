@@ -5,6 +5,74 @@ from uuid import uuid4
 
 
 @pytest.mark.asyncio
+async def test_save_report_passes_reason(monkeypatch):
+    """Жалоба сохраняется с переданной причиной (миграция 014)."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import report_service
+
+    added: list = []
+
+    fake_session = MagicMock()
+    fake_session.add = lambda obj: added.append(obj)
+    fake_session.commit = AsyncMock()
+    fake_session.rollback = AsyncMock()
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        report_service, "get_session_factory",
+        lambda: MagicMock(return_value=fake_session),
+    )
+
+    await report_service.save_report(uuid4(), uuid4(), "pilot", reason="spam")
+    assert len(added) == 1
+    assert getattr(added[0], "reason", None) == "spam"
+
+
+@pytest.mark.asyncio
+async def test_save_report_trims_long_reason(monkeypatch):
+    """Длинный текст 'Другое' режется до 500 символов."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import report_service
+
+    added: list = []
+    fake_session = MagicMock()
+    fake_session.add = lambda obj: added.append(obj)
+    fake_session.commit = AsyncMock()
+    fake_session.rollback = AsyncMock()
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        report_service, "get_session_factory",
+        lambda: MagicMock(return_value=fake_session),
+    )
+
+    long_text = "x" * 1000
+    await report_service.save_report(uuid4(), uuid4(), "pilot", reason=long_text)
+    assert len(added[0].reason) == 500
+
+
+@pytest.mark.asyncio
+async def test_save_report_empty_reason_becomes_none(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+    from src.services import report_service
+
+    added: list = []
+    fake_session = MagicMock()
+    fake_session.add = lambda obj: added.append(obj)
+    fake_session.commit = AsyncMock()
+    fake_session.rollback = AsyncMock()
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        report_service, "get_session_factory",
+        lambda: MagicMock(return_value=fake_session),
+    )
+
+    await report_service.save_report(uuid4(), uuid4(), "pilot", reason="   ")
+    assert added[0].reason is None
+
+
+@pytest.mark.asyncio
 async def test_get_event_participants_empty(monkeypatch):
     """Если на мероприятие никто не записан — возвращается []."""
     from unittest.mock import AsyncMock, MagicMock

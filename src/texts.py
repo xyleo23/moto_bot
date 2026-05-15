@@ -320,8 +320,28 @@ EVENT_PARTICIPANT_LINE_TG = (
 )
 MOTOPAIR_REPORT_COOLDOWN = "⏳ Слишком часто. Попробуй через {sec} сек."
 MOTOPAIR_REPORT_DAILY_LIMIT = "Превышен дневной лимит жалоб. Попробуй позже."
+MOTOPAIR_REPORT_ASK_REASON = (
+    "🚩 <b>Жалоба на анкету</b>\n\n"
+    "Выбери причину — это поможет админу разобраться быстрее."
+)
+MOTOPAIR_REPORT_ASK_OTHER = (
+    "Опиши причину жалобы одним сообщением (до 500 символов):"
+)
+MOTOPAIR_REPORT_CANCEL_BTN = "« Отмена"
+MOTOPAIR_REPORT_CANCELLED = "Жалоба отменена."
+# Категории причин — фиксированные, добавляются в callback_data как короткий код.
+MOTOPAIR_REPORT_REASONS: dict[str, str] = {
+    "spam":   "📣 Спам / реклама",
+    "insult": "🤬 Оскорбления / угрозы",
+    "18plus": "🔞 Контент 18+",
+    "fake":   "🎭 Фейк / не соответствует анкете",
+    "other":  "✏️ Другое (написать)",
+}
 MOTOPAIR_REPORT_ADMIN_TEXT = (
-    "🚩 <b>Жалоба на анкету</b>\n\nОт: {reporter}\nНа: {reported}\nПрофиль: {profile_text}"
+    "🚩 <b>Жалоба на анкету</b>\n\n"
+    "От: {reporter}\nНа: {reported}\n"
+    "<b>Причина:</b> {reason}\n\n"
+    "Профиль: {profile_text}"
 )
 MOTOPAIR_REPORT_BTN_ACCEPT = "✅ Принять (скрыть анкету)"
 MOTOPAIR_REPORT_BTN_BLOCK = "🔒 Заблокировать пользователя"

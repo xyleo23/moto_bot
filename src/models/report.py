@@ -16,6 +16,8 @@ class Report(Base):
     reporter_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     reported_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     profile_role: Mapped[str] = mapped_column(String(20))  # "pilot" / "passenger"
+    # Категория или свободный текст — заполняется при отправке жалобы (миграция 014).
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

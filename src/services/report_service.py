@@ -70,14 +70,19 @@ async def save_report(
     reporter_user_id: uuid.UUID,
     reported_user_id: uuid.UUID,
     role: str,
+    reason: str | None = None,
 ) -> None:
+    """Сохранить жалобу. reason — категория или свободный текст (мигр. 014)."""
     session_factory = get_session_factory()
+    # Аккуратно режем слишком длинный текст «Другое», чтобы пройти String(500).
+    reason_trimmed = (reason or "").strip()[:500] or None
     async with session_factory() as session:
         session.add(
             Report(
                 reporter_user_id=reporter_user_id,
                 reported_user_id=reported_user_id,
                 profile_role=role,
+                reason=reason_trimmed,
             )
         )
         try:

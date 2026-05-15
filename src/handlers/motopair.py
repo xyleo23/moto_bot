@@ -40,6 +40,13 @@ class CityAdminBlockStates(StatesGroup):
     reason = State()
 
 
+class ReportFlowStates(StatesGroup):
+    """FSM для жалоб с причиной (предотвращает случайные клики)."""
+
+    choose_reason = State()
+    write_other = State()
+
+
 async def _motopair_menu_intro_and_kb(user) -> tuple[str, InlineKeyboardMarkup]:
     """Текст и клавиатура корня «Мотопара» (подписка или выбор категории)."""
     from src.services.subscription import check_subscription_required
@@ -470,10 +477,91 @@ def _profile_kb_with_report(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def _send_report_to_admins_and_notify_reporter(
+    callback_or_message,
+    user,
+    target_user,
+    role: str,
+    reason_label: str,
+    reason_for_db: str,
+) -> None:
+    """Финальный шаг: сохранение жалобы + рассылка админам + ответ юзеру.
+
+    Используется и из выбора категории, и из ввода свободного текста.
+    """
+    from html import escape
+    from src.services.motopair_service import get_profile_info_text
+    from src.services.admin_multichannel_notify import (
+        notify_city_admins_multichannel,
+        notify_superadmins_multichannel,
+    )
+    from src.services.broadcast import get_max_adapter
+    from src.services.report_service import (
+        maybe_auto_block_after_report,
+        save_report,
+    )
+
+    bot = callback_or_message.bot
+    profile_text, _ = await get_profile_info_text(target_user.id)
+    reporter_display = (
+        f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
+    )
+    reported_display = (
+        f"@{target_user.platform_username}"
+        if target_user.platform_username
+        else str(target_user.platform_user_id)
+    )
+
+    admin_text = texts.MOTOPAIR_REPORT_ADMIN_TEXT.format(
+        reporter=escape(reporter_display),
+        reported=escape(reported_display),
+        reason=escape(reason_label),
+        profile_text=profile_text,
+    )
+    admin_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=texts.MOTOPAIR_REPORT_BTN_ACCEPT,
+                callback_data=f"admin_report_accept_{target_user.id}",
+            )],
+            [InlineKeyboardButton(
+                text=texts.MOTOPAIR_REPORT_BTN_BLOCK,
+                callback_data=f"admin_report_block_{target_user.id}",
+            )],
+            [InlineKeyboardButton(
+                text=texts.MOTOPAIR_REPORT_BTN_REJECT,
+                callback_data=f"admin_report_reject_{target_user.id}",
+            )],
+        ]
+    )
+    _max_a = get_max_adapter()
+    if user.city_id:
+        await notify_city_admins_multichannel(
+            user.city_id, admin_text,
+            telegram_markup=admin_kb, telegram_bot=bot, max_adapter=_max_a,
+            telegram_parse_mode="HTML",
+        )
+    await notify_superadmins_multichannel(
+        admin_text,
+        telegram_markup=admin_kb, telegram_bot=bot, max_adapter=_max_a,
+        telegram_parse_mode="HTML",
+    )
+
+    await save_report(
+        reporter_user_id=user.id,
+        reported_user_id=target_user.id,
+        role=role,
+        reason=reason_for_db,
+    )
+    await maybe_auto_block_after_report(
+        target_user.id, telegram_bot=bot, max_adapter=_max_a,
+    )
+
+
 @router.callback_query(F.data.startswith("motopair_report_"))
-async def cb_motopair_report(callback: CallbackQuery, user=None):
-    """User reports an offensive/spam profile. Notifies city admin."""
-    from src.services.motopair_service import get_user_for_profile, get_profile_info_text
+async def cb_motopair_report(callback: CallbackQuery, state: FSMContext, user=None):
+    """Шаг 1: показать список причин (защищает от случайных кликов)."""
+    from src.services.motopair_service import get_user_for_profile
 
     if not user:
         await callback.answer("Ошибка.", show_alert=True)
@@ -508,86 +596,93 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
         await callback.answer(msg, show_alert=True)
         return
 
-    profile_text, _ = await get_profile_info_text(target_user.id)
-    reporter_display = (
-        f"@{user.platform_username}" if user.platform_username else str(user.platform_user_id)
-    )
-    reported_display = (
-        f"@{target_user.platform_username}"
-        if target_user.platform_username
-        else str(target_user.platform_user_id)
+    # Сохраним target в FSM, чтобы дойти до выбора причины и потом отправки.
+    await state.set_state(ReportFlowStates.choose_reason)
+    await state.update_data(
+        report_target_user_id=str(target_user.id),
+        report_role=role,
     )
 
-    admin_text = texts.MOTOPAIR_REPORT_ADMIN_TEXT.format(
-        reporter=reporter_display,
-        reported=reported_display,
-        profile_text=profile_text,
-    )
-    admin_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.MOTOPAIR_REPORT_BTN_ACCEPT,
-                    callback_data=f"admin_report_accept_{target_user.id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=texts.MOTOPAIR_REPORT_BTN_BLOCK,
-                    callback_data=f"admin_report_block_{target_user.id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=texts.MOTOPAIR_REPORT_BTN_REJECT,
-                    callback_data=f"admin_report_reject_{target_user.id}",
-                )
-            ],
-        ]
-    )
+    rows = []
+    for code, label in texts.MOTOPAIR_REPORT_REASONS.items():
+        rows.append([InlineKeyboardButton(
+            text=label, callback_data=f"motopair_report_reason_{code}"
+        )])
+    rows.append([InlineKeyboardButton(
+        text=texts.MOTOPAIR_REPORT_CANCEL_BTN, callback_data="motopair_report_cancel"
+    )])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption=texts.MOTOPAIR_REPORT_ASK_REASON, reply_markup=kb,
+            )
+        else:
+            await callback.message.edit_text(
+                texts.MOTOPAIR_REPORT_ASK_REASON, reply_markup=kb,
+            )
+    except Exception:
+        await callback.message.answer(texts.MOTOPAIR_REPORT_ASK_REASON, reply_markup=kb)
     await callback.answer()
 
-    # Send to city admins + superadmins
-    bot = callback.bot
 
-    from src.services.admin_multichannel_notify import (
-        notify_city_admins_multichannel,
-        notify_superadmins_multichannel,
-    )
-    from src.services.broadcast import get_max_adapter
-
-    _max_a = get_max_adapter()
-    if user.city_id:
-        await notify_city_admins_multichannel(
-            user.city_id,
-            admin_text,
-            telegram_markup=admin_kb,
-            telegram_bot=bot,
-            max_adapter=_max_a,
+@router.callback_query(F.data == "motopair_report_cancel", ReportFlowStates.choose_reason)
+async def cb_motopair_report_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    try:
+        await callback.message.edit_text(
+            texts.MOTOPAIR_REPORT_CANCELLED, reply_markup=get_back_to_menu_kb(),
         )
-    await notify_superadmins_multichannel(
-        admin_text,
-        telegram_markup=admin_kb,
-        telegram_bot=bot,
-        max_adapter=_max_a,
-    )
+    except Exception:
+        await callback.message.answer(
+            texts.MOTOPAIR_REPORT_CANCELLED, reply_markup=get_back_to_menu_kb(),
+        )
+    await callback.answer()
 
-    from src.services.report_service import (
-        maybe_auto_block_after_report,
-        save_report,
-    )
 
-    await save_report(
-        reporter_user_id=user.id,
-        reported_user_id=target_user.id,
-        role=role,
+@router.callback_query(
+    F.data.startswith("motopair_report_reason_"), ReportFlowStates.choose_reason
+)
+async def cb_motopair_report_reason(callback: CallbackQuery, state: FSMContext, user=None):
+    """Шаг 2: выбрана категория. «other» → запрос текста; остальное — сразу шлём."""
+    from src.services.motopair_service import get_user_for_profile
+
+    code = callback.data.replace("motopair_report_reason_", "", 1)
+    if code not in texts.MOTOPAIR_REPORT_REASONS:
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    tu_id = data.get("report_target_user_id")
+    role = data.get("report_role")
+    if not tu_id or not role:
+        await state.clear()
+        await callback.answer("Сессия истекла, попробуй ещё раз.", show_alert=True)
+        return
+    target_user = await get_user_for_profile(uuid.UUID(tu_id), role)
+    if not target_user:
+        await state.clear()
+        await callback.answer("Анкета не найдена.", show_alert=True)
+        return
+
+    if code == "other":
+        await state.set_state(ReportFlowStates.write_other)
+        try:
+            await callback.message.edit_text(texts.MOTOPAIR_REPORT_ASK_OTHER)
+        except Exception:
+            await callback.message.answer(texts.MOTOPAIR_REPORT_ASK_OTHER)
+        await callback.answer()
+        return
+
+    # Готовая категория — сразу шлём админам.
+    reason_label = texts.MOTOPAIR_REPORT_REASONS[code]
+    await _send_report_to_admins_and_notify_reporter(
+        callback, user, target_user, role,
+        reason_label=reason_label,
+        reason_for_db=code,
     )
-    await maybe_auto_block_after_report(
-        target_user.id,
-        telegram_bot=bot,
-        max_adapter=_max_a,
-    )
+    await state.clear()
 
     try:
         if callback.message.photo:
@@ -604,6 +699,41 @@ async def cb_motopair_report(callback: CallbackQuery, user=None):
         await callback.message.answer(
             texts.MOTOPAIR_REPORT_SENT, reply_markup=get_back_to_menu_kb()
         )
+
+
+@router.message(ReportFlowStates.write_other, F.text)
+async def msg_motopair_report_other(message: Message, state: FSMContext, user=None):
+    """Шаг 3 (только для «Другое»): принимаем свободный текст и шлём."""
+    from src.services.motopair_service import get_user_for_profile
+
+    if not user:
+        await state.clear()
+        return
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer(texts.MOTOPAIR_REPORT_ASK_OTHER)
+        return
+    data = await state.get_data()
+    tu_id = data.get("report_target_user_id")
+    role = data.get("report_role")
+    if not tu_id or not role:
+        await state.clear()
+        await message.answer("Сессия истекла, попробуй ещё раз.")
+        return
+    target_user = await get_user_for_profile(uuid.UUID(tu_id), role)
+    if not target_user:
+        await state.clear()
+        await message.answer("Анкета не найдена.")
+        return
+
+    reason_label = f"Другое — {text[:500]}"
+    await _send_report_to_admins_and_notify_reporter(
+        message, user, target_user, role,
+        reason_label=reason_label,
+        reason_for_db=f"other: {text}",
+    )
+    await state.clear()
+    await message.answer(texts.MOTOPAIR_REPORT_SENT, reply_markup=get_back_to_menu_kb())
 
 
 @router.callback_query(F.data.startswith("admin_report_accept_"))
