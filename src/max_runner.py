@@ -434,8 +434,16 @@ async def _max_send_photo_caption_keyboard(
     keyboard,
     *,
     log_ctx: str = "max_photo",
+    prev_message_id: str | None = None,
 ) -> None:
-    """Отправить фото в MAX: id может быть MAX token (регистрация в MAX) или Telegram file_id."""
+    """Отправить фото в MAX: id может быть MAX token (регистрация в MAX) или Telegram file_id.
+
+    Если передан prev_message_id, перед отправкой новой карточки пробуем
+    удалить предыдущую — иначе фид «Мотопары» в MAX превращается в ленту
+    из десятка сообщений вместо одного редактируемого (15.05 на скрине).
+    """
+    if prev_message_id:
+        await adapter.delete_message(prev_message_id)
     if not stored_photo_id or not str(stored_photo_id).strip():
         logger.info(
             "{}: skip (no photo id) chat_id={} caption_len={}",
@@ -2600,19 +2608,25 @@ async def handle_callback(adapter: MaxAdapter, ev: IncomingCallback) -> None:
     # ── MotoPair callbacks ────────────────────────────────────────────────────
     if data in ("motopair_pilots", "motopair_passengers"):
         role = "pilot" if data == "motopair_pilots" else "passenger"
+        # При входе из меню удалять предыдущее не нужно — там было меню.
         await handle_motopair_list(adapter, chat_id, user, role, offset=0)
         return
     if data.startswith("motopair_next_"):
         parts = data.replace("motopair_next_", "").split("_")
         role = parts[0] if parts else "pilot"
         offset = int(parts[1]) if len(parts) > 1 else 0
-        await handle_motopair_list(adapter, chat_id, user, role, offset)
+        # Удаляем предыдущую карточку, чтобы фид листался, а не наращивался.
+        await handle_motopair_list(
+            adapter, chat_id, user, role, offset, prev_message_id=ev.message_id,
+        )
         return
     if data.startswith("motopair_restart_"):
         role = data.removeprefix("motopair_restart_")
         if role not in ("pilot", "passenger"):
             role = "pilot"
-        await handle_motopair_list(adapter, chat_id, user, role, offset=0)
+        await handle_motopair_list(
+            adapter, chat_id, user, role, offset=0, prev_message_id=ev.message_id,
+        )
         return
     if data == "motopair_report_cancel":
         await reg_state.clear_state(user.platform_user_id)
@@ -3224,7 +3238,13 @@ async def _handle_max_reply_like(adapter: MaxAdapter, chat_id: str, user, data: 
 
 
 async def handle_motopair_list(
-    adapter: MaxAdapter, chat_id: str, user, role: str, offset: int = 0
+    adapter: MaxAdapter,
+    chat_id: str,
+    user,
+    role: str,
+    offset: int = 0,
+    *,
+    prev_message_id: str | None = None,
 ) -> None:
     from src.services.motopair_service import get_next_profile
     from src.services.subscription import check_subscription_required
@@ -3247,6 +3267,9 @@ async def handle_motopair_list(
         effective_user_id(user), role, offset=offset, viewer_city_id=city_id
     )
     if not profile:
+        # При пустом фиде стараемся убрать предыдущую анкету тем же приёмом.
+        if prev_message_id:
+            await adapter.delete_message(prev_message_id)
         await adapter.send_message(
             chat_id,
             texts.MOTOPAIR_NO_PROFILES,
@@ -3266,6 +3289,7 @@ async def handle_motopair_list(
         text,
         kb,
         log_ctx="motopair_photo",
+        prev_message_id=prev_message_id,
     )
 
 
@@ -3392,10 +3416,16 @@ async def handle_motopair_like(
             max_extra_html=max_suffix_like,
         )
 
-        await handle_motopair_list(adapter, ev.chat_id, user, role, list_offset)
+        await handle_motopair_list(
+            adapter, ev.chat_id, user, role, list_offset,
+            prev_message_id=ev.message_id,
+        )
     else:
         next_off = list_offset if result.get("blacklisted") else list_offset + 1
-        await handle_motopair_list(adapter, ev.chat_id, user, role, next_off)
+        await handle_motopair_list(
+            adapter, ev.chat_id, user, role, next_off,
+            prev_message_id=ev.message_id,
+        )
 
 
 async def handle_contacts_menu(adapter: MaxAdapter, chat_id: str, user) -> None:

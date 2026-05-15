@@ -5,6 +5,42 @@ from uuid import uuid4
 
 
 @pytest.mark.asyncio
+async def test_max_send_photo_card_deletes_prev_message():
+    """Аудит 15.05: при листании фида в MAX prev сообщение должно удаляться."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.max_runner import _max_send_photo_caption_keyboard
+
+    adapter = MagicMock()
+    adapter.delete_message = AsyncMock(return_value=True)
+    adapter.send_message = AsyncMock()
+    adapter.send_photo = AsyncMock()
+
+    # text-only карточка (без фото) — должен сначала удалить prev, потом отправить.
+    await _max_send_photo_caption_keyboard(
+        adapter, chat_id="42", stored_photo_id=None, caption="t", keyboard=None,
+        prev_message_id="prev-123",
+    )
+    adapter.delete_message.assert_awaited_once_with("prev-123")
+    adapter.send_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_max_send_photo_card_no_delete_when_no_prev():
+    """Без prev_message_id delete не вызывается."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.max_runner import _max_send_photo_caption_keyboard
+
+    adapter = MagicMock()
+    adapter.delete_message = AsyncMock()
+    adapter.send_message = AsyncMock()
+
+    await _max_send_photo_caption_keyboard(
+        adapter, chat_id="42", stored_photo_id=None, caption="t", keyboard=None,
+    )
+    adapter.delete_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_save_report_passes_reason(monkeypatch):
     """Жалоба сохраняется с переданной причиной (миграция 014)."""
     from unittest.mock import AsyncMock, MagicMock

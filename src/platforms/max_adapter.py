@@ -413,6 +413,22 @@ class MaxAdapter(PlatformAdapter):
     ):
         return await self.send_photo(chat_id, "", caption, keyboard)
 
+    async def delete_message(self, message_id: str) -> bool:
+        """DELETE /messages/{message_id}. Возвращает True при успехе.
+
+        Используется при «листании» (фид мотопары): чтобы новая анкета
+        не открывалась поверх старой отдельным сообщением.
+        """
+        if not message_id:
+            return False
+        try:
+            await self._request("DELETE", f"/messages/{message_id}")
+            return True
+        except Exception as e:
+            from loguru import logger
+            logger.warning("delete_message {} failed: {}", message_id, e)
+            return False
+
     async def edit_message(
         self,
         chat_id: str,
