@@ -531,6 +531,14 @@ class MaxAdapter(PlatformAdapter):
         """PATCH /me — set bot commands menu."""
         return await self._request("PATCH", "/me", json_data={"commands": commands})
 
+    async def set_my_description(self, description: str) -> dict[str, Any]:
+        """PATCH /me — set bot description (видно в карточке бота).
+
+        Важно для Android MAX, где UI кнопки команд отсутствует:
+        в шапке диалога юзер видит инструкцию «напиши /start, чтобы начать».
+        """
+        return await self._request("PATCH", "/me", json_data={"description": description})
+
     async def poll_updates(self, marker: int | None = None, timeout: int = 30):
         """Long polling for updates."""
         params: dict = {

@@ -391,6 +391,22 @@ async def run_max(shared_adapter=None):
     except Exception as e:
         logger.warning(f"Failed to set MAX bot commands: {e}")
 
+    # Описание бота — критично для Android MAX, где меню команд не отображается.
+    # Юзер видит этот текст в шапке диалога ещё до первого сообщения.
+    try:
+        await adapter.set_my_description(
+            "MotoHub — мото-сообщество города.\n\n"
+            "👉 Напиши /start, чтобы зарегистрироваться.\n\n"
+            "Возможности:\n"
+            "• 🏍 Найти пару на поездку\n"
+            "• 📅 Мероприятия мото-сообщества\n"
+            "• 🚨 SOS на дороге\n"
+            "• 📇 Полезные мото-контакты"
+        )
+        logger.info("MAX bot description set")
+    except Exception as e:
+        logger.warning(f"Failed to set MAX bot description: {e}")
+
     # ── Webhook mode (preferred since 2026-05-11) ────────────────────────────
     if settings.max_webhook_url:
         from src.webhooks import set_max_webhook_adapter

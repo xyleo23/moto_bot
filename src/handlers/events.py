@@ -1256,6 +1256,7 @@ async def cb_event_my_participants(callback: CallbackQuery, user=None):
     """Создатель видит список записавшихся на своё мероприятие."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from html import escape
+    from src import texts  # 18.05: исправление NameError — модуль не был импортирован
 
     eid = callback.data.replace("event_my_parts_", "")
     try:

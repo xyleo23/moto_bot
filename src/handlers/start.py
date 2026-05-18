@@ -138,6 +138,8 @@ async def cmd_profile(message: Message, state: FSMContext, user=None):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from src.services.profile_service import get_profile_display
     from src.services.subscription import check_subscription_required
+    from src.services.motopair_service import is_profile_hidden_by_user
+    from src.models.user import UserRole, effective_user_id
 
     if not user:
         await message.answer(
@@ -147,6 +149,20 @@ async def cmd_profile(message: Message, state: FSMContext, user=None):
         return
     display_text, photo_id = await get_profile_display(user)
     sub_required = await check_subscription_required(user)
+    # 18.05: добавлена кнопка «Скрыть/Показать анкету» — её не было в /profile,
+    # хотя в inline-входе (menu_profile) она есть с момента пакета 15К (пункт А).
+    hidden_by_user = False
+    if user.role in (UserRole.PILOT, UserRole.PASSENGER):
+        role_str = "pilot" if user.role == UserRole.PILOT else "passenger"
+        try:
+            hidden_by_user = await is_profile_hidden_by_user(
+                effective_user_id(user), role_str
+            )
+        except Exception as e:
+            logger.warning("cmd_profile: hidden_by_user lookup failed: %s", e)
+    visibility_btn_text = (
+        texts.PROFILE_SHOW_BTN if hidden_by_user else texts.PROFILE_HIDE_BTN
+    )
     kb_rows = [[InlineKeyboardButton(text="Редактировать анкету", callback_data="profile_edit")]]
     if sub_required:
         kb_rows.append(
@@ -155,6 +171,7 @@ async def cmd_profile(message: Message, state: FSMContext, user=None):
     kb_rows.extend(
         [
             [InlineKeyboardButton(text="Поднять анкету", callback_data="profile_raise")],
+            [InlineKeyboardButton(text=visibility_btn_text, callback_data="profile_toggle_visibility")],
             [InlineKeyboardButton(text="📱 Сменить телефон", callback_data="profile_phone_change")],
             [InlineKeyboardButton(text="🏙️ Сменить город", callback_data="profile_city_change")],
             [InlineKeyboardButton(text="« Назад", callback_data="menu_main")],

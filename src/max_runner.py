@@ -2159,7 +2159,15 @@ async def handle_message(adapter: MaxAdapter, ev: IncomingMessage) -> None:
     if await _max_route_menu_text_press(adapter, ev, user, text):
         return
 
-    # Default
+    # 18.05: на Android-MAX отсутствует UI кнопки команд, поэтому новый юзер
+    # видел голый чат и не понимал что писать. Любое сообщение от юзера
+    # без выбранного города или роли запускает welcome-flow (как /start),
+    # а не «Используй /start» в пустоту.
+    if not user.city_id or not await has_profile(user):
+        await handle_start(adapter, ev.chat_id, user)
+        return
+
+    # Default — у юзера всё заполнено, просто покажем главное меню.
     await adapter.send_message(
         ev.chat_id, "Используй меню или /start", await _main_menu_rows_for(user)
     )
