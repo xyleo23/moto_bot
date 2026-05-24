@@ -19,14 +19,12 @@ from src.services.broadcast import (
 )
 from src.keyboards.admin import (
     get_admin_back_kb,
+    get_admin_city_inline_kb,
+    get_admin_main_kb,
     get_user_action_kb,
     get_admin_event_kb,
     get_settings_kb,
     get_broadcast_confirm_kb,
-)
-from src.keyboards.menu import (
-    get_admin_superadmin_kb,
-    get_admin_city_kb,
 )
 from src.services.admin_service import (
     get_stats,
@@ -167,7 +165,7 @@ async def cmd_admin(message: Message, user=None):
     if _is_superadmin(message.from_user.id):
         await message.answer(
             "⚙️ <b>Админ-панель</b>\n\nВыбери раздел:",
-            reply_markup=get_admin_superadmin_kb(),
+            reply_markup=get_admin_main_kb(),
         )
         return
     city_id = (user.city_id if user and user.city_id else None) or await get_city_admin_city_id(
@@ -176,7 +174,7 @@ async def cmd_admin(message: Message, user=None):
     if city_id and await is_city_admin(message.from_user.id, city_id):
         await message.answer(
             "⚙️ <b>Админ города</b>\n\nВыбери раздел:",
-            reply_markup=get_admin_city_kb(),
+            reply_markup=get_admin_city_inline_kb(),
         )
         return
     from src import texts as _texts
@@ -189,14 +187,14 @@ async def cb_admin_panel(callback: CallbackQuery, user=None):
     if _is_superadmin(callback.from_user.id):
         await callback.message.answer(
             "⚙️ <b>Админ-панель</b>\n\nВыбери раздел:",
-            reply_markup=get_admin_superadmin_kb(),
+            reply_markup=get_admin_main_kb(),
         )
         await callback.answer()
         return
     if user and user.city_id and await is_city_admin(callback.from_user.id, user.city_id):
         await callback.message.answer(
             "⚙️ <b>Админ города</b>\n\nВыбери раздел:",
-            reply_markup=get_admin_city_kb(),
+            reply_markup=get_admin_city_inline_kb(),
         )
         await callback.answer()
         return
@@ -606,15 +604,11 @@ async def msg_admin_text_about(message: Message, state: FSMContext, user=None):
 
 @router.message(F.text == "🏠 Главное меню")
 async def msg_admin_main_menu(message: Message, state: FSMContext, user=None):
-    """Return to main menu — always works as escape hatch (e.g. after losing admin rights)."""
+    """Return to main menu — escape hatch (e.g. after losing admin rights)."""
     from src import texts
-    from src.keyboards.menu import get_main_menu_kb_for_user, get_reply_keyboard_for_user
+    from src.keyboards.menu import get_main_menu_kb_for_user
 
     await state.clear()
-    await message.answer(
-        "⌨️",
-        reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
-    )
     await message.answer(
         texts.WELCOME_RETURNING,
         reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),

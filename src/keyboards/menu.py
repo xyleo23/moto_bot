@@ -1,10 +1,8 @@
-"""Main menu keyboards — inline + persistent reply."""
+"""Main menu keyboards — inline only."""
 
 from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
 )
 
 from src.ui_copy import (
@@ -60,46 +58,6 @@ async def get_main_menu_kb_for_user(platform_user_id: int | None, user) -> Inlin
             show_admin = True
     return get_main_menu_kb(platform_user_id=platform_user_id, show_admin=show_admin)
 
-
-async def get_reply_keyboard_for_user(platform_user_id: int | None, user) -> ReplyKeyboardMarkup:
-    """Нижняя reply-клавиатура: обычное меню или админская — как у inline-главного меню."""
-    from src.config import get_settings
-    from src.services.admin_service import is_city_admin, get_city_admin_city_id
-
-    if platform_user_id is not None:
-        if platform_user_id in get_settings().superadmin_ids:
-            return get_admin_superadmin_kb()
-        if user and user.city_id and await is_city_admin(platform_user_id, user.city_id):
-            return get_admin_city_kb()
-        if await get_city_admin_city_id(platform_user_id) is not None:
-            return get_admin_city_kb()
-    return get_persistent_kb()
-
-
-def get_persistent_kb() -> ReplyKeyboardMarkup:
-    """
-    Persistent bottom keyboard always visible.
-    SOS отдельной строкой — не теснить три кнопки в один ряд на узких экранах.
-    """
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🚨 SOS")],
-            [
-                KeyboardButton(text="🏍 Мотопара"),
-                KeyboardButton(text="📅 Мероприятия"),
-            ],
-            [
-                KeyboardButton(text="📞 Контакты"),
-                KeyboardButton(text="👤 Профиль"),
-            ],
-            [KeyboardButton(text="ℹ️ О нас")],
-            [KeyboardButton(text=BTN_MOTOHUB_CHANNEL)],
-            [KeyboardButton(text=BTN_MOTOCHAT)],
-            [KeyboardButton(text=BTN_BUG_REPORT)],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
 
 
 def get_welcome_legal_kb() -> InlineKeyboardMarkup:
@@ -171,49 +129,3 @@ def get_back_to_menu_kb() -> InlineKeyboardMarkup:
     )
 
 
-def get_admin_superadmin_kb() -> ReplyKeyboardMarkup:
-    """Постоянная клавиатура суперадмина — те же разделы, что и в inline admin_panel."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="📊 Статистика"),
-                KeyboardButton(text="👥 Пользователи"),
-            ],
-            [
-                KeyboardButton(text="🏙 Города"),
-                KeyboardButton(text="👤 Админы городов"),
-            ],
-            [KeyboardButton(text="📅 Мероприятия")],
-            [
-                KeyboardButton(text="💰 Подписки и оплаты"),
-                KeyboardButton(text="📢 Рассылка"),
-            ],
-            [
-                KeyboardButton(text="📝 Текст «О нас»"),
-                KeyboardButton(text="📞 Контакты поддержки"),
-            ],
-            [
-                KeyboardButton(text="📧 Шаблоны"),
-                KeyboardButton(text="📋 Логи"),
-            ],
-            [KeyboardButton(text="📇 Контакты")],
-            [KeyboardButton(text="🏠 Главное меню")],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
-def get_admin_city_kb() -> ReplyKeyboardMarkup:
-    """Постоянная клавиатура админа города."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="📅 Мероприятия"),
-                KeyboardButton(text="📇 Контакты"),
-            ],
-            [KeyboardButton(text="🏠 Главное меню")],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )

@@ -6,7 +6,7 @@ from loguru import logger
 
 from aiogram import Router, F
 from aiogram.enums import ParseMode
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 
@@ -14,7 +14,6 @@ from src.keyboards.menu import (
     get_main_menu_kb,
     get_main_menu_kb_for_user,
     get_city_select_kb,
-    get_reply_keyboard_for_user,
     get_welcome_with_city_kb,
     get_welcome_with_role_kb,
 )
@@ -64,13 +63,9 @@ async def cmd_start(message: Message, state: FSMContext, user=None):
             await message.answer(welcome_text, reply_markup=get_welcome_with_role_kb())
             return
 
-        # Show persistent keyboard once on /start, then inline menu
+        await message.answer(texts.WELCOME_RETURNING, reply_markup=ReplyKeyboardRemove())
         await message.answer(
-            "⌨️",
-            reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
-        )
-        await message.answer(
-            texts.WELCOME_RETURNING,
+            "Меню:",
             reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
         )
     except Exception as e:
@@ -105,10 +100,7 @@ async def cmd_cancel(message: Message, state: FSMContext, user=None):
             except Exception as e:
                 logger.warning("cmd_cancel: subscription reconcile failed: %s", e)
         await state.clear()
-    await message.answer(
-        texts.FSM_CANCEL_TEXT,
-        reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
-    )
+    await message.answer(texts.FSM_CANCEL_TEXT, reply_markup=ReplyKeyboardRemove())
     await message.answer(
         "Меню:",
         reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),

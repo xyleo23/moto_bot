@@ -30,7 +30,8 @@ from src.services.registration_service import (
     user_role_display_ru,
 )
 from src.services.user import get_or_create_user
-from src.keyboards.menu import get_main_menu_kb_for_user, get_reply_keyboard_for_user
+from aiogram.types import ReplyKeyboardRemove
+from src.keyboards.menu import get_main_menu_kb_for_user
 from src.utils.progress import progress_prefix
 from src.utils.validators import validate_profile_field
 from src import texts
@@ -193,10 +194,7 @@ async def cmd_cancel(message: Message, state: FSMContext, user=None):
     current = await state.get_state()
     if current is not None:
         await state.clear()
-    await message.answer(
-        texts.FSM_CANCEL_TEXT,
-        reply_markup=await get_reply_keyboard_for_user(message.from_user.id, user),
-    )
+    await message.answer(texts.FSM_CANCEL_TEXT, reply_markup=ReplyKeyboardRemove())
     await message.answer(
         "Меню:",
         reply_markup=await get_main_menu_kb_for_user(message.from_user.id, user),
@@ -385,10 +383,7 @@ async def tg_reg_cross_link_code(message: Message, state: FSMContext, user=None)
         first_name=message.from_user.first_name,
     )
     await message.answer(texts.REG_CROSS_LINK_SUCCESS, parse_mode="HTML")
-    await message.answer(
-        "✅",
-        reply_markup=await get_reply_keyboard_for_user(pid, u),
-    )
+    await message.answer("✅", reply_markup=ReplyKeyboardRemove())
     await message.answer(
         "Меню:",
         reply_markup=await get_main_menu_kb_for_user(pid, u),
@@ -732,10 +727,7 @@ async def _finish_pilot_registration(
         return
 
     _u = await _get_user(platform="telegram", platform_user_id=pid)
-    await message.answer(
-        "✅",
-        reply_markup=await get_reply_keyboard_for_user(pid, _u),
-    )
+    await message.answer("✅", reply_markup=ReplyKeyboardRemove())
     await message.answer(
         texts.REG_DONE,
         reply_markup=await get_main_menu_kb_for_user(pid, _u),
@@ -1064,10 +1056,7 @@ async def _finish_passenger_registration(
         return
 
     _u = await _get_user(platform="telegram", platform_user_id=pid)
-    await message.answer(
-        "✅",
-        reply_markup=await get_reply_keyboard_for_user(pid, _u),
-    )
+    await message.answer("✅", reply_markup=ReplyKeyboardRemove())
     await message.answer(
         texts.REG_DONE,
         reply_markup=await get_main_menu_kb_for_user(pid, _u),

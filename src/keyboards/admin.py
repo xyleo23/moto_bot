@@ -29,6 +29,17 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
     )
 
 
+def get_admin_city_inline_kb() -> InlineKeyboardMarkup:
+    """Inline-меню для админа города (замена reply-клавиатуры)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📅 Мероприятия", callback_data="admin_events")],
+            [InlineKeyboardButton(text="📇 Полезные контакты", callback_data="admin_contacts")],
+            [InlineKeyboardButton(text="« Главное меню", callback_data="menu_main")],
+        ]
+    )
+
+
 def get_admin_back_kb(target: str = "admin_panel") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
